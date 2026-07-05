@@ -1207,6 +1207,9 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   // Extra details for the current case
   const [atts, setAtts] = useState([])
   const [detail, setDetail] = useState(null)
+  // UI: split-view tab + selected pdf attachment
+  const [activeTab, setActiveTab] = useState('detail')
+  const [pdfIdx, setPdfIdx] = useState(0)
 
   const resetForm = (ref) => {
     setToUnit(''); setNote(''); setIsAtensi(false); setCaseType('dumas')
@@ -1246,7 +1249,46 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
       } catch (_) { /* ignore */ }
     })()
     resetForm()
+    setActiveTab('detail')
+    setPdfIdx(0)
   }, [idx, queue.length]) // eslint-disable-line
+
+  // Unified attachments across ASTINA / Gajamada sources
+  const attachments = useMemo(() => {
+    if (!current) return []
+    if (current._source === 'astina') {
+      const files = [...(current.files || []), ...(current.lampiran || [])]
+      return files.map((f) => {
+        const nm = f.filename || 'file'
+        const inlineUrl = `/api/astina/attachment/${encodeURIComponent(f.id)}?filename=${encodeURIComponent(nm)}&inline=1`
+        const dlUrl = `/api/astina/attachment/${encodeURIComponent(f.id)}?filename=${encodeURIComponent(nm)}`
+        return { id: f.id, name: nm, url: inlineUrl, dlUrl, isPdf: /\.pdf$/i.test(nm), source: 'astina' }
+      })
+    }
+    return (atts || []).map((a, i) => {
+      const nm = a.file_name || a.filename || a.name || `lampiran-${i + 1}`
+      const src = a.file_url || a.url || a.link || a.file_path || a.path
+      if (!src) return null
+      const inlineUrl = `/api/download?url=${encodeURIComponent(src)}&name=${encodeURIComponent(nm)}`
+      return { id: a.id || `${i}`, name: nm, url: inlineUrl, dlUrl: inlineUrl, isPdf: /\.pdf$/i.test(nm), source: 'gajamada' }
+    }).filter(Boolean)
+  }, [current, atts])
+
+  // Riwayat disposisi: ASTINA embeds it in the queue payload; Gajamada uses internal dispositions
+  const riwayatDisposisi = useMemo(() => {
+    if (!current) return []
+    if (current._source === 'astina') return current._riwayat_disposisi || []
+    return (detail?._internal?.dispositions || []).map((d) => ({
+      id: d.id,
+      jenis: 'Disposisi Internal',
+      dari_name: d.by?.name || d.from_unit || '-',
+      tujuan_name: d.to_unit,
+      tanggal: (d.created_at || '').slice(0, 10),
+      waktu: (d.created_at || '').slice(11, 16),
+      note: [d.note].filter(Boolean),
+      is_atensi: d.is_atensi,
+    }))
+  }, [current, detail])
 
   const goNext = () => { if (idx < queue.length - 1) setIdx(idx + 1) }
   const goPrev = () => { if (idx > 0) setIdx(idx - 1) }
@@ -1346,7 +1388,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-2xl font-bold text-slate-900">Disposisi</h2>
+          <h2 className="text-2xl font-bold text-slate-900">Antrian Disposisi</h2>
           <Tabs value={tab} onValueChange={(v) => { setTab(v); if (v === 'riwayat') loadRiwayat() }}>
             <TabsList><TabsTrigger value="antrian">Antrian</TabsTrigger><TabsTrigger value="riwayat">Riwayat</TabsTrigger></TabsList>
           </Tabs>
@@ -1357,14 +1399,18 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="border-l-4 border-l-amber-500">
           <CardContent className="p-4">
-            <p className="text-xs uppercase tracking-wide text-slate-500 font-medium">Kasus Menunggu Disposisi</p>
-            <p className="text-4xl font-bold mt-1 text-amber-700">{queue.length}</p>
+            <p className="text-xs uppercase tracking-wide text-slate-500 font-medium">Antrian Total</p>
+            <p className="text-4xl font-bold mt-1 text-amber-700" data-testid="disposisi-queue-total">{queue.length}</p>
+            <p className="text-[11px] text-slate-500 mt-1">Gajamada + ASTINA belum disposisi</p>
           </CardContent>
         </Card>
         <Card className="border-l-4 border-l-blue-800">
           <CardContent className="p-4">
-            <p className="text-xs uppercase tracking-wide text-slate-500 font-medium">Kasus Saat Ini</p>
-            <p className="text-4xl font-bold mt-1 text-blue-800">{queue.length > 0 ? idx + 1 : 0} <span className="text-lg text-slate-400">/ {queue.length}</span></p>
+            <p className="text-xs uppercase tracking-wide text-slate-500 font-medium">Sedang Direview</p>
+            <p className="text-4xl font-bold mt-1 text-blue-800">
+              {queue.length > 0 ? idx + 1 : 0} <span className="text-lg text-slate-400">/ {queue.length}</span>
+            </p>
+            <p className="text-[11px] text-slate-500 mt-1">{current?.source_alias || '-'}</p>
           </CardContent>
         </Card>
         <Card className="border-l-4 border-l-green-600 cursor-pointer hover:bg-green-50/40 transition-colors" onClick={onGoMasterUnit}>
@@ -1372,7 +1418,6 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
             <div>
               <p className="text-xs uppercase tracking-wide text-slate-500 font-medium">Pengaturan Unit</p>
               <p className="text-lg font-semibold mt-1 text-green-700">Master Unit</p>
-
             </div>
             <Building2 className="h-8 w-8 text-green-600" />
           </CardContent>
@@ -1380,71 +1425,214 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
       </div>
 
       {queue.length === 0 ? (
-        <Card><CardContent className="py-16 text-center">
+        <Card><CardContent className="py-16 text-center" data-testid="disposisi-empty">
           <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-green-500" />
-          <p className="text-lg font-medium text-slate-700">Tidak ada kasus di antrian</p>
-
+          <p className="text-lg font-medium text-slate-700">Tidak ada surat/pengaduan di antrian</p>
         </CardContent></Card>
       ) : (
-      <>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* LEFT: Case card */}
-          <Card className="overflow-hidden">
-            <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white p-5">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        {/* LEFT: scrollable list of queue items */}
+        <Card className="lg:col-span-4 flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 260px)' }}>
+          <CardHeader className="pb-2 border-b bg-slate-50/50">
+            <CardTitle className="text-sm flex items-center gap-2"><ListChecks className="h-4 w-4" /> Antrian ({queue.length})</CardTitle>
+          </CardHeader>
+          <div className="overflow-y-auto divide-y" data-testid="disposisi-queue-list">
+            {queue.map((c, i) => {
+              const active = i === idx
+              return (
+                <button
+                  key={c.prepetrator_id + '_' + i}
+                  onClick={() => setIdx(i)}
+                  className={`w-full text-left p-3 hover:bg-blue-50/60 transition-colors ${active ? 'bg-blue-50 border-l-4 border-l-blue-800' : 'border-l-4 border-l-transparent'}`}
+                  data-testid={`queue-item-${i}`}
+                >
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <Badge className={sourceColor(c.source_alias || c._source)}>{(c.source_alias || c._source || '-').toString().toUpperCase()}</Badge>
+                    {c.kka_name && <Badge variant="outline" className="text-[9px]">{c.kka_name}</Badge>}
+                    {c.jenis_surat && <Badge variant="outline" className="text-[9px]">{c.jenis_surat}</Badge>}
+                    <span className="text-[10px] text-slate-500 ml-auto">{fmtDate(c.tgl_surat || c.created_date)}</span>
+                  </div>
+                  <p className="text-sm font-medium text-slate-800 line-clamp-2">
+                    {c.perihal || c.summary || c.content || c.prepetrator_name || c.prepetrator_id}
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">
+                    {c.pengirim || c.prepetrator_name || '-'}
+                    {c.nomor_surat && <span className="text-slate-400"> · No {c.nomor_surat}</span>}
+                  </p>
+                </button>
+              )
+            })}
+          </div>
+        </Card>
+
+        {/* RIGHT: detail tabs + form */}
+        <div className="lg:col-span-8 space-y-4">
+          <Card>
+            <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-[10px] uppercase text-blue-200">ID Kasus · #{idx + 1} dari {queue.length}</p>
-                  <p className="text-base font-bold font-mono mt-0.5">{current?.prepetrator_id}</p>
-                  <p className="text-sm text-blue-100 mt-1 line-clamp-1">{current?.prepetrator_name || '-'}</p>
+                  <p className="text-[10px] uppercase text-blue-200">#{idx + 1} dari {queue.length}</p>
+                  <p className="text-sm font-bold font-mono mt-0.5 truncate" data-testid="current-case-id">{current?.prepetrator_id}</p>
+                  <p className="text-sm text-blue-100 mt-1 line-clamp-1">{current?.perihal || current?.summary || current?.prepetrator_name || '-'}</p>
                 </div>
-                <div className="flex flex-col items-end gap-1">
+                <div className="flex flex-col items-end gap-1 shrink-0">
                   {current?.source_alias && <Badge className={sourceColor(current.source_alias)}>{current.source_alias}</Badge>}
                   {current?.total_report > 1 && <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px]">Laporan Ke {current.total_report}</Badge>}
                 </div>
               </div>
             </div>
-            <CardContent className="p-6 space-y-5 max-h-[560px] overflow-y-auto">
-              <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-                <InfoRow icon={<Tag className="h-4 w-4" />} label="Kategori" value={current?.category} />
-                <InfoRow icon={<Calendar className="h-4 w-4" />} label="Diterima" value={fmtDate(current?.created_date)} />
-                <InfoRow icon={<User className="h-4 w-4" />} label="Pelapor" value={`${current?.pengirim || '-'}${current?.reporter_nik ? ` · NIK ${current.reporter_nik}` : ''}`} />
-                <InfoRow icon={<Phone className="h-4 w-4" />} label="Telp" value={current?.phone_no} />
-                <InfoRow icon={<MapPin className="h-4 w-4" />} label="Tempat Peristiwa" value={current?.['5w1h_where']} />
-                <InfoRow icon={<Calendar className="h-4 w-4" />} label="Waktu Peristiwa" value={fmtDate(current?.['5w1h_when'])} />
-              </div>
-              <div className="pt-2 border-t border-slate-100">
-                <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Rangkuman</p>
-                <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{detail?.summary || current?.summary || detail?.content || current?.content || '-'}</p>
-              </div>
-            </CardContent>
+
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
+              <TabsList className="grid grid-cols-3 w-full rounded-none border-b">
+                <TabsTrigger value="detail" data-testid="tab-detail">Detail Surat</TabsTrigger>
+                <TabsTrigger value="pdf" data-testid="tab-pdf">Preview PDF ({attachments.length})</TabsTrigger>
+                <TabsTrigger value="riwayat" data-testid="tab-riwayat">Riwayat Disposisi ({riwayatDisposisi.length})</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="detail" className="p-5 space-y-4" data-testid="tab-detail-content">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                  <InfoRow icon={<Tag className="h-4 w-4" />} label="Kategori" value={current?.category} />
+                  <InfoRow icon={<Calendar className="h-4 w-4" />} label="Diterima" value={fmtDate(current?.created_date || current?.tgl_surat)} />
+                  <InfoRow icon={<Hash className="h-4 w-4" />} label="No Surat" value={current?.nomor_surat} />
+                  <InfoRow icon={<FileText className="h-4 w-4" />} label="Jenis / Klasifikasi" value={current?.jenis_surat || current?.tipe} />
+                  <InfoRow icon={<User className="h-4 w-4" />} label="Pengirim" value={current?.pengirim || current?.prepetrator_name} />
+                  <InfoRow icon={<Phone className="h-4 w-4" />} label="Telp" value={current?.phone_no} />
+                  <InfoRow icon={<MapPin className="h-4 w-4" />} label="Tempat Peristiwa" value={current?.['5w1h_where']} />
+                  <InfoRow icon={<Calendar className="h-4 w-4" />} label="Waktu Peristiwa" value={fmtDate(current?.['5w1h_when'])} />
+                  {current?.kka_name && <InfoRow icon={<Tag className="h-4 w-4" />} label="KKA" value={current.kka_name} />}
+                  {current?.pembuat_surat && <InfoRow icon={<User className="h-4 w-4" />} label="Pembuat" value={current.pembuat_surat} />}
+                </div>
+                <div className="pt-3 border-t border-slate-100">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">Perihal / Rangkuman</p>
+                  <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+                    {current?.perihal || detail?.summary || current?.summary || detail?.content || current?.content || '-'}
+                  </p>
+                  {current?.note && (
+                    <div className="mt-3 rounded bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-900 italic">
+                      Catatan sumber: {Array.isArray(current.note) ? current.note.join(' · ') : current.note}
+                    </div>
+                  )}
+                </div>
+              </TabsContent>
+
+              <TabsContent value="pdf" className="p-5" data-testid="tab-pdf-content">
+                {attachments.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500 text-sm" data-testid="pdf-empty">
+                    <Paperclip className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                    Tidak ada lampiran untuk surat ini.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      {attachments.map((f, i) => (
+                        <button
+                          key={f.id}
+                          onClick={() => setPdfIdx(i)}
+                          className={`text-xs px-3 py-1.5 rounded-md border flex items-center gap-1.5 ${i === pdfIdx ? 'bg-blue-800 text-white border-blue-900' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
+                          data-testid={`pdf-tab-${i}`}
+                        >
+                          <FileText className="h-3 w-3" />
+                          <span className="max-w-[220px] truncate">{f.name}</span>
+                        </button>
+                      ))}
+                      <a
+                        href={attachments[pdfIdx]?.dlUrl}
+                        download
+                        className="text-xs px-3 py-1.5 rounded-md border bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 flex items-center gap-1.5 ml-auto"
+                        data-testid="pdf-download-current"
+                      ><Download className="h-3 w-3" /> Unduh</a>
+                    </div>
+                    <div className="w-full border rounded-md overflow-hidden bg-slate-100" style={{ height: 'calc(100vh - 460px)', minHeight: '420px' }}>
+                      {attachments[pdfIdx]?.isPdf ? (
+                        <iframe
+                          key={attachments[pdfIdx].id}
+                          src={attachments[pdfIdx].url}
+                          className="w-full h-full"
+                          title={attachments[pdfIdx].name}
+                          data-testid="pdf-preview-iframe"
+                        />
+                      ) : (
+                        <div className="h-full flex flex-col items-center justify-center text-slate-500 text-sm gap-2">
+                          <FileText className="h-8 w-8" />
+                          <p>Bukan PDF. <a href={attachments[pdfIdx]?.dlUrl} className="text-blue-800 underline" download>Unduh {attachments[pdfIdx]?.name}</a></p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="riwayat" className="p-5" data-testid="tab-riwayat-content">
+                {riwayatDisposisi.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500 text-sm" data-testid="riwayat-empty">
+                    <History className="h-8 w-8 mx-auto mb-2 opacity-40" />
+                    Belum ada riwayat disposisi.
+                  </div>
+                ) : (
+                  <ol className="relative border-l-2 border-slate-200 pl-5 space-y-4">
+                    {riwayatDisposisi.map((r, i) => {
+                      const noteArr = Array.isArray(r.note) ? r.note : (r.note ? [r.note] : [])
+                      const tujuanArr = Array.isArray(r.tujuan) ? r.tujuan : (r.tujuan_name ? [r.tujuan_name] : [])
+                      return (
+                        <li key={r.id || i} className="text-sm" data-testid={`riwayat-item-${i}`}>
+                          <span className="absolute -left-[7px] w-3 h-3 rounded-full bg-blue-800 border-2 border-white" />
+                          <div className="flex items-baseline gap-2 flex-wrap">
+                            <span className="font-semibold text-slate-800">{r.jenis || 'Disposisi'}</span>
+                            {r.is_atensi && <Badge className="bg-amber-100 text-amber-800 text-[9px]"><Star className="h-2 w-2 mr-0.5" />ATENSI</Badge>}
+                            <span className="text-xs text-slate-500 ml-auto">{r.tanggal || (r.created_at || '').slice(0, 10)} {r.waktu || ''}</span>
+                          </div>
+                          <p className="text-slate-600 mt-1"><span className="text-slate-400">Dari:</span> {r.dari_name || '-'}</p>
+                          {tujuanArr.length > 0 && (
+                            <p className="text-slate-600"><span className="text-slate-400">Ke:</span> {tujuanArr.join(' · ')}</p>
+                          )}
+                          {(noteArr.length > 0 || r.custom_note) && (
+                            <div className="mt-1.5 rounded bg-slate-50 border border-slate-200 px-2 py-1.5 text-slate-700 italic text-xs">
+                              {noteArr.length > 0 ? noteArr.join(' · ') : r.custom_note}
+                            </div>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ol>
+                )}
+              </TabsContent>
+            </Tabs>
           </Card>
 
-          {/* RIGHT: Disposisi form */}
+          {/* Disposisi form */}
           <Card className="border-2 border-blue-300">
             <CardHeader className="pb-3 bg-blue-50/60">
               <CardTitle className="text-base flex items-center gap-2"><ArrowRightLeft className="h-4 w-4 text-blue-800" /> Formulir Disposisi</CardTitle>
-
             </CardHeader>
             <CardContent className="space-y-4 pt-4">
-              <div>
-                <Label>Unit Tujuan</Label>
-                <Select value={toUnit} onValueChange={setToUnit}>
-                  <SelectTrigger><SelectValue placeholder="Pilih unit" /></SelectTrigger>
-                  <SelectContent>
-                    {reference.units?.map((u) => <SelectItem key={u} value={u}>{shortUnit(u)}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>Jenis</Label>
-                <Select value={caseType} onValueChange={setCaseType}>
-                  <SelectTrigger><SelectValue placeholder="Pilih jenis" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="dumas">Dumas (Pengaduan)</SelectItem>
-                    <SelectItem value="non_dumas">Non-Dumas</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <Label>Jenis Kasus</Label>
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setCaseType('dumas')}
+                      className={`px-3 py-2 rounded-md border text-sm font-medium ${caseType === 'dumas' ? 'bg-blue-800 text-white border-blue-900' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`}
+                      data-testid="case-type-dumas"
+                    >DUMAS (Pengaduan)</button>
+                    <button
+                      type="button"
+                      onClick={() => setCaseType('non_dumas')}
+                      className={`px-3 py-2 rounded-md border text-sm font-medium ${caseType === 'non_dumas' ? 'bg-slate-800 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`}
+                      data-testid="case-type-non-dumas"
+                    >NON-DUMAS</button>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1">Tindak lanjut unit berbeda tergantung jenis.</p>
+                </div>
+                <div>
+                  <Label>Unit Tujuan</Label>
+                  <Select value={toUnit} onValueChange={setToUnit}>
+                    <SelectTrigger data-testid="disposisi-unit-select"><SelectValue placeholder="Pilih unit" /></SelectTrigger>
+                    <SelectContent>
+                      {reference.units?.map((u) => <SelectItem key={u} value={u}>{shortUnit(u)}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <div>
@@ -1470,38 +1658,27 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
 
               <div>
                 <Label>Instruksi / Catatan</Label>
-                <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Instruksi disposisi..." className="min-h-[80px]" />
+                <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Instruksi disposisi..." className="min-h-[70px]" data-testid="disposisi-note" />
               </div>
 
               <div className="flex items-center gap-2 rounded-md border p-3 bg-amber-50/30">
                 <Checkbox id="atensi-single" checked={isAtensi} onCheckedChange={setIsAtensi} />
                 <Label htmlFor="atensi-single" className="cursor-pointer flex items-center gap-1"><Star className="h-4 w-4 text-amber-500" /> Tandai sebagai ATENSI (prioritas)</Label>
               </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2 pt-2 border-t">
+                <Button variant="outline" onClick={goPrev} disabled={idx === 0}>← Sebelumnya</Button>
+                <Button variant="outline" onClick={() => onOpenCase(current.prepetrator_id)}>Buka Detail</Button>
+                <Button onClick={submitAndNext} disabled={submitting || !toUnit} className="bg-blue-800 hover:bg-blue-900 md:col-span-1" data-testid="disposisi-submit">
+                  {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ArrowRightLeft className="h-4 w-4 mr-2" />}
+                  Disposisi
+                </Button>
+                <Button variant="outline" onClick={goNext} disabled={idx >= queue.length - 1}>Berikutnya →</Button>
+              </div>
             </CardContent>
           </Card>
         </div>
-
-        {/* Bottom navigation bar - full width */}
-        <Card className="border-2 border-blue-200 bg-blue-50/40 sticky bottom-4 shadow-lg z-10">
-          <CardContent className="p-3">
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-center">
-              <Button variant="outline" onClick={goPrev} disabled={idx === 0} className="w-full">
-                ← Sebelumnya
-              </Button>
-              <Button variant="outline" onClick={() => onOpenCase(current.prepetrator_id)} className="w-full">
-                Buka Detail
-              </Button>
-              <Button onClick={submitAndNext} disabled={submitting || !toUnit} className="w-full bg-blue-800 hover:bg-blue-900 md:col-span-2">
-                {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ArrowRightLeft className="h-4 w-4 mr-2" />}
-                Disposisi &amp; Lanjut
-              </Button>
-              <Button variant="outline" onClick={goNext} disabled={idx >= queue.length - 1} className="w-full">
-                Berikutnya →
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </>
+      </div>
       )}
     </div>
   )

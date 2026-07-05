@@ -4,6 +4,15 @@
 
 export const KASUBBID_UNIT = 'KASUBBID PAMINAL POLDA JAWA BARAT'
 
+// Aliases used by Gajamada for the same Kasubbid position. Gajamada's
+// `disposisi_case_position` uses 'POLDA JABAR SUBBID PAMINAL' while our
+// internal display / units_master uses the fully-qualified name. Include
+// both in list filters so we surface all incoming Kasubbid-level cases.
+export const KASUBBID_UNIT_ALIASES = [
+  'POLDA JABAR SUBBID PAMINAL',
+  'KASUBBID PAMINAL POLDA JAWA BARAT',
+]
+
 export const CHILD_UNITS = [
   'UNIT 1 SUBBID PAMINAL POLDA JAWA BARAT',
   'UNIT 2 SUBBID PAMINAL POLDA JAWA BARAT',

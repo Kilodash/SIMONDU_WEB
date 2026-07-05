@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import * as gajamada from '@/lib/gajamada'
 import { getDb, getActiveUnits } from '@/lib/db'
 import { authenticate, signSession, getCookieHeader, clearCookieHeader, getUserFromRequest } from '@/lib/auth'
-import { CHILD_UNITS, KASUBBID_UNIT, PAMINAL_SCOPE_UNITS, CATEGORY_OPTIONS, DERIVED_STATUS } from '@/lib/units'
+import { CHILD_UNITS, KASUBBID_UNIT, KASUBBID_UNIT_ALIASES, PAMINAL_SCOPE_UNITS, CATEGORY_OPTIONS, DERIVED_STATUS } from '@/lib/units'
 import { getSupabaseAdmin, STORAGE_BUCKET, ensureBucket } from '@/lib/supabase-admin'
 import { FOLLOWUP_DOC_TYPES, STAGE_LABELS, HASIL_LIDIK_OPTIONS, SETTLEMENT_OPTIONS, renderNumberTemplate, computeChecklist } from '@/lib/checklist'
 
@@ -605,7 +605,7 @@ async function handleRoute(request, ctx) {
       const db = await getDb()
 
       // Gajamada cases at KASUBBID position, not yet dispositioned
-      const r = await gajamada.listCases({ units: [KASUBBID_UNIT], size: 100 }).catch(() => ({ data: [] }))
+      const r = await gajamada.listCases({ units: KASUBBID_UNIT_ALIASES, size: 100 }).catch(() => ({ data: [] }))
       const pids = r.data.map((c) => c.prepetrator_id)
       const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
       const dispSet = new Set(disp.map((d) => d.prepetrator_id))
@@ -688,7 +688,7 @@ async function handleRoute(request, ctx) {
     // Lightweight count-only endpoint for sidebar notification badge
     if (route === '/disposisi-queue/count' && method === 'GET') {
       if (!(me.role === 'kasubbid' || me.role === 'admin')) return ok({ count: 0 })
-      const r = await gajamada.listCases({ units: [KASUBBID_UNIT], size: 100 }).catch(() => ({ data: [] }))
+      const r = await gajamada.listCases({ units: KASUBBID_UNIT_ALIASES, size: 100 }).catch(() => ({ data: [] }))
       const db = await getDb()
       const pids = r.data.map((c) => c.prepetrator_id)
       const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
