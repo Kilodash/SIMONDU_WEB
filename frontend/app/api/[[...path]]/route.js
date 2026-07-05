@@ -7,6 +7,10 @@ import { CHILD_UNITS, KASUBBID_UNIT, KASUBBID_UNIT_ALIASES, PAMINAL_SCOPE_UNITS,
 import { getSupabaseAdmin, STORAGE_BUCKET, ensureBucket } from '@/lib/supabase-admin'
 import { FOLLOWUP_DOC_TYPES, STAGE_LABELS, HASIL_LIDIK_OPTIONS, SETTLEMENT_OPTIONS, renderNumberTemplate, computeChecklist } from '@/lib/checklist'
 
+// Lazy-load astina modules (avoid loading imap/native modules at import time)
+function loadAstinaClient() { return require('@/lib/astina-client') }
+function loadAstinaAuth() { return require('@/lib/astina-auth') }
+
 // Default disposisi task templates
 const DEFAULT_DISPOSISI_TASKS = ['LIDIK/PULBAKET', 'GELARKAN', 'SP2HP2', 'LAPORKAN HASILNYA']
 
@@ -75,6 +79,7 @@ async function enrichCase(caseObj) {
   const checklist = computeChecklist(cleanOutcome, strip(checklistRows), strip(documents))
   return {
     ...caseObj,
+    summary: caseObj.perihal || caseObj.summary || (caseObj.content ? String(caseObj.content).slice(0, 200) : ''),
     disposisi_case_position: latestDisp?.to_unit || caseObj.disposisi_case_position,
     derived_status: derived,
     is_atensi: !!latestDisp?.is_atensi,
@@ -195,6 +200,165 @@ async function handleRoute(request, ctx) {
   }
 
   try {
+    // ---------- PUBLIC ROUTES (no auth required) ----------
+    if (route === '/astina/captcha' && method === 'GET') {
+      try {
+        const c = await loadAstinaAuth().getNewCaptcha()
+        return ok(c)
+      } catch (e) {
+        return fail('Gagal ambil captcha: ' + e.message, 502)
+      }
+    }
+
+    if (route === '/astina/login' && method === 'GET') {
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ASTINA Login</title><style>body{font-family:system-ui;max-width:500px;margin:40px auto;padding:20px;background:#111;color:#eee}
+input,button{width:100%;padding:10px;margin:6px 0;box-sizing:border-box;border-radius:6px;border:1px solid #444;background:#222;color:#eee;font-size:15px}
+button{background:#2563eb;border:none;cursor:pointer;font-weight:600}button:hover{background:#1d4ed8}
+.msg{padding:8px;border-radius:6px;margin:8px 0;display:none}.err{background:#7f1d1d;display:block}.ok{background:#14532d;display:block}
+h2{margin-bottom:4px}label{font-size:13px;color:#aaa;margin-top:8px;display:block}
+#captcha-img{width:100%;border-radius:6px;margin:6px 0;background:#fff;padding:4px}
+hr{border:none;border-top:1px solid #333;margin:16px 0}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #888;border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;margin-right:6px;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}</style></head><body>
+<h2>ASTINA Login</h2>
+<p id="status" class="msg"></p>
+
+<div id="auto-section">
+<p><span class="spinner"></span> Login otomatis via LLM captcha solver...</p>
+</div>
+
+<div id="manual-section" style="display:none">
+<label>Captcha (jika auto-solve gagal):</label>
+<img id="captcha-img" src="" alt="">
+<input id="captcha-val" placeholder="Ketik teks captcha di atas">
+<button onclick="manualLogin()">Login Manual</button>
+<button onclick="loadCaptcha()" style="background:#555">Refresh Captcha</button>
+</div>
+
+<hr>
+
+<div id="step-otp" style="display:none">
+<label>Masukkan OTP dari email Zimbra:</label>
+<input id="otp-val" placeholder="Masukkan kode OTP">
+<button onclick="verifyOtp()">Verifikasi OTP</button>
+<button onclick="fetchOtp()" style="background:#166534">Ambil OTP dari Zimbra</button>
+</div>
+
+<script>
+let captchaKey=null;
+const msg=document.getElementById('status');
+function showMsg(t,ok){msg.textContent=t;msg.className='msg '+(ok?'ok':'err');}
+
+async function loadCaptcha(){
+  try{
+    const r=await fetch('/api/astina/captcha');
+    const j=await r.json();
+    if(j.key&&j.image_base64){
+      captchaKey=j.key;
+      document.getElementById('captcha-img').src='data:image/png;base64,'+j.image_base64;
+    }
+  }catch(_){}
+}
+
+async function manualLogin(){
+  const captcha=document.getElementById('captcha-val').value.trim();
+  if(!captcha){showMsg('Isi captcha!',false);return;}
+  if(!captchaKey){showMsg('Captcha belum loaded',false);return;}
+  showMsg('Login manual...',false);
+  try{
+    const r=await fetch('/api/astina/login',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({manual_captcha:{key:captchaKey,captcha}})});
+    const j=await r.json();
+    if(j.step==='authenticated'){showMsg('Login berhasil! Kembali ke aplikasi.',true);return;}
+    document.getElementById('step-otp').style.display='block';
+    showMsg(j.message||'Masukkan OTP.',false);
+  }catch(e){showMsg('Error: '+e.message,false);}
+}
+
+async function fetchOtp(){
+  showMsg('Mengambil OTP dari Zimbra (max 60 detik)...',false);
+  try{
+    const r=await fetch('/api/astina/fetch-otp',{method:'POST'});
+    const j=await r.json();
+    if(j.ok!==false){showMsg('OTP diambil! Verifikasi.',true);}
+    else{showMsg(j.error||'Gagal ambil OTP',false);}
+  }catch(e){showMsg('Error: '+e.message,false);}
+}
+
+async function verifyOtp(){
+  const otp=document.getElementById('otp-val').value.trim();
+  if(!otp){showMsg('Masukkan OTP',false);return;}
+  showMsg('Verifikasi OTP...',false);
+  try{
+    const r=await fetch('/api/astina/verify-otp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({otp})});
+    const j=await r.json();
+    if(j.ok!==false){showMsg('Login berhasil! Kembali ke aplikasi.',true);}
+    else{showMsg(j.error||'OTP salah',false);}
+  }catch(e){showMsg('Error: '+e.message,false);}
+}
+
+async function autoLogin(){
+  showMsg('Login otomatis... mohon tunggu.',false);
+  try{
+    const r=await fetch('/api/astina/login',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const j=await r.json();
+    if(j.step==='authenticated'){showMsg('Login berhasil! Kembali ke aplikasi.',true);return;}
+    document.getElementById('auto-section').style.display='none';
+    document.getElementById('manual-section').style.display='block';
+    document.getElementById('step-otp').style.display='block';
+    loadCaptcha();
+    showMsg(j.message||j.error||'Step 1 OK. Mengambil OTP dari Zimbra...',false);
+    fetchOtp();
+  }catch(e){
+    document.getElementById('auto-section').style.display='none';
+    document.getElementById('manual-section').style.display='block';
+    loadCaptcha();
+    showMsg('Auto-login gagal: '+e.message+'. Coba manual.',false);
+  }
+}
+
+autoLogin();
+</script></body></html>`
+      return new Response(html, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } })
+    }
+
+    if (route === '/astina/login' && method === 'POST') {
+      let manualOtp = null, waitOtp = false, manualCaptcha = null
+      try {
+        const j = await request.json()
+        manualOtp = j?.otp ? String(j.otp) : null
+        waitOtp = !!j?.wait_otp
+        manualCaptcha = j?.manual_captcha || null
+      } catch (_) {}
+      try {
+        const result = await loadAstinaAuth().autoLogin({ manualOtp, waitOtp, manualCaptcha })
+        return ok(result)
+      } catch (e) {
+        return fail('ASTINA login gagal: ' + e.message, 502)
+      }
+    }
+
+    if (route === '/astina/fetch-otp' && method === 'POST') {
+      try {
+        const r = await loadAstinaAuth().fetchOtpFromZimbraAndValidate()
+        return ok(r)
+      } catch (e) {
+        return fail('IMAP fetch OTP gagal: ' + e.message, 502)
+      }
+    }
+
+    if (route === '/astina/verify-otp' && method === 'POST') {
+      const { otp } = await request.json()
+      if (!otp) return fail('OTP wajib diisi')
+      try {
+        await loadAstinaAuth().verifyOtpOnly(String(otp))
+        return ok({ ok: true })
+      } catch (e) {
+        return fail('Verifikasi OTP gagal: ' + e.message, 502)
+      }
+    }
+
     // ---------- AUTH ----------
     if (route === '/auth/login' && method === 'POST') {
       const { username, password } = await request.json()
@@ -220,8 +384,7 @@ async function handleRoute(request, ctx) {
 
     // ---------- ASTINA (api-gw.polri.go.id) auto-login + fetch ----------
     if (route === '/astina/status' && method === 'GET') {
-      const { currentSession } = require('@/lib/astina-auth')
-      const s = await currentSession()
+      const s = await loadAstinaAuth().currentSession()
       return ok({
         session: {
           authenticated: !!s.access_token && !!s.otp_verified,
@@ -234,56 +397,17 @@ async function handleRoute(request, ctx) {
     }
 
     if (route === '/astina/logout' && method === 'POST') {
-      const { logoutSession } = require('@/lib/astina-auth')
-      await logoutSession()
+      await loadAstinaAuth().logoutSession()
       await logAudit(me, 'astina_logout', 'session')
       return ok({ ok: true })
     }
 
-    if (route === '/astina/login' && method === 'POST') {
-      const { autoLogin } = require('@/lib/astina-auth')
-      let manualOtp = null, waitOtp = false
-      try { const j = await request.json(); manualOtp = j?.otp ? String(j.otp) : null; waitOtp = !!j?.wait_otp } catch (_) {}
-      try {
-        const result = await autoLogin({ manualOtp, waitOtp })
-        await logAudit(me, 'astina_login', 'session', { step: result.step, otp_used: result.otp_used })
-        return ok(result)
-      } catch (e) {
-        return fail('ASTINA login gagal: ' + e.message, 502)
-      }
-    }
-
-    if (route === '/astina/fetch-otp' && method === 'POST') {
-      const { fetchOtpFromZimbraAndValidate } = require('@/lib/astina-auth')
-      try {
-        const r = await fetchOtpFromZimbraAndValidate()
-        await logAudit(me, 'astina_fetch_otp', 'session')
-        return ok(r)
-      } catch (e) {
-        return fail('IMAP fetch OTP gagal: ' + e.message, 502)
-      }
-    }
-
-    if (route === '/astina/verify-otp' && method === 'POST') {
-      const { verifyOtpOnly } = require('@/lib/astina-auth')
-      const { otp } = await request.json()
-      if (!otp) return fail('OTP wajib diisi')
-      try {
-        await verifyOtpOnly(String(otp))
-        await logAudit(me, 'astina_otp_verify', 'session')
-        return ok({ ok: true })
-      } catch (e) {
-        return fail('Verifikasi OTP gagal: ' + e.message, 502)
-      }
-    }
-
     if (route === '/astina/surat-baru' && method === 'GET') {
-      const { getSuratBaru } = require('@/lib/astina-client')
       const per_page = parseInt(url.searchParams.get('per_page') || '30', 10)
       const page = parseInt(url.searchParams.get('page') || '1', 10)
       const q = url.searchParams.get('q') || ''
       try {
-        const r = await getSuratBaru({ per_page, page, q })
+        const r = await loadAstinaClient().getSuratBaru({ per_page, page, q })
         return ok(r)
       } catch (e) {
         if (e.code === 'OTP_REQUIRED') return fail('ASTINA OTP required. POST /api/astina/verify-otp', 428)
@@ -292,12 +416,11 @@ async function handleRoute(request, ctx) {
     }
 
     if (route === '/astina/surat-masuk' && method === 'GET') {
-      const { getSuratMasuk } = require('@/lib/astina-client')
       const per_page = parseInt(url.searchParams.get('per_page') || '30', 10)
       const page = parseInt(url.searchParams.get('page') || '1', 10)
       const q = url.searchParams.get('q') || ''
       try {
-        const r = await getSuratMasuk({ per_page, page, q })
+        const r = await loadAstinaClient().getSuratMasuk({ per_page, page, q })
         return ok(r)
       } catch (e) {
         if (e.code === 'OTP_REQUIRED') return fail('ASTINA OTP required. POST /api/astina/verify-otp', 428)
@@ -309,9 +432,8 @@ async function handleRoute(request, ctx) {
       const m = route.match(/^\/astina\/surat\/([^/]+)\/riwayat$/)
       if (m && method === 'GET') {
         const id = decodeURIComponent(m[1])
-        const { getRiwayatDisposisi } = require('@/lib/astina-client')
         try {
-          const r = await getRiwayatDisposisi(id)
+          const r = await loadAstinaClient().getRiwayatDisposisi(id)
           return ok({ riwayat_disposisi: r.data || [], source_path: r.source_path })
         } catch (e) {
           if (e.code === 'OTP_REQUIRED') return fail('ASTINA OTP required', 428)
@@ -324,11 +446,10 @@ async function handleRoute(request, ctx) {
       const m = route.match(/^\/astina\/surat\/([^/]+)$/)
       if (m && method === 'GET') {
         const id = decodeURIComponent(m[1])
-        const { getSuratDetail, getRiwayatDisposisi } = require('@/lib/astina-client')
         try {
           const [detail, riwayat] = await Promise.all([
-            getSuratDetail(id),
-            getRiwayatDisposisi(id).catch(() => ({ status: false, data: [] })),
+            loadAstinaClient().getSuratDetail(id),
+            loadAstinaClient().getRiwayatDisposisi(id).catch(() => ({ status: false, data: [] })),
           ])
           return ok({ detail: detail.data, riwayat_disposisi: riwayat.data || [] })
         } catch (e) {
@@ -342,11 +463,10 @@ async function handleRoute(request, ctx) {
       const m = route.match(/^\/astina\/surat\/([^/]+)\/tujuan-disposisi$/)
       if (m && method === 'GET') {
         const id = decodeURIComponent(m[1])
-        const { getTujuanDisposisi, getSuratBaruDetail } = require('@/lib/astina-client')
         try {
           const [tujuan, det] = await Promise.all([
-            getTujuanDisposisi(id),
-            getSuratBaruDetail(id).catch(() => ({ ok: false })),
+            loadAstinaClient().getTujuanDisposisi(id),
+            loadAstinaClient().getSuratBaruDetail(id).catch(() => ({ ok: false })),
           ])
           return ok({
             tujuan: tujuan.data || [],
@@ -363,10 +483,9 @@ async function handleRoute(request, ctx) {
       const m = route.match(/^\/astina\/surat\/([^/]+)\/disposisi$/)
       if (m && method === 'POST') {
         const id = decodeURIComponent(m[1])
-        const { postDisposisi } = require('@/lib/astina-client')
         const b = await req.json().catch(() => ({}))
         try {
-          const r = await postDisposisi({
+          const r = await loadAstinaClient().postDisposisi({
             suratId: id,
             notes: b.notes || b.note || [],
             tujuan: b.tujuan || [],
@@ -386,9 +505,8 @@ async function handleRoute(request, ctx) {
       const m = route.match(/^\/astina\/attachment\/([^/]+)$/)
       if (m && method === 'GET') {
         const fileId = decodeURIComponent(m[1])
-        const { getFileLink } = require('@/lib/astina-client')
         try {
-          const link = await getFileLink(fileId)
+          const link = await loadAstinaClient().getFileLink(fileId)
           if (!link.ok) return fail('Gagal ambil link attachment: ' + link.message, 502)
           // Fetch the signed file URL (no auth needed once signed)
           const upstream = await fetch(link.url)
@@ -655,6 +773,7 @@ async function handleRoute(request, ctx) {
       const dispSet = new Set(disp.map((d) => d.prepetrator_id))
       const gajamadaQueue = r.data.filter((c) => !dispSet.has(c.prepetrator_id)).map((c) => ({
         ...c,
+        summary: c.perihal || c.summary || (c.content ? String(c.content).slice(0, 200) : ''),
         _source: 'gajamada',
         source_alias: c.source_alias || 'GAJAMADA',
       }))
@@ -686,43 +805,48 @@ async function handleRoute(request, ctx) {
       const astinaQueue = []
       let astinaError = null
       try {
-        const { getSuratBaru, getRiwayatDisposisi } = require('@/lib/astina-client')
-        const r = await getSuratBaru({ per_page: 30, page: 1 })
-        const suratBaru = r.status ? (r.data || []) : []
-        const astinaIds = suratBaru.map((s) => s.id)
-        const astinaDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: astinaIds } }).toArray().catch(() => [])
-        const astinaDispSet = new Set(astinaDisp.map((d) => d.prepetrator_id))
-        // Fetch riwayat disposisi in parallel (best-effort, limit concurrency)
-        const riwayatMap = {}
-        await Promise.all(suratBaru.slice(0, 20).map(async (s) => {
-          try {
-            const rr = await getRiwayatDisposisi(s.id)
-            riwayatMap[s.id] = rr.status ? (rr.data || []) : []
-          } catch (_) { riwayatMap[s.id] = [] }
-        }))
-        for (const s of suratBaru) {
-          if (!astinaDispSet.has(s.id)) {
-            astinaQueue.push({
-              id: s.id, prepetrator_id: s.id,
-              prepetrator_name: '-', category: 'NON-DUMAS',
-              source_alias: 'ASTINA',
-              summary: '', content: '',
-              pengirim: s.pengirim || s.dari_name || '', created_date: s.tanggal_surat || s.created_at || new Date().toISOString(),
-              status_label: s.status_surat || 'Diterima',
-              perihal: s.perihal || '', nomor_surat: s.no_surat || '',
-              tgl_surat: s.tanggal_surat || s.tanggal, case_type: 'non_pengaduan',
-              jenis_surat: s.klasifikasi || s.jenis_name || '',
-              tipe: s.tipe, derajat: s.derajat, note: s.note, kka_name: s.kka_name,
-              pembuat_surat: s.pembuat_surat, jam: s.jam,
-              files: s.file || [], lampiran: s.lampiran || [],
-              _source: 'astina', _is_live: true,
-              _astina_raw: s,
-              _riwayat_disposisi: riwayatMap[s.id] || [],
-            })
+        // Check ASTINA session first — skip auto-login in queue to avoid long captcha+OTP flow
+        const sess = await loadAstinaAuth().currentSession().catch(() => ({}))
+        if (!sess.access_token || !sess.otp_verified) {
+          astinaError = 'ASTINA belum login. Silakan login manual.'
+        } else {
+          const r = await loadAstinaClient().getSuratBaru({ per_page: 30, page: 1 })
+          const suratBaru = r.status ? (r.data || []) : []
+          const astinaIds = suratBaru.map((s) => s.id)
+          const astinaDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: astinaIds } }).toArray().catch(() => [])
+          const astinaDispSet = new Set(astinaDisp.map((d) => d.prepetrator_id))
+          const riwayatMap = {}
+          await Promise.all(suratBaru.slice(0, 20).map(async (s) => {
+            try {
+              const rr = await loadAstinaClient().getRiwayatDisposisi(s.id)
+              riwayatMap[s.id] = rr.status ? (rr.data || []) : []
+            } catch (_) { riwayatMap[s.id] = [] }
+          }))
+          for (const s of suratBaru) {
+            if (!astinaDispSet.has(s.id)) {
+              astinaQueue.push({
+                id: s.id, prepetrator_id: s.id,
+                prepetrator_name: '-', category: 'NON-DUMAS',
+                source_alias: 'ASTINA',
+                summary: '', content: '',
+                pengirim: s.pengirim || s.dari_name || '', created_date: s.tanggal_surat || s.created_at || new Date().toISOString(),
+                status_label: s.status_surat || 'Diterima',
+                perihal: s.perihal || '', nomor_surat: s.no_surat || '',
+                tgl_surat: s.tanggal_surat || s.tanggal, case_type: 'non_pengaduan',
+                jenis_surat: s.klasifikasi || s.jenis_name || '',
+                tipe: s.tipe, derajat: s.derajat, note: s.note, kka_name: s.kka_name,
+                pembuat_surat: s.pembuat_surat, jam: s.jam,
+                files: s.file || [], lampiran: s.lampiran || [],
+                _source: 'astina', _is_live: true,
+                _astina_raw: s,
+                _riwayat_disposisi: riwayatMap[s.id] || [],
+              })
+            }
           }
         }
       } catch (e) {
         astinaError = e.code === 'OTP_REQUIRED' ? 'OTP_REQUIRED' : e.message
+        console.error('[disposisi-queue] ASTINA error:', astinaError)
       }
 
       const queue = [...gajamadaQueue, ...localQueue, ...astinaQueue]
@@ -741,8 +865,7 @@ async function handleRoute(request, ctx) {
 
       // Add ASTINA count (best-effort, uses Bearer session; ignores if not logged in)
       try {
-        const { getSuratBaru } = require('@/lib/astina-client')
-        const r = await getSuratBaru({ per_page: 30, page: 1 })
+        const r = await loadAstinaClient().getSuratBaru({ per_page: 30, page: 1 })
         if (r.status) {
           const astinaIds = (r.data || []).map((s) => s.id)
           const astinaDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: astinaIds } }).toArray().catch(() => [])
@@ -1325,6 +1448,69 @@ async function handleRoute(request, ctx) {
       return ok({ data: rows.map(({ _id, ...r }) => r) })
     }
 
+    // ---------- CONNECTION STATUS ----------
+    if (route === '/connection-status' && method === 'GET') {
+      // Check ASTINA session
+      let astinaConnected = false
+      try {
+        const s = await loadAstinaAuth().currentSession()
+        astinaConnected = !!(s.access_token && s.otp_verified)
+      } catch (_) {}
+
+      // Check Gajamada session (lightweight: try a minimal API call)
+      let gajamadaConnected = false
+      try {
+        await gajamada.listCases({ size: 1 })
+        gajamadaConnected = true
+      } catch (e) {
+        gajamadaConnected = e.code !== 'GAJAMADA_DISABLED'
+      }
+
+      return ok({
+        astina: { connected: astinaConnected },
+        gajamada: { connected: gajamadaConnected },
+        ai: { connected: !!(process.env.EMERGENT_LLM_KEY || process.env.OPENCODE_API_KEY) },
+      })
+    }
+
+    // ---------- SETTINGS ----------
+    if (route === '/settings' && method === 'GET') {
+      const mask = (s) => !s ? null : s.length <= 6 ? '***' : s.slice(0, 3) + '***' + s.slice(-3)
+      const astinaSess = await loadAstinaAuth().currentSession().catch(() => ({}))
+      const aiCheck = {
+        captcha_model: process.env.CAPTCHA_MODEL || 'gemini/gemini-2.5-flash',
+        has_emergent_key: !!process.env.EMERGENT_LLM_KEY,
+        has_opencode_key: !!process.env.OPENCODE_API_KEY,
+      }
+      return ok({
+        astina: {
+          base_url: process.env.ASTINA_BASE_URL || 'https://astina.polri.go.id',
+          username: process.env.ASTINA_USERNAME || null,
+          has_password: !!process.env.ASTINA_PASSWORD,
+          session: {
+            authenticated: !!(astinaSess.access_token && astinaSess.otp_verified),
+            obtained_at: astinaSess.obtained_at || null,
+          },
+        },
+        gajamada: {
+          base_url: process.env.GAJAMADA_BASE_URL || 'https://gajamada-propam.polri.go.id',
+          username: process.env.GAJAMADA_USERNAME || null,
+          has_password: !!process.env.GAJAMADA_PASSWORD,
+          database: process.env.GAJAMADA_DATABASE || 'divpropam',
+        },
+        ai: {
+          ...aiCheck,
+          emergent_key: mask(process.env.EMERGENT_LLM_KEY),
+          opencode_key: mask(process.env.OPENCODE_API_KEY),
+        },
+        zimbra: {
+          email: process.env.ZIMBRA_EMAIL || null,
+          has_password: !!process.env.ZIMBRA_PASSWORD,
+          imap_host: process.env.ZIMBRA_IMAP_HOST || 'mail.polri.go.id',
+        },
+      })
+    }
+
     // ---------- DOCUMENT REGISTER ----------
     if (route === '/document-register' && method === 'GET') {
       try {
@@ -1724,7 +1910,7 @@ async function handleRoute(request, ctx) {
     if (route === '/astina-fetch' && method === 'GET') {
       if (!(me.role === 'kasubbid' || me.role === 'admin')) return fail('Hanya Kasubbid/Admin', 403)
       try {
-        const { getSuratBaru } = require('../../../lib/astina-client')
+        const { getSuratBaru } = loadAstinaClient()
         const data = await getSuratBaru()
         return ok(data)
       } catch (e) {
@@ -1745,8 +1931,8 @@ async function handleRoute(request, ctx) {
     if (route === '/astina-refresh-cookie' && method === 'POST') {
       if (!(me.role === 'kasubbid' || me.role === 'admin')) return fail('Hanya Kasubbid/Admin', 403)
       try {
-        const { refreshAstinaCookie } = require('../../../lib/astina-auth')
-        const result = await refreshAstinaCookie()
+        const { autoLogin } = loadAstinaAuth()
+        const result = await autoLogin({ waitOtp: true })
         return ok(result)
       } catch (e) {
         return fail('Gagal refresh cookie ASTINA: ' + (e.message || 'unknown'))
@@ -1773,8 +1959,8 @@ if (typeof globalThis !== 'undefined' && !globalThis.__astinaRefreshScheduled &&
   const REFRESH_MS = 2 * 60 * 60 * 1000
   const doRefresh = async () => {
     try {
-      const { refreshAstinaCookie } = require('../../../lib/astina-auth')
-      const result = await refreshAstinaCookie()
+      const { autoLogin } = require('@/lib/astina-auth')
+      const result = await autoLogin({ waitOtp: true })
       if (result.ok) console.log('[ASTINA] Auto-refresh cookie OK')
       else console.log('[ASTINA] Auto-refresh cookie FAILED:', result.error)
     } catch (e) { console.log('[ASTINA] Auto-refresh error:', e.message) }

@@ -18,10 +18,10 @@ import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import {
   Shield, LayoutDashboard, FolderKanban, Send, ClipboardList, LogOut, Search,
-  Loader2, FileText, Upload, RefreshCw, Users, ChevronRight, Download, Paperclip,
+  Loader2, FileText, Upload, RefreshCw, Users, ChevronLeft, ChevronRight, Download, Paperclip,
   Building2, User, Calendar, Tag, CheckCircle2, XCircle, Clock,
   AlertCircle, ArrowRightLeft, History, Star, QrCode, Mail, Phone, MapPin,
-  Bell, Hash, Ban, ListChecks, Scale,
+  Bell, Hash, Ban, Scale, Settings, Brain,
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RTooltip, PieChart, Pie, Cell, Legend, CartesianGrid } from 'recharts'
 
@@ -30,6 +30,7 @@ const APP_SUBTITLE = 'Sistem Monitoring Pengaduan — Polda Jabar'
 
 async function api(path, options = {}) {
   const res = await fetch(`/api${path}`, {
+    cache: 'no-store',
     ...options,
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     credentials: 'include',
@@ -189,7 +190,7 @@ function Dashboard({ user }) {
             <p className="font-semibold text-amber-900">{anev.kpi.totalAtensi} kasus ATENSI</p>
 
           </div>
-        </div>
+      </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -615,10 +616,10 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                                         <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => doGenerateNumber(item.key)} disabled={generatingNum === item.key}>
                                           {generatingNum === item.key ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Hash className="h-3 w-3 mr-1" />} {item.document_number || 'Buat Nomor'}
                                         </Button>
-                                      </div>
-                                    </div>
-                                  )}
-                                  <div className="flex items-center gap-2 flex-wrap">
+                                       </div>
+      </div>
+      )}
+                                   <div className="flex items-center gap-2 flex-wrap">
                                     <label>
                                       <input type="file" className="hidden" onChange={(e) => doUpload(e, item.key)} disabled={uploading === item.key} />
                                       <Button asChild size="sm" variant="outline" className="h-7 text-xs" disabled={uploading === item.key}>
@@ -1216,14 +1217,26 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   const resetForm = (ref) => {
     setToUnit(''); setNote(''); setIsAtensi(false); setCaseType('dumas')
     const defaults = (ref?.default_disposisi_tasks || reference.default_disposisi_tasks || [])
-    setTasks(defaults.map((label) => ({ label, checked: true })))
+    setTasks(defaults.map((label) => ({ label, checked: false })))
   }
+
+  const [astinaError, setAstinaError] = useState(null)
 
   const loadQueue = async () => {
     setLoading(true)
     try {
       const [q, r] = await Promise.all([api('/disposisi-queue'), api('/reference')])
       setQueue(q.data); setReference(r); resetForm(r); setIdx(0)
+      if (q.astina_error) {
+        setAstinaError(q.astina_error)
+        if (q.astina_error === 'OTP_REQUIRED') {
+          toast.warning('ASTINA memerlukan OTP. Silakan login ulang ke ASTINA.')
+        } else {
+          toast.warning(`ASTINA: ${q.astina_error}`)
+        }
+      } else {
+        setAstinaError(null)
+      }
     } catch (e) { toast.error(e.message) }
     finally { setLoading(false) }
   }
@@ -1243,21 +1256,21 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
     if (!current) { setDetail(null); setAtts([]); setTimeline([]); return }
     const pid = current.prepetrator_id
     const isAstina = current._source === 'astina'
+    // Immediately clear stale data so UI reflects the new case
+    setDetail(null); setAtts([]); setTimeline([])
+    let cancelled = false
     ;(async () => {
       try {
         if (isAstina) {
-          // ASTINA: attachments already in `current.files`; timeline is riwayat disposisi
-          setDetail(null); setAtts([])
           const r = await api(`/astina/surat/${encodeURIComponent(pid)}/riwayat`).catch(() => ({ riwayat_disposisi: [] }))
-          setTimeline((r.riwayat_disposisi || current._riwayat_disposisi || []).map((e) => ({ ...e, _source: 'astina' })))
+          if (!cancelled) setTimeline((r.riwayat_disposisi || current._riwayat_disposisi || []).map((e) => ({ ...e, _source: 'astina' })))
         } else {
-          // Gajamada: fetch detail + attachments + timeline in parallel
           const [d, a, t] = await Promise.all([
             api(`/cases/${encodeURIComponent(pid)}`).catch(() => ({ data: null })),
             api(`/cases/${encodeURIComponent(pid)}/attachments`).catch(() => ({ data: [] })),
             api(`/cases/${encodeURIComponent(pid)}/timeline-all`).catch(() => ({ data: [] })),
           ])
-          setDetail(d.data); setAtts(a.data); setTimeline(t.data || [])
+          if (!cancelled) { setDetail(d.data); setAtts(a.data); setTimeline(t.data || []) }
         }
       } catch (_) { /* ignore */ }
     })()
@@ -1265,7 +1278,8 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
     setActiveTab('info')
     setPdfIdx(0)
     setKronologiMode('singkat')
-  }, [idx, queue.length]) // eslint-disable-line
+    return () => { cancelled = true }
+  }, [idx, current?.prepetrator_id, current?._source]) // eslint-disable-line
 
   // Unified attachments across ASTINA / Gajamada sources
   const attachments = useMemo(() => {
@@ -1294,7 +1308,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   const toggleTask = (i) => {
     setTasks(tasks.map((t, ti) => ti === i ? { ...t, checked: !t.checked } : t))
   }
-  const addTask = () => setTasks([...tasks, { label: '', checked: true }])
+  const addTask = () => setTasks([...tasks, { label: '', checked: false }])
   const removeTask = (i) => setTasks(tasks.filter((_, ti) => ti !== i))
   const setTaskLabel = (i, label) => setTasks(tasks.map((t, ti) => ti === i ? { ...t, label } : t))
   const moveTask = (i, dir) => {
@@ -1400,51 +1414,19 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
           <p className="text-lg font-medium text-slate-700">Tidak ada surat/pengaduan di antrian</p>
         </CardContent></Card>
       ) : (
+      <>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* LIST kolom kiri narrow */}
-        <Card className="lg:col-span-3 flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 180px)' }}>
-          <CardHeader className="pb-2 border-b bg-slate-50/50 flex flex-row items-center justify-between">
-            <CardTitle className="text-sm flex items-center gap-2"><ListChecks className="h-4 w-4" /> Daftar Surat</CardTitle>
-            <button onClick={onGoMasterUnit} className="text-[10px] text-blue-800 hover:underline">Master Unit</button>
-          </CardHeader>
-          <div className="overflow-y-auto divide-y" data-testid="disposisi-queue-list">
-            {queue.map((c, i) => {
-              const active = i === idx
-              return (
-                <button
-                  key={c.prepetrator_id + '_' + i}
-                  onClick={() => setIdx(i)}
-                  className={`w-full text-left p-2.5 hover:bg-blue-50/60 transition-colors ${active ? 'bg-blue-50 border-l-4 border-l-blue-800' : 'border-l-4 border-l-transparent'}`}
-                  data-testid={`queue-item-${i}`}
-                >
-                  <div className="flex items-center gap-1 mb-1 flex-wrap">
-                    <Badge className={`${sourceColor(c.source_alias || c._source)} text-[9px] px-1.5 py-0`}>{(c._source || c.source_alias || '-').toString().toUpperCase()}</Badge>
-                    {c.kka_name && <Badge variant="outline" className="text-[9px] px-1 py-0">{c.kka_name}</Badge>}
-                    <span className="text-[9px] text-slate-500 ml-auto">{fmtDate(c.tgl_surat || c.created_date)}</span>
-                  </div>
-                  <p className="text-xs font-medium text-slate-800 line-clamp-2 leading-tight">
-                    {c.perihal || c.summary || c.content || c.prepetrator_name || c.prepetrator_id}
-                  </p>
-                  <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">
-                    {c.pengirim || c.prepetrator_name || '-'}
-                  </p>
-                </button>
-              )
-            })}
-          </div>
-        </Card>
-
         {/* PANEL 1: Detail + Preview/Kronologi + Timeline (scrollable) */}
-        <Card className="lg:col-span-5 flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 180px)' }}>
+        <Card className="lg:col-span-7 flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 180px)' }}>
           <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white p-3 shrink-0">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-[10px] uppercase text-blue-200">Surat #{idx + 1} dari {queue.length}</p>
                 <p className="text-xs font-bold font-mono mt-0.5 truncate" data-testid="current-case-id">{current?.prepetrator_id}</p>
-                <p className="text-xs text-blue-100 mt-1 line-clamp-2">{current?.perihal || current?.summary || current?.prepetrator_name || '-'}</p>
               </div>
               <div className="flex flex-col items-end gap-1 shrink-0">
                 {current?.source_alias && <Badge className={`${sourceColor(current.source_alias)} text-[10px]`}>{current._source === 'astina' ? 'ASTINA' : 'GAJAMADA'}</Badge>}
+                <button onClick={onGoMasterUnit} className="text-[10px] text-blue-200 hover:underline mt-1">Master Unit</button>
               </div>
             </div>
           </div>
@@ -1586,7 +1568,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
         </Card>
 
         {/* PANEL 2: Lembar Disposisi */}
-        <Card className="lg:col-span-4 flex flex-col overflow-hidden border-2 border-blue-300" style={{ maxHeight: 'calc(100vh - 180px)' }}>
+        <Card className="lg:col-span-5 flex flex-col overflow-hidden border-2 border-blue-300" style={{ maxHeight: 'calc(100vh - 180px)' }}>
           <CardHeader className="pb-2 bg-blue-50/60 border-b shrink-0">
             <CardTitle className="text-sm flex items-center gap-2"><ArrowRightLeft className="h-4 w-4 text-blue-800" /> Lembar Disposisi</CardTitle>
           </CardHeader>
@@ -1638,20 +1620,32 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
               <Label htmlFor="atensi-single" className="cursor-pointer flex items-center gap-1 text-xs"><Star className="h-3.5 w-3.5 text-amber-500" /> ATENSI (prioritas)</Label>
             </div>
 
-            <div className="border-t pt-3 space-y-2">
+            <div className="border-t pt-3">
               <Button onClick={submitAndNext} disabled={submitting || !toUnit} className="w-full bg-blue-800 hover:bg-blue-900" data-testid="disposisi-submit">
                 {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ArrowRightLeft className="h-4 w-4 mr-2" />}
                 Disposisi &amp; Lanjut
               </Button>
-              <div className="grid grid-cols-3 gap-1.5">
-                <Button variant="outline" size="sm" onClick={goPrev} disabled={idx === 0} className="text-xs">← Prev</Button>
-                <Button variant="outline" size="sm" onClick={() => onOpenCase(current.prepetrator_id)} className="text-xs">Detail</Button>
-                <Button variant="outline" size="sm" onClick={goNext} disabled={idx >= queue.length - 1} className="text-xs">Next →</Button>
-              </div>
             </div>
           </div>
         </Card>
       </div>
+
+      {/* Sticky bottom navigation bar */}
+      <div className="sticky bottom-0 z-10 bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]" data-testid="bottom-nav">
+        <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
+          <Button variant="outline" size="sm" onClick={goPrev} disabled={idx === 0} className="text-xs min-w-[80px]" data-testid="btn-prev">
+            <ChevronLeft className="h-4 w-4 mr-1" /> Prev
+          </Button>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-500 font-medium" data-testid="queue-counter">{idx + 1} / {queue.length}</span>
+            <Button variant="outline" size="sm" onClick={() => onOpenCase(current?.prepetrator_id)} className="text-xs" data-testid="btn-detail">Detail</Button>
+          </div>
+          <Button variant="outline" size="sm" onClick={goNext} disabled={idx >= queue.length - 1} className="text-xs min-w-[80px]" data-testid="btn-next">
+            Next <ChevronRight className="h-4 w-4 ml-1" />
+          </Button>
+        </div>
+      </div>
+      </>
       )}
     </div>
   )
@@ -2249,6 +2243,117 @@ function PersonelPage() {
   )
 }
 
+// ---------------- Settings Page ----------------
+function SettingsPage({ connStatus }) {
+  const [settings, setSettings] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api('/settings').then((r) => { setSettings(r) }).catch(() => {}).finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin text-blue-800" /></div>
+
+  const Dot = ({ ok }) => (
+    <span className={`inline-block h-2.5 w-2.5 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'} ${ok ? 'shadow-[0_0_6px_rgba(74,222,128,0.6)]' : 'shadow-[0_0_6px_rgba(248,113,113,0.6)]'}`} />
+  )
+  const Row = ({ label, value, isPassword }) => (
+    <div className="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
+      <span className="text-xs text-slate-500">{label}</span>
+      <span className="text-xs font-mono text-slate-700">{isPassword ? (value ? '***' : '-') : (value || '-')}</span>
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><Settings className="h-6 w-6" /> Pengaturan</h2>
+
+      {/* ASTINA */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Dot ok={connStatus.astina} />
+            <span>ASTINA (e-Office Polri)</span>
+            <Badge variant="outline" className={`text-[10px] ml-auto ${connStatus.astina ? 'text-green-700 border-green-300' : 'text-red-700 border-red-300'}`}>{connStatus.astina ? 'Terhubung' : 'Terputus'}</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm">
+          {settings?.astina ? (
+            <>
+              <Row label="Base URL" value={settings.astina.base_url} />
+              <Row label="Username" value={settings.astina.username} />
+              <Row label="Password" isPassword value={settings.astina.has_password} />
+              <Row label="Session OTP Verified" value={settings.astina.session?.otp_verified ? 'Ya' : 'Tidak'} />
+              <Row label="Terakhir Aktif" value={settings.astina.session?.obtained_at ? new Date(settings.astina.session.obtained_at).toLocaleString('id-ID') : '-'} />
+            </>
+          ) : <p className="text-xs text-slate-400 italic">Tidak ada data</p>}
+        </CardContent>
+      </Card>
+
+      {/* GAJAMADA */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Dot ok={connStatus.gajamada} />
+            <span>Gajamada (eBdesk Fusion)</span>
+            <Badge variant="outline" className={`text-[10px] ml-auto ${connStatus.gajamada ? 'text-green-700 border-green-300' : 'text-red-700 border-red-300'}`}>{connStatus.gajamada ? 'Terhubung' : 'Terputus'}</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm">
+          {settings?.gajamada ? (
+            <>
+              <Row label="Base URL" value={settings.gajamada.base_url} />
+              <Row label="Username" value={settings.gajamada.username} />
+              <Row label="Password" isPassword value={settings.gajamada.has_password} />
+              <Row label="Database" value={settings.gajamada.database} />
+            </>
+          ) : <p className="text-xs text-slate-400 italic">Tidak ada data</p>}
+        </CardContent>
+      </Card>
+
+      {/* AI */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Dot ok={connStatus.ai} />
+            <Brain className="h-4 w-4" />
+            <span>AI (Vision / Captcha Solver)</span>
+            <Badge variant="outline" className={`text-[10px] ml-auto ${connStatus.ai ? 'text-green-700 border-green-300' : 'text-red-700 border-red-300'}`}>{connStatus.ai ? 'Aktif' : 'Tidak Aktif'}</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm">
+          {settings?.ai ? (
+            <>
+              <Row label="Model (Captcha)" value={settings.ai.captcha_model} />
+              <Row label="Emergent LLM Key" isPassword value={settings.ai.has_emergent_key} />
+              <Row label="OpenCode Key" isPassword value={settings.ai.has_opencode_key} />
+            </>
+          ) : <p className="text-xs text-slate-400 italic">Tidak ada data</p>}
+        </CardContent>
+      </Card>
+
+      {/* ZIMBRA */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Mail className="h-4 w-4 text-slate-500" />
+            <span>Zimbra (OTP Email)</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm">
+          {settings?.zimbra ? (
+            <>
+              <Row label="Email" value={settings.zimbra.email} />
+              <Row label="Password" isPassword value={settings.zimbra.has_password} />
+              <Row label="IMAP Host" value={settings.zimbra.imap_host} />
+            </>
+          ) : <p className="text-xs text-slate-400 italic">Tidak ada data</p>}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
 // ---------------- App Shell ----------------
 function AppShell({ user, onLogout }) {
   const [tab, setTab] = useState('dashboard')
@@ -2256,11 +2361,23 @@ function AppShell({ user, onLogout }) {
   const isKasubbid = user.role === 'kasubbid' || user.role === 'admin'
   const [disposisiCount, setDisposisiCount] = useState(0)
   const notifiedRef = useRef(false)
+  const [connStatus, setConnStatus] = useState({ astina: false, gajamada: false, ai: false })
 
   const refreshDisposisiCount = async () => {
     if (!isKasubbid) return
     try { const r = await api('/disposisi-queue/count'); setDisposisiCount(r.count || 0) } catch (_) { /* ignore */ }
   }
+  const refreshConnStatus = async () => {
+    try {
+      const r = await api('/connection-status')
+      setConnStatus({ astina: !!r.astina?.connected, gajamada: !!r.gajamada?.connected, ai: !!r.ai?.connected })
+    } catch (_) { /* ignore */ }
+  }
+  useEffect(() => {
+    refreshConnStatus()
+    const interval = setInterval(refreshConnStatus, 60000)
+    return () => clearInterval(interval)
+  }, []) // eslint-disable-line
   useEffect(() => {
     if (!isKasubbid) return
     refreshDisposisiCount()
@@ -2286,6 +2403,7 @@ function AppShell({ user, onLogout }) {
     ...(isKasubbid ? [{ id: 'personel', label: 'Personel', icon: Users }] : []),
     { id: 'sync', label: 'Log Sync', icon: Send },
     { id: 'audit', label: 'Audit Log', icon: History },
+    { id: 'settings', label: 'Pengaturan', icon: Settings },
   ]
 
   return (
@@ -2296,6 +2414,20 @@ function AppShell({ user, onLogout }) {
             <div className="h-10 w-10 rounded-lg bg-white/10 flex items-center justify-center"><Shield className="h-5 w-5" /></div>
             <div>
               <p className="font-bold text-lg leading-tight">{APP_NAME}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 mt-3 pt-3 border-t border-white/10">
+            <div className="flex items-center gap-1.5" data-testid="status-astina">
+              <span className={`h-2 w-2 rounded-full ${connStatus.astina ? 'bg-green-400' : 'bg-red-400'} ${connStatus.astina ? 'shadow-[0_0_6px_rgba(74,222,128,0.6)]' : 'shadow-[0_0_6px_rgba(248,113,113,0.6)]'}`} />
+              <span className="text-[10px] text-blue-200">ASTINA</span>
+            </div>
+            <div className="flex items-center gap-1.5" data-testid="status-gajamada">
+              <span className={`h-2 w-2 rounded-full ${connStatus.gajamada ? 'bg-green-400' : 'bg-red-400'} ${connStatus.gajamada ? 'shadow-[0_0_6px_rgba(74,222,128,0.6)]' : 'shadow-[0_0_6px_rgba(248,113,113,0.6)]'}`} />
+              <span className="text-[10px] text-blue-200">GAJAMADA</span>
+            </div>
+            <div className="flex items-center gap-1.5" data-testid="status-ai">
+              <span className={`h-2 w-2 rounded-full ${connStatus.ai ? 'bg-green-400' : 'bg-red-400'} ${connStatus.ai ? 'shadow-[0_0_6px_rgba(74,222,128,0.6)]' : 'shadow-[0_0_6px_rgba(248,113,113,0.6)]'}`} />
+              <span className="text-[10px] text-blue-200">AI</span>
             </div>
           </div>
         </div>
@@ -2339,6 +2471,7 @@ function AppShell({ user, onLogout }) {
           {tab === 'personel' && isKasubbid && <PersonelPage />}
           {tab === 'sync' && <SyncLogsView />}
           {tab === 'audit' && <AuditView />}
+          {tab === 'settings' && <SettingsPage connStatus={connStatus} />}
         </div>
       </main>
 
