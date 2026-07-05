@@ -841,6 +841,9 @@ video {
 .mt-auto {
   margin-top: auto;
 }
+.ml-2 {
+  margin-left: 0.5rem;
+}
 .line-clamp-1 {
   overflow: hidden;
   display: -webkit-box;
@@ -1004,6 +1007,9 @@ video {
 }
 .min-h-svh {
   min-height: 100svh;
+}
+.min-h-\[240px\] {
+  min-height: 240px;
 }
 .w-0 {
   width: 0px;
@@ -1317,6 +1323,9 @@ video {
 }
 .grid-cols-5 {
   grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.grid-cols-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .flex-row {
   flex-direction: row;
