@@ -339,6 +339,50 @@ async function handleRoute(request, ctx) {
     }
 
     {
+      const m = route.match(/^\/astina\/surat\/([^/]+)\/tujuan-disposisi$/)
+      if (m && method === 'GET') {
+        const id = decodeURIComponent(m[1])
+        const { getTujuanDisposisi, getSuratBaruDetail } = require('@/lib/astina-client')
+        try {
+          const [tujuan, det] = await Promise.all([
+            getTujuanDisposisi(id),
+            getSuratBaruDetail(id).catch(() => ({ ok: false })),
+          ])
+          return ok({
+            tujuan: tujuan.data || [],
+            note_preset: det.data?.note || [],
+          })
+        } catch (e) {
+          if (e.code === 'OTP_REQUIRED') return fail('ASTINA OTP required', 428)
+          return fail('ASTINA fetch tujuan disposisi gagal: ' + e.message, 502)
+        }
+      }
+    }
+
+    {
+      const m = route.match(/^\/astina\/surat\/([^/]+)\/disposisi$/)
+      if (m && method === 'POST') {
+        const id = decodeURIComponent(m[1])
+        const { postDisposisi } = require('@/lib/astina-client')
+        const b = await req.json().catch(() => ({}))
+        try {
+          const r = await postDisposisi({
+            suratId: id,
+            notes: b.notes || b.note || [],
+            tujuan: b.tujuan || [],
+            custom: b.custom || [],
+          })
+          if (!r.ok) return fail('ASTINA disposisi ditolak: ' + r.message, 502)
+          await logAudit(me, 'astina_disposisi', id, { notes: b.notes, tujuan: b.tujuan })
+          return ok({ message: r.message || 'Disposisi Berhasil' })
+        } catch (e) {
+          if (e.code === 'OTP_REQUIRED') return fail('ASTINA OTP required', 428)
+          return fail('ASTINA disposisi gagal: ' + e.message, 502)
+        }
+      }
+    }
+
+    {
       const m = route.match(/^\/astina\/attachment\/([^/]+)$/)
       if (m && method === 'GET') {
         const fileId = decodeURIComponent(m[1])

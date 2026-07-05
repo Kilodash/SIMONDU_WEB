@@ -59,4 +59,38 @@ async function getFileLink(fileId) {
   return { ok: true, url: body.data.path, expires_at: body.data.hmac_public?.Timeexpired || null }
 }
 
-module.exports = { getSuratBaru, getSuratMasuk, getSuratDetail, getRiwayatDisposisi, getUserInfo, getFileLink }
+// GET /api/v1/suratmasuk/surat_baru_id/{id} — detail lengkap surat baru + 16 note preset
+async function getSuratBaruDetail(id) {
+  const { status, body } = await astinaFetch(`/api/v1/suratmasuk/surat_baru_id/${encodeURIComponent(id)}`)
+  if (!body?.status) return { ok: false, message: body?.message || `HTTP ${status}` }
+  return { ok: true, data: body.data }
+}
+
+// GET /api/v1/suratmasuk/tujuan_disposisi/tujuan/{id} — list KANIT/KAUR valid untuk disposisi
+async function getTujuanDisposisi(id) {
+  const { status, body } = await astinaFetch(`/api/v1/suratmasuk/tujuan_disposisi/tujuan/${encodeURIComponent(id)}`)
+  if (!body?.status) return { ok: false, message: body?.message || `HTTP ${status}`, data: [] }
+  // Data biasanya berisi group of tujuan {name, code, uuid}
+  return { ok: true, data: body.data || [] }
+}
+
+// POST /api/v1/suratmasuk/proses_dispo — kirim disposisi ASTINA
+// payload: { surat_id, note: string[] (preset labels), tujuan: uuid[], custom: string[] }
+async function postDisposisi({ suratId, notes = [], tujuan = [], custom = [] }) {
+  const payload = {
+    surat_id: suratId,
+    note: Array.isArray(notes) ? notes : [],
+    tujuan: Array.isArray(tujuan) ? tujuan : [],
+    custom: Array.isArray(custom) ? custom : [],
+  }
+  const { status, body } = await astinaFetch('/api/v1/suratmasuk/proses_dispo', {
+    method: 'POST', body: payload,
+  })
+  if (!body?.status) return { ok: false, message: body?.message || `HTTP ${status}` }
+  return { ok: true, message: body.message }
+}
+
+module.exports = {
+  getSuratBaru, getSuratMasuk, getSuratDetail, getRiwayatDisposisi, getUserInfo,
+  getFileLink, getSuratBaruDetail, getTujuanDisposisi, postDisposisi,
+}

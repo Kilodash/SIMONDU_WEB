@@ -981,7 +981,7 @@ function CasesList({ user, onOpenCase }) {
       <div className="shrink-0 space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-3">
-          <h2 className="text-2xl font-bold text-slate-900">Daftar Pengaduan</h2>
+          <h2 className="text-2xl font-bold text-slate-900">Daftar Surat</h2>
           <Tabs value={sourceFilter || 'gajamada'} onValueChange={(v) => { setSourceFilter(v === 'gajamada' ? '' : v); setPage(1) }}>
             <TabsList>
               <TabsTrigger value="gajamada" className="text-xs">GAJAMADA</TabsTrigger>
@@ -2278,7 +2278,7 @@ function AppShell({ user, onLogout }) {
 
   const menu = [
     { id: 'dashboard', label: 'Dashboard ANEV', icon: LayoutDashboard },
-    { id: 'cases', label: 'Daftar Pengaduan', icon: FolderKanban },
+    { id: 'cases', label: 'Daftar Surat', icon: FolderKanban },
     ...(isKasubbid ? [{ id: 'disposisi', label: 'Antrian Disposisi', icon: ArrowRightLeft, badge: disposisiCount }] : []),
     ...(isKasubbid ? [{ id: 'units', label: 'Master Unit', icon: Building2 }] : []),
     ...(isKasubbid ? [{ id: 'satker', label: 'Satker/Satwil', icon: MapPin }] : []),
