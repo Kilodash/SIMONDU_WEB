@@ -1,50 +1,60 @@
 # SIMONDU_WEB — Antrian Disposisi (ASTINA + Gajamada + Zimbra)
 
-## Kredensial (dikonfirmasi user, 2026-02-05)
+## Kredensial
 - ASTINA: 87041658@polri.go.id / Bidpropam18
 - Zimbra: 87041658@polri.go.id / Candra8704
 - Gajamada: kasubbid_paminal_jabar / rahasia2026
+- Emergent LLM key: sudah di /app/frontend/.env
 
 ## Arsitektur
-- Frontend: Next.js 15 App Router, port 3000
-- Backend: FastAPI reverse-proxy port 8001 → forward `/api/*` → Next.js
-- DB: MongoDB (`simondu` database); `astina_sessions` cache 6-jam
-- LLM (captcha): Gemini 2.5 Flash Vision via Emergent LLM
+- Next.js 15 app port 3000; FastAPI proxy port 8001 → forward /api/* → Next.js
+- MongoDB `simondu` DB, `astina_sessions` cache 6-jam
+- Captcha: Gemini 2.5 Flash Vision via Emergent LLM
 - OTP: Zimbra SOAP primary + IMAP fallback
 
-## Status Implementasi (session terakhir)
+## Status Implementasi
 
 ### Sudah selesai
-- ✅ P0 SOAP-first OTP fetch (~11s one-click login)
-- ✅ P1 Session ASTINA cached di MongoDB (restart-safe 6 jam)
-- ✅ P2 Attachment download proxy (/api/astina/attachment/{fileId})
-- ✅ Gajamada login + credentials terisi (5 kasus di antrian)
-- ✅ Unit filter alias: `POLDA JABAR SUBBID PAMINAL` + `KASUBBID PAMINAL POLDA JAWA BARAT` (Gajamada pakai nama pertama)
-- ✅ **Redesign menu Antrian Disposisi** — split-view kiri list surat, kanan tabs dinamis per sumber:
-  - ASTINA: **Info Surat | Timeline | Preview PDF | Lembar Disposisi**
-  - Gajamada: **Info Surat | Timeline | Kronologi (singkat/lengkap toggle) | Lembar Disposisi**
-- ✅ Timeline fetch source-aware: ASTINA via `/api/astina/surat/{id}/riwayat`, Gajamada via `/api/cases/{pid}/timeline-all`
-- ✅ Lembar Disposisi tab: toggle DUMAS/NON-DUMAS + unit tujuan + tasks + note + ATENSI
-- ✅ Verified end-to-end via 5 screenshots (Gajamada timeline 8 entries; ASTINA PDF preview; kronologi singkat/lengkap toggle)
+- ✅ ASTINA one-click auto-login SOAP-first (~11s)
+- ✅ ASTINA session cached di Mongo (restart-safe 6 jam)
+- ✅ Attachment proxy `/api/astina/attachment/{fileId}` (streaming signed URL)
+- ✅ Gajamada credentials + unit alias fix (`POLDA JABAR SUBBID PAMINAL`)
+- ✅ Menu Antrian Disposisi: **layout 2-panel + list**
+  - Kolom kiri: Daftar Surat (Gajamada + ASTINA)
+  - Panel 1 (tengah): Info Surat → Preview PDF (ASTINA) / Kronologi singkat-lengkap (Gajamada) → Timeline
+  - Panel 2 (kanan): Lembar Disposisi (DUMAS/NON-DUMAS, unit, tasks, ATENSI)
+
+### ASTINA endpoints yang sudah di-reverse-engineer (dari HAR user)
+- `GET /api/v1/suratmasuk/surat_baru_id/{id}` — detail surat + 16 catatan preset + tujuan
+- `GET /api/v1/suratmasuk/tujuan_disposisi/tujuan/{id}` — list KANIT/KAUR valid + `code` (payload untuk POST)
+- `GET /api/v1/suratmasuk/tujuan_disposisi/custom/{id}` — custom tujuan
+- `GET /api/v1/suratmasuk/riwayat_disposisi/{id}` — riwayat (dipakai)
+- ⚠️ POST disposisi endpoint — belum tertangkap di HAR (user hanya buka form, tidak submit). Kemungkinan pattern: `POST /api/v1/suratmasuk/disposisi/{id}` dengan body berisi `code` list.
+
+### Business logic (dikonfirmasi user)
+- Antrian = surat baru dari Gajamada+ASTINA sebelum diklasifikasi
+- Daftar Pengaduan tab GAJAMADA = kasus yang sudah diset DUMAS
+- Tab NON-DUMAS = kasus yang sudah diset NON-DUMAS
+- Tindak lanjut unit berbeda DUMAS vs NON-DUMAS
+- ASTINA surat: perihal + PDF, jarang kronologis
+- Gajamada surat: summary singkat + content lengkap
+- **Unit ASTINA = per pejabat (KANIT/KAUR), bukan unit** — mapping saat sync balik nanti
 
 ### Backlog (belum)
-- **P1** rewrite `app/page.js` lain (bagian di luar DisposisiPage masih Gajamada-centric)
-- **P2** POST disposisi balik ke ASTINA (butuh HAR user dari webmail ASTINA)
-- **P3** Bulk-disposisi UI, filter/search di daftar surat
-- **P3** Ringkasan AI per surat (Gemini analisa PDF lampiran → saran unit + kategori)
+- **Sync balik**:
+  - Gajamada write-back via `pushUpdate` gateway (siap dipakai, tinggal wiring)
+  - ASTINA write-back via HTTP — butuh HAR POST disposisi actual (user submit)
+- Unit mapping table di Master Unit (SIMONDU ↔ Gajamada ↔ ASTINA/Kanit-Kaur)
+- Sync Center dashboard + retry queue + log viewer
+- Optimistic UI + confirmation modal + undo-30-detik
+- Bulk disposisi
+- AI ringkasan PDF via Gemini
+- Two-way sync watcher (cron polling)
 
-## Business logic (dikonfirmasi user)
-- **Antrian** = surat baru dari Gajamada + ASTINA sebelum diklasifikasi
-- **Daftar Pengaduan tab GAJAMADA** = kasus yang sudah diset DUMAS via Lembar Disposisi
-- **Daftar Pengaduan tab NON-DUMAS** = kasus yang sudah diset NON-DUMAS
-- **Tindak lanjut unit berbeda** antara DUMAS vs NON-DUMAS (case_type di POST /disposisi-bulk)
-- ASTINA surat biasanya tanpa kronologis, hanya perihal + PDF lampiran
-- Gajamada surat biasanya ada kronologi (summary singkat + content lengkap)
-
-## Files utama yang diubah
-- `/app/frontend/app/page.js` — DisposisiPage: split-view + tabs dinamis + timeline state
-- `/app/frontend/lib/units.js` — `KASUBBID_UNIT_ALIASES` (Gajamada nama beda)
+## Files utama
+- `/app/frontend/app/page.js` — DisposisiPage 2-panel, timeline state, kronologi toggle
+- `/app/frontend/lib/units.js` — KASUBBID_UNIT_ALIASES
 - `/app/frontend/lib/astina-auth.js` — SOAP-first + Mongo cache
-- `/app/frontend/lib/astina-client.js` — `getFileLink(fileId)`
-- `/app/frontend/app/api/[[...path]]/route.js` — attachment proxy, KASUBBID_UNIT_ALIASES usage
-- `/app/frontend/.env` — semua kredensial + Emergent LLM key
+- `/app/frontend/lib/astina-client.js` — getFileLink, getSuratBaru, riwayat
+- `/app/frontend/app/api/[[...path]]/route.js` — attachment proxy, disposisi-queue
+- `/app/frontend/.env` — semua kredensial
