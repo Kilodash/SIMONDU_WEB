@@ -31,15 +31,34 @@ export const FOLLOWUP_DOC_TYPES = [
   { key: 'sprin_henti_lidik', label: 'Sprin Penghentian Penyelidikan (Sprin Henti Lidik)', stage: 'cabang_tidak_terbukti', required: true, numbering: true, defaultTemplate: 'Sprin/{seq}/{month_roman}/HUK.6.6./{year}' },
 ]
 
-export const STAGE_ORDER = ['informasi_awal', 'perencanaan', 'pelaksanaan', 'tindak_lanjut', 'cabang_terbukti', 'cabang_tidak_terbukti']
+export const NON_DUMAS_DOC_TYPES = [
+  { key: 'surat_pengantar', label: 'Surat Pengantar', stage: 'dokumen_awal', required: true, numbering: true, defaultTemplate: 'B/{seq}/{month_roman}/WAS.2.1./{year}/Bidpropam' },
+  { key: 'nota_dinas_tindak_lanjut', label: 'Nota Dinas Tindak Lanjut', stage: 'tindak_lanjut', required: true, numbering: true, defaultTemplate: 'R/ND-{seq}/{month_roman}/HUK.12.10./{year}/Bidpropam' },
+  { key: 'lhp_non_dumas', label: 'Laporan Hasil (LHP)', stage: 'tindak_lanjut', required: true, numbering: true, defaultTemplate: 'R/LHP-{seq}/{month_roman}/HUK.12.10./{year}/Bidpropam' },
+  { key: 'surat_balasan', label: 'Surat Balasan / Jawaban', stage: 'tindak_lanjut', required: false, numbering: true, defaultTemplate: 'B/{seq}/{month_roman}/WAS.2.1./{year}/Bidpropam' },
+  { key: 'dokumen_pendukung', label: 'Dokumen Pendukung Lainnya', stage: 'tindak_lanjut', required: false, numbering: false },
+]
 
-export const STAGE_LABELS = {
-  informasi_awal: 'Tahap 0 · Laporan Informasi',
-  perencanaan: 'Tahap 1 · Perencanaan',
-  pelaksanaan: 'Tahap 2 · Pelaksanaan',
-  tindak_lanjut: 'Tahap 3 · Tindak Lanjut (berlaku semua hasil)',
-  cabang_terbukti: 'Cabang · Hasil TERBUKTI',
-  cabang_tidak_terbukti: 'Cabang · Hasil TIDAK TERBUKTI',
+export const NON_DUMAS_STAGE_ORDER = ['dokumen_awal', 'tindak_lanjut']
+
+export const NON_DUMAS_STAGE_LABELS = {
+  dokumen_awal: 'Dokumen Awal',
+  tindak_lanjut: 'Tindak Lanjut',
+}
+
+export function getDocTypes(caseType) {
+  if (caseType === 'non_dumas' || caseType === 'non_pengaduan') return NON_DUMAS_DOC_TYPES
+  return FOLLOWUP_DOC_TYPES
+}
+
+export function getStageOrder(caseType) {
+  if (caseType === 'non_dumas' || caseType === 'non_pengaduan') return NON_DUMAS_STAGE_ORDER
+  return STAGE_ORDER
+}
+
+export function getStageLabels(caseType) {
+  if (caseType === 'non_dumas' || caseType === 'non_pengaduan') return NON_DUMAS_STAGE_LABELS
+  return STAGE_LABELS
 }
 
 export const HASIL_LIDIK_OPTIONS = [
@@ -87,9 +106,12 @@ export function docTypesForOutcome(outcome) {
 // Compute per-item effective status + overall progress.
 // checklistRows: array from `followup_checklist` collection (status/document_number/note)
 // documents: array from `followup_documents` collection (has document_type)
-export function computeChecklist(outcome, checklistRows, documents) {
+export function computeChecklist(outcome, checklistRows, documents, caseType = 'dumas') {
+  const docTypes = getDocTypes(caseType)
   const settlementActive = !!outcome?.settlement
-  const applicable = docTypesForOutcome(outcome)
+  const applicable = caseType === 'non_dumas' || caseType === 'non_pengaduan'
+    ? docTypes  // ALL items applicable for NON-DUMAS
+    : docTypesForOutcome(outcome)  // Filter by stage for DUMAS
   const byType = {}
   for (const c of checklistRows || []) byType[c.document_type] = c
   const docsByType = {}

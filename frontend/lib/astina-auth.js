@@ -7,24 +7,16 @@
 //        -> { status: true }
 //   4) subsequent calls -> Authorization: Bearer <access_token>
 //
-// Captcha is solved with Gemini 2.5 Flash via the Emergent LLM proxy.
+// Captcha is solved with Gemini 2.5 Flash / OpenCode Vision.
 // OTP is fetched from Zimbra by IMAP.
+// Supports per-user credentials (unit/kasubbid own ASTINA accounts).
 
 const Imap = require('imap')
 const { simpleParser } = require('mailparser')
 
-// Some polri.go.id endpoints serve certificates that Node's default CA store
-// won't trust (broken chain / self-signed). Disable TLS verification for
-// outbound fetches from this module. Scope is limited: this runs server-side
-// only, inside a controlled ASTINA client module.
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
 
 const ASTINA_BASE = process.env.ASTINA_BASE_URL || 'https://api-gw.polri.go.id/api-eoffice'
-const GEMINI_KEY = process.env.GEMINI_API_KEY || ''
-const LLM_BASE = process.env.EMERGENT_LLM_BASE_URL || 'https://integrations.emergentagent.com/llm'
-const LLM_KEY = process.env.EMERGENT_LLM_KEY || ''
-const LLM_MODEL = process.env.CAPTCHA_MODEL || 'gemini/gemini-2.5-flash'
-
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36'
 
 const commonHeaders = (extra = {}) => ({
@@ -36,6 +28,57 @@ const commonHeaders = (extra = {}) => ({
   ...extra,
 })
 
+// Module-level env keys cache (set from route handler to bypass webpack bundling)
+let _envKeys = null
+function setEnvKeys(keys) { _envKeys = keys }
+function getEnvKeys() { return _envKeys }
+
+// Per-user sessions: Map<username, session>
+const _sessions = new Map()
+// Per-user credentials: Map<username, {astina_email, astina_password, zimbra_email, zimbra_password}>
+const _creds = new Map()
+// Global fallback session (env-var based, backward compat)
+let _globalSession = { access_token: null, user: null, obtained_at: 0, otp_verified: false }
+let _sessionLoaded = false
+
+const SESSION_MAX_AGE_MS = 6 * 60 * 60 * 1000
+
+function _getSession(username) {
+  if (username) return _sessions.get(username) || null
+  return _globalSession
+}
+function _setSession(username, sess) {
+  if (username) _sessions.set(username, sess)
+  else _globalSession = sess
+}
+
+function _getCreds(username) {
+  if (!username) {
+    const e = process.env.ASTINA_USERNAME
+    const p = process.env.ASTINA_PASSWORD
+    const ze = process.env.ZIMBRA_EMAIL
+    const zp = process.env.ZIMBRA_PASSWORD
+    if (!e || !p) return null
+    return { astina_email: e, astina_password: p, zimbra_email: ze || null, zimbra_password: zp || null }
+  }
+  return _creds.get(username) || null
+}
+
+// --- Public credential management ---
+function setCreds(username, { astina_email, astina_password, zimbra_email, zimbra_password }) {
+  _creds.set(username, { astina_email, astina_password, zimbra_email: zimbra_email || null, zimbra_password: zimbra_password || null })
+  _sessions.delete(username)
+}
+function hasCreds(username) {
+  if (!username) return !!(process.env.ASTINA_USERNAME && process.env.ASTINA_PASSWORD)
+  return _creds.has(username)
+}
+function clearUserSession(username) {
+  if (username) _sessions.delete(username)
+  else _globalSession = { access_token: null, user: null, obtained_at: 0, otp_verified: false }
+}
+
+// --- Captcha ---
 async function getCaptcha() {
   const r = await fetch(`${ASTINA_BASE}/api/auth/login_web`, {
     method: 'GET',
@@ -59,94 +102,64 @@ async function getCaptcha() {
   return { key: j.data.key, image_base64: j.data.link_captcha }
 }
 
-async function solveCaptcha(base64Png) {
-  // Try Gemini API directly first
+async function solveCaptcha(base64Png, envKeys = null) {
+  const keys = envKeys || _envKeys || {}
+  const GEMINI_KEY = keys.gemini || ''
+  const OPENCODE_KEY = keys.opencode || ''
+  const OPENCODE_BASE = keys.opencode_base || 'https://opencode.ai/zen/go'
+
+  if (!GEMINI_KEY && !OPENCODE_KEY) throw new Error('API key belum di-set. Tambahkan di Pengaturan > AI.')
+
+  const errors = []
+
+  // 1) Gemini (vision-native, free tier)
   if (GEMINI_KEY) {
     try {
-      const body = {
-        contents: [{ parts: [
-          { text: 'Baca teks captcha di gambar. Jawab HANYA karakter captcha (huruf kecil + angka), tanpa spasi/penjelasan.' },
-          { inlineData: { mimeType: 'image/png', data: base64Png } },
-        ] }],
-      }
+      const body = { contents: [{ parts: [
+        { text: 'Baca teks captcha di gambar. Jawab HANYA karakter captcha (huruf kecil + angka), tanpa spasi/penjelasan.' },
+        { inlineData: { mimeType: 'image/png', data: base64Png } },
+      ] }] }
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })
-      const ct = r.headers.get('content-type') || ''
-      if (ct.includes('json')) {
-        const j = await r.json().catch(() => null)
-        const text = (j?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim().replace(/\s+/g, '').toLowerCase()
-        if (text) return text.replace(/[^a-z0-9]/gi, '').slice(0, 8)
-      }
-    } catch (_) {}
+      const j = await r.json().catch(() => null)
+      if (!r.ok) throw new Error(`Gemini HTTP ${r.status}: ${j?.error?.message || JSON.stringify(j?.error)}`)
+      const text = (j?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim().replace(/\s+/g, '').toLowerCase()
+      if (text) return text.replace(/[^a-z0-9]/gi, '').slice(0, 8)
+      errors.push('Gemini: tidak mengembalikan teks')
+    } catch (e) { errors.push('Gemini: ' + e.message) }
   }
-  // Try OpenCode API (OpenAI-compatible) with vision
-  const OPENCODE_KEY = process.env.OPENCODE_API_KEY || ''
-  const OPENCODE_BASE = process.env.OPENCODE_BASE_URL || 'https://api.opencode.ai'
+
+  // 2) OpenCode (vision model via Zen Go) — cek /v1/messages endpoint
   if (OPENCODE_KEY) {
     try {
-      const body = {
-        model: 'opencode-vision',
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: 'Baca teks captcha di gambar. Jawab HANYA karakter captcha (huruf kecil + angka), tanpa spasi/penjelasan.' },
-            { type: 'image_url', image_url: { url: `data:image/png;base64,${base64Png}` } },
-          ],
-        }],
-        max_tokens: 100,
-      }
-      const r = await fetch(`${OPENCODE_BASE}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${OPENCODE_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      const ct = r.headers.get('content-type') || ''
-      if (ct.includes('json')) {
-        const j = await r.json().catch(() => null)
-        const text = (j?.choices?.[0]?.message?.content || '').trim().replace(/\s+/g, '').toLowerCase()
-        if (text) return text.replace(/[^a-z0-9]/gi, '').slice(0, 8)
-      }
-    } catch (_) {}
-  }
-  // Fallback to Emergent proxy
-  if (!LLM_KEY) throw new Error('No LLM API key available for captcha solving. Set GEMINI_API_KEY or OPENCODE_API_KEY.')
-  const body = {
-    model: LLM_MODEL,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'text', text: 'Baca teks captcha di gambar. Jawab HANYA karakter captcha (6 huruf kecil + angka), tanpa spasi/penjelasan.' },
+      const body = { model: 'qwen3.6-plus', messages: [{ role: 'user', content: [
+        { type: 'text', text: 'Baca teks captcha di gambar. Jawab HANYA karakter captcha (huruf kecil + angka), tanpa spasi/penjelasan.' },
         { type: 'image_url', image_url: { url: `data:image/png;base64,${base64Png}` } },
-      ],
-    }],
-    max_tokens: 300,
-    reasoning_effort: 'low',
+      ] }], max_tokens: 50 }
+      const r = await fetch(`${OPENCODE_BASE}/v1/messages`, {
+        method: 'POST', headers: { 'Authorization': `Bearer ${OPENCODE_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      })
+      const raw = await r.text().catch(() => '')
+      if (!r.ok) throw new Error(`OpenCode HTTP ${r.status}: ${raw.slice(0, 200)}`)
+      let j = null; try { j = raw ? JSON.parse(raw) : null } catch (_) {}
+      if (!j) throw new Error('OpenCode: response bukan JSON')
+      if (j.type === 'error') throw new Error(`OpenCode: ${j.error?.message || JSON.stringify(j.error)}`)
+      const text = (j?.choices?.[0]?.message?.content || '').trim().replace(/\s+/g, '').toLowerCase()
+      if (text) return text.replace(/[^a-z0-9]/gi, '').slice(0, 8)
+      errors.push('OpenCode: tidak mengembalikan teks')
+    } catch (e) { errors.push('OpenCode: ' + e.message) }
   }
-  const r = await fetch(`${LLM_BASE}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${LLM_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const ct = r.headers.get('content-type') || ''
-  if (!ct.includes('json')) {
-    throw new Error(`LLM API mengembalikan ${ct.split(';')[0]} (bukan JSON). Status: ${r.status}`)
-  }
-  const j = await r.json().catch(() => null)
-  if (!j) throw new Error('LLM API response bukan JSON valid')
-  const text = (j?.choices?.[0]?.message?.content || '').trim().replace(/\s+/g, '').toLowerCase()
-  if (!text) throw new Error('Vision AI tidak mengembalikan teks captcha')
-  return text.replace(/[^a-z0-9]/gi, '').slice(0, 8)
+
+  throw new Error(errors.join(' | ') || 'Captcha solving gagal')
 }
 
-async function loginWithCaptcha({ email, password, maxAttempts = 4 }) {
+async function loginWithCaptcha({ email, password, maxAttempts = 4, envKeys = null }) {
   let lastErr = null
   for (let i = 1; i <= maxAttempts; i++) {
     const { key, image_base64 } = await getCaptcha()
     let captcha
-    try { captcha = await solveCaptcha(image_base64) } catch (e) { lastErr = e; continue }
+    try { captcha = await solveCaptcha(image_base64, envKeys) } catch (e) { lastErr = e; continue }
     if (!captcha) { lastErr = new Error('Captcha kosong'); continue }
     const r = await fetch(`${ASTINA_BASE}/api/auth/login_web`, {
       method: 'POST',
@@ -158,14 +171,13 @@ async function loginWithCaptcha({ email, password, maxAttempts = 4 }) {
       return { access_token: j.data.access_token, user: j.data.user || null, captcha_used: captcha }
     }
     lastErr = new Error(`Attempt ${i}: ${j?.message || 'login gagal'} (captcha=${captcha})`)
-    // If it says captcha wrong keep looping; otherwise fail fast on credential error
     if (/password|email|akun|user/i.test(j?.message || '') && !/captcha/i.test(j?.message || '')) break
   }
   throw lastErr || new Error('Login ASTINA gagal setelah percobaan')
 }
 
-// -------------------- ZIMBRA IMAP OTP --------------------
-function fetchOtpFromZimbra({ waitMs = 60_000, since = Date.now() - 5 * 60_000 } = {}) {
+// --- Zimbra IMAP OTP ---
+function fetchOtpFromZimbra({ waitMs = 60_000, since = Date.now() - 5 * 60_000, zimbraEmail, zimbraPassword } = {}) {
   return new Promise((resolve, reject) => {
     const started = Date.now()
     let done = false
@@ -176,8 +188,8 @@ function fetchOtpFromZimbra({ waitMs = 60_000, since = Date.now() - 5 * 60_000 }
       err ? reject(err) : resolve(otp)
     }
     const imap = new Imap({
-      user: process.env.ZIMBRA_EMAIL,
-      password: process.env.ZIMBRA_PASSWORD,
+      user: zimbraEmail,
+      password: zimbraPassword,
       host: process.env.ZIMBRA_IMAP_HOST || 'mail.polri.go.id',
       port: parseInt(process.env.ZIMBRA_IMAP_PORT || '993', 10),
       tls: true,
@@ -198,7 +210,6 @@ function fetchOtpFromZimbra({ waitMs = 60_000, since = Date.now() - 5 * 60_000 }
             if (Date.now() - started >= waitMs) return finish(new Error('OTP email belum ditemukan (timeout)'))
             return setTimeout(tryOnce, 5000)
           }
-          // Fetch newest 10 messages
           const latest = results.slice(-10)
           const fetch = imap.fetch(latest, { bodies: '', struct: true })
           const candidates = []
@@ -239,25 +250,16 @@ function fetchOtpFromZimbra({ waitMs = 60_000, since = Date.now() - 5 * 60_000 }
   })
 }
 
-// -------------------- ZIMBRA SOAP OTP (works without IMAP enabled) --------------------
-// Zimbra webmail uses SOAP. We POST /service/soap/AuthRequest with the same
-// credentials the user types into the webmail login page, keep the session
-// cookie, then POST /service/soap/SearchRequest to grep the inbox for the
-// most recent OTP-looking message. This is the fallback when Zimbra IMAP
-// access is disabled at the account level (common default).
-
+// --- Zimbra SOAP OTP ---
 const ZIMBRA_BASE = process.env.ZIMBRA_BASE_URL || 'https://mail.polri.go.id'
 
-async function zimbraAuth() {
-  const email = process.env.ZIMBRA_EMAIL
-  const pass = process.env.ZIMBRA_PASSWORD
-  if (!email || !pass) throw new Error('ZIMBRA_EMAIL / ZIMBRA_PASSWORD belum di-set')
+async function zimbraAuth(zimbraEmail, zimbraPassword) {
   const soap = {
     Header: { context: { _jsns: 'urn:zimbra', userAgent: { name: 'zclient', version: 'simondu-1' } } },
     Body: { AuthRequest: {
       _jsns: 'urn:zimbraAccount',
-      account: { by: 'name', _content: email },
-      password: { _content: pass },
+      account: { by: 'name', _content: zimbraEmail },
+      password: { _content: zimbraPassword },
     } },
   }
   const r = await fetch(`${ZIMBRA_BASE}/service/soap/AuthRequest`, {
@@ -271,16 +273,11 @@ async function zimbraAuth() {
   return token
 }
 
-// Extract an OTP code from message text. ASTINA sends 6-digit OTPs, but the
-// mail body also contains dates like "2026" and times "17:27" which would
-// match a naive \d{4,6} regex. So we prefer 6-digit codes and, within a
-// tier, pick the LAST match (OTPs are typically shown near the bottom).
 function extractOtp(text) {
   if (!text) return null
-  // Strip 4-digit years / clock times so they don't shadow the real OTP.
   const cleaned = text
-    .replace(/\b(19|20)\d{2}\b/g, ' ')       // years 1900-2099
-    .replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, ' ') // HH:MM(:SS)
+    .replace(/\b(19|20)\d{2}\b/g, ' ')
+    .replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, ' ')
   for (const width of [6, 5, 4]) {
     const re = new RegExp(`(?<!\\d)(\\d{${width}})(?!\\d)`, 'g')
     const matches = [...cleaned.matchAll(re)].map((m) => m[1])
@@ -300,8 +297,6 @@ function decodeHtml(s) {
 
 async function zimbraSearchOtp({ authToken, waitMs = 60_000, sinceMs = Date.now() - 5 * 60_000 }) {
   const started = Date.now()
-  const OTP_RE = /\b(\d{4,6})\b/
-  // Small initial delay so the OTP email has time to arrive.
   await new Promise((r) => setTimeout(r, 3_000))
   while (Date.now() - started < waitMs) {
     const soap = {
@@ -332,7 +327,6 @@ async function zimbraSearchOtp({ authToken, waitMs = 60_000, sinceMs = Date.now(
     const fault = j?.Body?.Fault
     if (fault) throw new Error('Zimbra search fault: ' + JSON.stringify(fault).slice(0, 300))
     const msgs = j?.Body?.SearchResponse?.m || []
-    // Only accept messages with date strictly newer than sinceMs; iterate newest-first.
     for (const m of msgs) {
       const msgDate = Number(m.d || 0)
       if (msgDate <= sinceMs) continue
@@ -347,7 +341,6 @@ async function zimbraSearchOtp({ authToken, waitMs = 60_000, sinceMs = Date.now(
       collect(m.mp)
       const bodyText = decodeHtml(parts.join('\n'))
       const full = (subject + ' ' + bodyText).toLowerCase()
-      // Must be an OTP-ish email (avoids picking up random 6-digit numbers)
       if (!/otp|verifikasi|kode|token|verification|pin|astina/i.test(full)) continue
       const otp = extractOtp(bodyText) || extractOtp(subject)
       if (otp) return otp
@@ -357,8 +350,8 @@ async function zimbraSearchOtp({ authToken, waitMs = 60_000, sinceMs = Date.now(
   throw new Error('OTP tidak ditemukan (email harus baru, diterima setelah ' + new Date(sinceMs).toISOString() + ')')
 }
 
-async function fetchOtpFromZimbraSoap({ waitMs = 90_000, sinceMs = Date.now() - 5 * 60_000 } = {}) {
-  const token = await zimbraAuth()
+async function fetchOtpFromZimbraSoap({ waitMs = 90_000, sinceMs = Date.now() - 5 * 60_000, zimbraEmail, zimbraPassword } = {}) {
+  const token = await zimbraAuth(zimbraEmail, zimbraPassword)
   return zimbraSearchOtp({ authToken: token, waitMs, sinceMs })
 }
 
@@ -373,15 +366,7 @@ async function validateOtp(accessToken, otp) {
   return true
 }
 
-// -------------------- FULL AUTO-LOGIN --------------------
-// In-memory session cache (per Node process). Backed by MongoDB
-// (collection `astina_sessions`) so restarts don't force a fresh
-// captcha + OTP round-trip when a valid token already exists.
-let _session = { access_token: null, user: null, obtained_at: 0, otp_verified: false }
-let _sessionLoaded = false
-
-const SESSION_MAX_AGE_MS = 6 * 60 * 60 * 1000 // ASTINA tokens are stable ~hours
-
+// --- MongoDB session persistence ---
 async function _mongoCollection() {
   try {
     const { getDb } = require('./db')
@@ -390,42 +375,51 @@ async function _mongoCollection() {
   } catch (_) { return null }
 }
 
-async function _loadSessionFromMongo() {
-  if (_sessionLoaded) return _session
-  _sessionLoaded = true
+async function _loadSessionFromMongo(username) {
+  if (_sessionLoaded && !username) return _globalSession
+  if (username) {
+    const existing = _sessions.get(username)
+    if (existing) return existing
+  }
   const coll = await _mongoCollection()
-  if (!coll) return _session
-  const email = process.env.ASTINA_USERNAME || 'default'
+  if (!coll) return username ? null : _globalSession
+  const key = username || 'default'
   try {
-    const doc = await coll.findOne({ email })
+    const doc = await coll.findOne({ username: key })
     if (doc && doc.access_token && doc.otp_verified && doc.obtained_at) {
       const age = Date.now() - Number(doc.obtained_at)
       if (age < SESSION_MAX_AGE_MS) {
-        _session = {
+        const sess = {
           access_token: doc.access_token,
           user: doc.user || null,
           obtained_at: Number(doc.obtained_at),
           otp_verified: !!doc.otp_verified,
         }
+        _setSession(username, sess)
+        if (!username) _sessionLoaded = true
+        return sess
       }
     }
   } catch (_) {}
-  return _session
+  if (!username) _sessionLoaded = true
+  return _getSession(username)
 }
 
-async function _persistSession() {
+async function _persistSession(username) {
   const coll = await _mongoCollection()
   if (!coll) return
-  const email = process.env.ASTINA_USERNAME || 'default'
+  const key = username || 'default'
+  const sess = _getSession(username)
+  if (!sess) return
   try {
     await coll.updateOne(
-      { email },
+      { username: key },
       { $set: {
-        email,
-        access_token: _session.access_token,
-        user: _session.user,
-        obtained_at: _session.obtained_at,
-        otp_verified: _session.otp_verified,
+        username: key,
+        access_token: sess.access_token,
+        user: sess.user,
+        obtained_at: sess.obtained_at,
+        otp_verified: sess.otp_verified,
         updated_at: new Date().toISOString(),
       } },
       { upsert: true },
@@ -433,16 +427,17 @@ async function _persistSession() {
   } catch (_) {}
 }
 
-async function _clearPersistedSession() {
+async function _clearPersistedSession(username) {
   const coll = await _mongoCollection()
   if (!coll) return
-  const email = process.env.ASTINA_USERNAME || 'default'
-  try { await coll.deleteOne({ email }) } catch (_) {}
+  const key = username || 'default'
+  try { await coll.deleteOne({ username: key }) } catch (_) {}
 }
 
-async function currentSession() {
-  await _loadSessionFromMongo()
-  return { ..._session }
+async function currentSession(username = null) {
+  await _loadSessionFromMongo(username)
+  const sess = _getSession(username)
+  return sess ? { ...sess } : { access_token: null, user: null, obtained_at: 0, otp_verified: false }
 }
 
 async function getNewCaptcha() {
@@ -465,13 +460,17 @@ async function loginWithManualCaptcha({ key, captcha, email, password }) {
   throw new Error(j.message || 'Login gagal (captcha mungkin salah)')
 }
 
-async function autoLogin({ manualOtp, waitOtp = false, manualCaptcha = null } = {}) {
-  const email = process.env.ASTINA_USERNAME
-  const password = process.env.ASTINA_PASSWORD
-  if (!email || !password) throw new Error('ASTINA_USERNAME / ASTINA_PASSWORD belum di-set di env')
+async function autoLogin({ manualOtp, waitOtp = false, manualCaptcha = null, username = null } = {}) {
+  const creds = _getCreds(username)
+  if (!creds || !creds.astina_email || !creds.astina_password) {
+    throw new Error(username
+      ? `Kredensial ASTINA belum di-set untuk ${username}`
+      : 'ASTINA_USERNAME / ASTINA_PASSWORD belum di-set di env')
+  }
+  const email = creds.astina_email
+  const password = creds.astina_password
 
-  // Timestamp before login = anchor for OTP search (SOAP + IMAP)
-  const startedAt = Date.now() - 60_000 // include 1 min buffer
+  const startedAt = Date.now() - 60_000
 
   let access_token, user
   if (manualCaptcha && manualCaptcha.key && manualCaptcha.captcha) {
@@ -483,111 +482,114 @@ async function autoLogin({ manualOtp, waitOtp = false, manualCaptcha = null } = 
     access_token = r.access_token
     user = r.user
   }
-  _session = { access_token, user, obtained_at: Date.now(), otp_verified: false }
-  _sessionLoaded = true
-  await _persistSession()
+  const sess = { access_token, user, obtained_at: Date.now(), otp_verified: false }
+  _setSession(username, sess)
+  if (username) _sessionLoaded = true
+  await _persistSession(username)
 
   if (manualOtp) {
     await validateOtp(access_token, manualOtp)
-    _session.otp_verified = true
-    await _persistSession()
-    return { ok: true, step: 'authenticated', user, captcha_used, otp_used: manualOtp }
+    sess.otp_verified = true
+    await _persistSession(username)
+    return { ok: true, step: 'authenticated', user }
   }
 
-  if (!waitOtp || !process.env.ZIMBRA_EMAIL || !process.env.ZIMBRA_PASSWORD) {
+  const hasZimbra = creds.zimbra_email && creds.zimbra_password
+  if (!waitOtp || !hasZimbra) {
     return {
       ok: true, step: 'awaiting_otp',
       message: 'Login step 1 OK. Cek email untuk OTP, lalu POST /api/astina/verify-otp {"otp":"xxxxxx"} atau POST /api/astina/fetch-otp untuk auto-fetch.',
-      captcha_used,
     }
   }
 
-  // Try IMAP first (faster, works for most accounts), then SOAP as fallback.
   const errors = []
   try {
-    const otp = await fetchOtpFromZimbra({ waitMs: 30_000, since: startedAt })
+    const otp = await fetchOtpFromZimbra({ waitMs: 30_000, since: startedAt, zimbraEmail: creds.zimbra_email, zimbraPassword: creds.zimbra_password })
     await validateOtp(access_token, otp)
-    _session.otp_verified = true
-    await _persistSession()
-    return { ok: true, step: 'authenticated', user, captcha_used, otp_used: otp, otp_source: 'imap' }
+    sess.otp_verified = true
+    await _persistSession(username)
+    return { ok: true, step: 'authenticated', user, otp_used: otp, otp_source: 'imap' }
   } catch (e) { errors.push('imap: ' + e.message) }
   try {
-    const otp = await fetchOtpFromZimbraSoap({ waitMs: 30_000, sinceMs: startedAt })
+    const otp = await fetchOtpFromZimbraSoap({ waitMs: 30_000, sinceMs: startedAt, zimbraEmail: creds.zimbra_email, zimbraPassword: creds.zimbra_password })
     await validateOtp(access_token, otp)
-    _session.otp_verified = true
-    await _persistSession()
-    return { ok: true, step: 'authenticated', user, captcha_used, otp_used: otp, otp_source: 'zimbra_soap' }
+    sess.otp_verified = true
+    await _persistSession(username)
+    return { ok: true, step: 'authenticated', user, otp_used: otp, otp_source: 'zimbra_soap' }
   } catch (e) { errors.push('soap: ' + e.message) }
 
   return {
     ok: true, step: 'awaiting_otp',
     message: 'Login step 1 OK, auto-fetch OTP gagal: ' + errors.join(' | ') + '. Masukkan OTP manual via /api/astina/verify-otp.',
-    captcha_used, zimbra_error: errors.join(' | '),
+    zimbra_error: errors.join(' | '),
   }
 }
 
-async function fetchOtpFromZimbraAndValidate() {
-  await _loadSessionFromMongo()
-  if (!_session.access_token) throw new Error('Belum login step 1. Jalankan /api/astina/login dulu.')
-  // Only accept OTPs sent after login step 1. Small negative buffer for clock skew.
-  const sinceMs = (_session.obtained_at || Date.now()) - 5_000
+async function fetchOtpFromZimbraAndValidate(username = null) {
+  await _loadSessionFromMongo(username)
+  const sess = _getSession(username)
+  if (!sess || !sess.access_token) throw new Error('Belum login step 1. Jalankan /api/astina/login dulu.')
+  const sinceMs = ((sess.obtained_at || Date.now()) - 5_000)
+  const creds = _getCreds(username)
+  if (!creds || !creds.zimbra_email || !creds.zimbra_password) {
+    throw new Error('Zimbra credentials not set')
+  }
   const errors = []
-  // 1) IMAP first (faster, works for most accounts)
   try {
-    const otp = await fetchOtpFromZimbra({ waitMs: 30_000, since: sinceMs })
-    await validateOtp(_session.access_token, otp)
-    _session.otp_verified = true
-    await _persistSession()
+    const otp = await fetchOtpFromZimbra({ waitMs: 30_000, since: sinceMs, zimbraEmail: creds.zimbra_email, zimbraPassword: creds.zimbra_password })
+    await validateOtp(sess.access_token, otp)
+    sess.otp_verified = true
+    await _persistSession(username)
     return { ok: true, otp_used: otp, source: 'imap' }
   } catch (e) { errors.push('imap: ' + e.message) }
-  // 2) Zimbra SOAP fallback
   try {
-    const otp = await fetchOtpFromZimbraSoap({ waitMs: 30_000, sinceMs })
-    await validateOtp(_session.access_token, otp)
-    _session.otp_verified = true
-    await _persistSession()
+    const otp = await fetchOtpFromZimbraSoap({ waitMs: 30_000, sinceMs, zimbraEmail: creds.zimbra_email, zimbraPassword: creds.zimbra_password })
+    await validateOtp(sess.access_token, otp)
+    sess.otp_verified = true
+    await _persistSession(username)
     return { ok: true, otp_used: otp, source: 'zimbra_soap' }
   } catch (e) { errors.push('soap: ' + e.message) }
   throw new Error(errors.join(' | '))
 }
 
-async function verifyOtpOnly(otp) {
-  await _loadSessionFromMongo()
-  if (!_session.access_token) throw new Error('Belum ada session ASTINA. Jalankan /api/astina/login dulu.')
-  await validateOtp(_session.access_token, otp)
-  _session.otp_verified = true
-  await _persistSession()
+async function verifyOtpOnly(username = null, otp) {
+  await _loadSessionFromMongo(username)
+  const sess = _getSession(username)
+  if (!sess || !sess.access_token) throw new Error('Belum ada session ASTINA. Jalankan /api/astina/login dulu.')
+  await validateOtp(sess.access_token, otp)
+  sess.otp_verified = true
+  await _persistSession(username)
   return { ok: true }
 }
 
-// -------------------- ASTINA API CALLS --------------------
-async function astinaFetch(path, { method = 'GET', body = null, retry = true, autoLogin: tryAutoLogin = true } = {}) {
-  await _loadSessionFromMongo()
-  if (!_session.access_token || !_session.otp_verified) {
+// --- ASTINA API Calls ---
+async function astinaFetch(path, options = {}, username = null) {
+  await _loadSessionFromMongo(username)
+  const sess = _getSession(username)
+  if (!sess || !sess.access_token || !sess.otp_verified) {
+    const tryAutoLogin = options.autoLogin !== false
     if (!tryAutoLogin) {
       const e = new Error('ASTINA belum login. Silakan login manual via /api/astina/login')
       e.code = 'OTP_REQUIRED'; throw e
     }
-    // Cold start OR token exists but OTP not yet verified -> do full auto-login
-    // (captcha + password + Zimbra OTP fetch) in one shot.
-    const relog = await autoLogin({ waitOtp: true })
+    const relog = await autoLogin({ waitOtp: true, username })
     if (relog.step !== 'authenticated') {
       const e = new Error('Auto-login ASTINA gagal: ' + (relog.message || relog.step))
       e.code = 'OTP_REQUIRED'; throw e
     }
   }
   const doCall = async () => {
-    const opts = { method, headers: commonHeaders({ 'Authorization': `Bearer ${_session.access_token}` }) }
-    if (body) opts.body = typeof body === 'string' ? body : JSON.stringify(body)
+    const currentSess = _getSession(username)
+    const opts = { method: (options.method || 'GET'), headers: commonHeaders({ 'Authorization': `Bearer ${currentSess.access_token}` }) }
+    if (options.body) opts.body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body)
     return fetch(`${ASTINA_BASE}${path}`, opts)
   }
   let r = await doCall()
+  const retry = options.retry !== false
   if ((r.status === 401 || r.status === 403) && retry) {
-    // ASTINA token/session expired. Full re-login WITH fresh OTP so the caller
-    // gets its data on the same request (best-effort — if Zimbra fails, throw).
-    _session = { access_token: null, user: null, obtained_at: 0, otp_verified: false }
-    await _clearPersistedSession()
-    const relog = await autoLogin({ waitOtp: true })
+    _setSession(username, { access_token: null, user: null, obtained_at: 0, otp_verified: false })
+    await _clearPersistedSession(username)
+    const relog = await autoLogin({ waitOtp: true, username })
     if (relog.step !== 'authenticated') {
       const e = new Error('Session expired dan re-login otomatis gagal: ' + (relog.message || relog.step))
       e.code = 'OTP_REQUIRED'; throw e
@@ -596,18 +598,14 @@ async function astinaFetch(path, { method = 'GET', body = null, retry = true, au
   }
   const j = await r.json().catch(() => null)
   if (!j) {
-    // Response is not JSON (likely HTML login page / session expired)
     const e = new Error('ASTINA mengembalikan respons non-JSON (session expired?)')
     e.code = 'OTP_REQUIRED'
     throw e
   }
-  // ASTINA returns 200 with status:false and message about OTP when the
-  // session's OTP hasn't been validated yet. Surface that as OTP_REQUIRED
-  // so the API layer can respond with a 428 the UI already handles.
   if (j && j.status === false && typeof j.message === 'string' && /otp/i.test(j.message)) {
-    // Persisted session is stale — invalidate so next call re-authenticates
-    _session.otp_verified = false
-    await _clearPersistedSession()
+    const currentSess = _getSession(username)
+    if (currentSess) currentSess.otp_verified = false
+    await _clearPersistedSession(username)
     const e = new Error(j.message)
     e.code = 'OTP_REQUIRED'
     throw e
@@ -615,11 +613,31 @@ async function astinaFetch(path, { method = 'GET', body = null, retry = true, au
   return { status: r.status, body: j }
 }
 
-async function logoutSession() {
-  _session = { access_token: null, user: null, obtained_at: 0, otp_verified: false }
-  _sessionLoaded = true
-  await _clearPersistedSession()
+async function logoutSession(username = null) {
+  _setSession(username, { access_token: null, user: null, obtained_at: 0, otp_verified: false })
+  await _clearPersistedSession(username)
   return { ok: true }
+}
+
+// Test ASTINA login with provided credentials (does not store, just validates step1)
+async function testLogin({ email, password, envKeys = null }) {
+  try {
+    const r = await loginWithCaptcha({ email, password, maxAttempts: 2, envKeys })
+    return { ok: true, user: r.user }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+}
+
+// Test captcha solving only (no ASTINA login) — for AI settings page
+async function testCaptchaSolving(captchaBase64) {
+  const { key, image_base64 } = captchaBase64 ? { key: null, image_base64: captchaBase64 } : await getCaptcha()
+  try {
+    const captcha = await solveCaptcha(image_base64)
+    return { ok: true, solved: captcha, source: 'opencode' }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
 }
 
 module.exports = {
@@ -627,4 +645,6 @@ module.exports = {
   fetchOtpFromZimbra, fetchOtpFromZimbraSoap, zimbraAuth, validateOtp,
   autoLogin, verifyOtpOnly, fetchOtpFromZimbraAndValidate, currentSession,
   astinaFetch, logoutSession,
+  setCreds, hasCreds, clearUserSession, testLogin, testCaptchaSolving,
+  setEnvKeys, getEnvKeys,
 }

@@ -1,31 +1,176 @@
-// Native MongoDB adapter — mimics the tiny subset used by app/api/[[...path]]/route.js
-// (findOne, find().sort().limit().toArray(), insertOne/Many, updateOne(upsert), deleteOne,
-// countDocuments). Kept intentionally small; not a general-purpose ORM.
-import { MongoClient } from 'mongodb'
+// Supabase PostgreSQL adapter — mimics MongoDB collection API used by route.js.
+// Translates find/findOne/insertOne/updateOne/deleteOne/countDocuments to PostgREST
+// calls via @supabase/supabase-js. Uses service_role key for full table access.
+import { createClient } from '@supabase/supabase-js'
 import { KASUBBID_UNIT, CHILD_UNITS } from './units'
 
-const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017'
-const DB_NAME = process.env.DB_NAME || 'simondu'
+const SUPABASE_URL = process.env.SUPABASE_URL
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
 
 let _client = null
-let _mongoDb = null
 let _seeded = false
 
-async function connect() {
-  if (_mongoDb) return _mongoDb
-  _client = new MongoClient(MONGO_URL, { maxPoolSize: 20 })
-  await _client.connect()
-  _mongoDb = _client.db(DB_NAME)
-  return _mongoDb
+function getClient() {
+  if (!_client) {
+    if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY env vars not set')
+    _client = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } })
+  }
+  return _client
+}
+
+// Build PostgREST filter chain for a query
+function applyFilter(q, filter) {
+  if (!filter || !Object.keys(filter).length) return q
+  for (const [key, value] of Object.entries(filter)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if ('$in' in value) { q = q.in(key, value.$in); continue }
+      if ('$ne' in value) { q = q.neq(key, value.$ne); continue }
+      if ('$gt' in value) { q = q.gt(key, value.$gt); continue }
+      if ('$gte' in value) { q = q.gte(key, value.$gte); continue }
+      if ('$lt' in value) { q = q.lt(key, value.$lt); continue }
+      if ('$lte' in value) { q = q.lte(key, value.$lte); continue }
+    }
+    q = q.eq(key, value)
+  }
+  return q
+}
+
+class SupabaseQuery {
+  constructor(table, filter, opts = {}) {
+    this._table = table
+    this._filter = filter || {}
+    this._sort = opts.sort || null
+    this._limitVal = opts.limit || null
+    this._single = opts.single || false
+    this._count = opts.count || false
+  }
+
+  sort(sortObj) { this._sort = sortObj; return this }
+  limit(n) { this._limitVal = n; return this }
+
+  _build(select = '*') {
+    const sb = getClient()
+    let q = sb.from(this._table).select(select)
+    q = applyFilter(q, this._filter)
+    if (this._sort) {
+      for (const [col, dir] of Object.entries(this._sort)) {
+        q = q.order(col, { ascending: dir === 1 || dir === 'asc' })
+      }
+    }
+    if (this._limitVal) q = q.limit(this._limitVal)
+    return q
+  }
+
+  async toArray() {
+    const q = this._build('*')
+    if (this._count) return q // handle separately
+    const { data, error } = await q
+    if (error) throw error
+    return data || []
+  }
+
+  catch(fn) { return this.toArray().catch(fn) }
+  then(resolve, reject) { return this.toArray().then(resolve, reject) }
+}
+
+class SupabaseCollection {
+  constructor(table) { this._table = table }
+
+  find(filter = {}, opts = {}) {
+    return new SupabaseQuery(this._table, filter, opts)
+  }
+
+  async findOne(filter = {}, opts = {}) {
+    const sb = getClient()
+    let q = sb.from(this._table).select('*')
+    q = applyFilter(q, filter)
+    if (opts.sort) {
+      for (const [col, dir] of Object.entries(opts.sort)) {
+        q = q.order(col, { ascending: dir === 1 || dir === 'asc' })
+      }
+    }
+    q = q.limit(1).single()
+    const { data, error } = await q
+    if (error) {
+      if (error.code === 'PGRST116') return null
+      throw error
+    }
+    return data || null
+  }
+
+  async insertOne(doc) {
+    const sb = getClient()
+    const { error } = await sb.from(this._table).insert(doc)
+    if (error) throw error
+  }
+
+  async insertMany(docs) {
+    const sb = getClient()
+    const { error } = await sb.from(this._table).insert(docs)
+    if (error) throw error
+  }
+
+  async updateOne(filter, update, opts = {}) {
+    const sb = getClient()
+    const setData = update.$set || update
+    const setOnInsert = update.$setOnInsert || null
+
+    if (opts.upsert) {
+      // Read-then-write for upsert
+      const existing = await this.findOne(filter).catch(() => null)
+      if (existing) {
+        let q = sb.from(this._table).update(setData)
+        q = applyFilter(q, filter)
+        const { error } = await q
+        if (error) throw error
+      } else {
+        const insertDoc = { ...(setOnInsert || {}), ...setData }
+        if (!Object.keys(filter).every((k) => k in insertDoc)) {
+          // Include filter keys that aren't already in the doc
+          for (const [k, v] of Object.entries(filter)) {
+            if (!(k in insertDoc)) insertDoc[k] = v
+          }
+        }
+        await this.insertOne(insertDoc)
+      }
+    } else {
+      if (setOnInsert) {
+        // Non-upsert with setOnInsert: only setOnInsert if row exists (merge into set)
+        const merged = { ...setData }
+        // For non-upsert, we only apply setData, ignore setOnInsert
+      }
+      let q = sb.from(this._table).update(setData)
+      q = applyFilter(q, filter)
+      const { error } = await q
+      if (error) throw error
+    }
+  }
+
+  async deleteOne(filter) {
+    const sb = getClient()
+    let q = sb.from(this._table).delete()
+    q = applyFilter(q, filter)
+    const { error } = await q
+    if (error) throw error
+  }
+
+  async countDocuments(filter = {}) {
+    const sb = getClient()
+    let q = sb.from(this._table).select('*', { count: 'exact', head: true })
+    q = applyFilter(q, filter)
+    const { count, error } = await q
+    if (error) throw error
+    return count || 0
+  }
 }
 
 export async function getDb() {
-  const mongo = await connect()
-  const wrapper = { collection: (name) => mongo.collection(name) }
+  const wrapper = { collection: (name) => new SupabaseCollection(name) }
+
   if (!_seeded) {
     _seeded = true
     try {
-      const c = mongo.collection('units_master')
+      const c = new SupabaseCollection('units_master')
       const count = await c.countDocuments({})
       if (count === 0) {
         await c.insertMany([
@@ -37,6 +182,7 @@ export async function getDb() {
       }
     } catch (e) { /* seeding is best-effort */ }
   }
+
   return wrapper
 }
 

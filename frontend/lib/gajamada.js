@@ -1,5 +1,6 @@
 // Gajamada (eBdesk Fusion) API client with session cookie management
 // Manages login session automatically, refreshes on 401.
+// Supports per-user credentials (unit/kasubbid own Gajamada accounts).
 
 const BASE_URL = process.env.GAJAMADA_BASE_URL || 'https://gajamada-propam.polri.go.id'
 const APP_ID = process.env.GAJAMADA_APP_ID || '1769155096865'
@@ -7,12 +8,12 @@ const CONNECTION_ID = process.env.GAJAMADA_CONNECTION_ID || '245b8fd7c4a763019d5
 const DATABASE = process.env.GAJAMADA_DATABASE || 'divpropam'
 const UPDATE_GATEWAY_ID = process.env.GAJAMADA_UPDATE_GATEWAY_ID || '20270a4ffc0bc262b68aa142418d9b42'
 
-// In-memory session store per process (single service account)
-let _session = {
-  cookieString: null,
-  user: null,
-  loggedInAt: null,
-}
+// Per-user sessions: Map<username, {cookieString, user, loggedInAt}>
+const _sessions = new Map()
+// Per-user credentials: Map<username, {email, password}>
+const _creds = new Map()
+// Global fallback session (env-var based, backward compat)
+let _globalSession = null
 
 // Simple in-memory cache: key -> { data, expires }
 const _cache = new Map()
@@ -29,8 +30,6 @@ function cacheSet(key, data, ttl = CACHE_TTL) {
 
 function parseSetCookie(setCookieHeader) {
   if (!setCookieHeader) return null
-  // Multiple set-cookie values combined in Node's Headers may be array or joined by comma.
-  // Extract only name=value pairs (ignore attributes).
   const cookies = []
   const rawList = Array.isArray(setCookieHeader) ? setCookieHeader : setCookieHeader.split(/,(?=[^;]+?=)/)
   for (const raw of rawList) {
@@ -40,7 +39,7 @@ function parseSetCookie(setCookieHeader) {
   return cookies.join('; ')
 }
 
-function commonHeaders(extra = {}) {
+function commonHeaders(session, extra = {}) {
   const h = {
     'Accept': 'application/json, text/plain, */*',
     'Content-Type': 'application/json',
@@ -49,15 +48,48 @@ function commonHeaders(extra = {}) {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
     ...extra,
   }
-  if (_session.cookieString) h['Cookie'] = _session.cookieString
+  if (session && session.cookieString) h['Cookie'] = session.cookieString
   return h
 }
 
-async function doLogin() {
-  const username = process.env.GAJAMADA_USERNAME
-  const password = process.env.GAJAMADA_PASSWORD
-  if (!username || !password) {
-    const err = new Error('Gajamada credentials not set in env (GAJAMADA_USERNAME / GAJAMADA_PASSWORD)')
+function _getSession(username) {
+  if (username) return _sessions.get(username) || null
+  return _globalSession
+}
+function _setSession(username, session) {
+  if (username) _sessions.set(username, session)
+  else _globalSession = session
+}
+function _getCreds(username) {
+  if (!username) {
+    const u = process.env.GAJAMADA_USERNAME
+    const p = process.env.GAJAMADA_PASSWORD
+    if (!u || !p) return null
+    return { email: u, password: p }
+  }
+  return _creds.get(username) || null
+}
+
+// --- Public credential management ---
+export function setCreds(username, { email, password }) {
+  _creds.set(username, { email, password })
+  _sessions.delete(username) // clear existing session for this user
+}
+export function hasCreds(username) {
+  if (!username) return !!(process.env.GAJAMADA_USERNAME && process.env.GAJAMADA_PASSWORD)
+  return _creds.has(username)
+}
+export function clearSession(username) {
+  if (username) _sessions.delete(username)
+  else _globalSession = null
+}
+
+async function doLogin(username) {
+  const creds = _getCreds(username)
+  if (!creds || !creds.email || !creds.password) {
+    const err = new Error(username
+      ? `Kredensial Gajamada belum di-set untuk ${username}`
+      : 'Gajamada credentials not set in env (GAJAMADA_USERNAME / GAJAMADA_PASSWORD)')
     err.code = 'GAJAMADA_DISABLED'
     throw err
   }
@@ -65,11 +97,10 @@ async function doLogin() {
   const url = `${BASE_URL}/api/v1/apps/auth/login`
   const res = await fetch(url, {
     method: 'POST',
-    headers: commonHeaders({ 'Cookie': '' }),
-    body: JSON.stringify({ email: username, password }),
+    headers: commonHeaders(null, { 'Cookie': '' }),
+    body: JSON.stringify({ email: creds.email, password: creds.password }),
   })
 
-  // Collect cookies from Set-Cookie headers. Use raw header parse via res.headers.getSetCookie() when available.
   let setCookie = null
   if (typeof res.headers.getSetCookie === 'function') {
     setCookie = res.headers.getSetCookie()
@@ -83,47 +114,50 @@ async function doLogin() {
     throw new Error(`Gajamada login failed: ${res.status} ${JSON.stringify(body?.metaData || body)}`)
   }
 
-  _session = {
+  const session = {
     cookieString: cookieStr,
     user: body.data?.user || null,
     loggedInAt: Date.now(),
   }
-  return _session
+  _setSession(username, session)
+  return session
 }
 
-async function ensureSession() {
-  if (!_session.cookieString) {
-    await doLogin()
+async function ensureSession(username) {
+  const sess = _getSession(username)
+  if (!sess || !sess.cookieString) {
+    await doLogin(username)
     return
   }
-  // Validate session; if expired, re-login
   try {
     const res = await fetch(`${BASE_URL}/api/v1/apps/auth/validate`, {
       method: 'GET',
-      headers: commonHeaders(),
+      headers: commonHeaders(sess),
     })
     if (res.ok) {
       const j = await res.json().catch(() => null)
       if (j?.data?.status === 'active') return
     }
   } catch (_) { /* ignore */ }
-  await doLogin()
+  await doLogin(username)
 }
 
-async function apiCall(path, options = {}, retry = true) {
-  await ensureSession()
+async function apiCall(username, path, options = {}, retry = true) {
+  await ensureSession(username)
+  const sess = _getSession(username)
   const url = `${BASE_URL}${path}`
   const res = await fetch(url, {
     ...options,
     headers: {
-      ...commonHeaders(),
+      ...commonHeaders(sess),
       ...(options.headers || {}),
     },
   })
   if ((res.status === 401 || res.status === 403) && retry) {
-    _session.cookieString = null
-    await doLogin()
-    return apiCall(path, options, false)
+    _sessions.delete(username)
+    if (!username) _globalSession = null
+    await doLogin(username)
+    return apiCall(username, path, options, false)
   }
   const body = await res.json().catch(() => null)
   return { status: res.status, body }
@@ -131,32 +165,32 @@ async function apiCall(path, options = {}, retry = true) {
 
 // -------------------- Public API --------------------
 
-export async function login() {
-  return await doLogin()
+export async function login(username = null) {
+  return await doLogin(username)
 }
 
-export function getSessionUser() {
-  return _session.user
+export function getSessionUser(username = null) {
+  const sess = _getSession(username)
+  return sess?.user || null
 }
 
 // List cases with filters. filters is object: { status, category, disposisi_case_position, search, from, to, page, size, units }
-export async function listCases({
+export async function listCases(username = null, {
   page = 1,
   size = 30,
   order = 'desc',
   orderBy = 'created_date',
   status,
-  statuses, // array - IN filter (takes precedence over single 'status')
+  statuses,
   category,
   unit,
-  units, // array - IN filter (takes precedence over single 'unit')
+  units,
   search,
   from,
   to,
 } = {}) {
   const filters = []
 
-  // Exclude rejected reports (matches Gajamada default behavior)
   filters.push({
     field: 'status_label',
     fieldType: 'string',
@@ -214,7 +248,6 @@ export async function listCases({
       value: { gte: 0, is: category, isOneOf: [], lte: 0 },
     })
   }
-  // Always restrict to POLDA JAWA BARAT
   filters.push({
     field: 'disposisi_polda',
     fieldType: 'string',
@@ -240,11 +273,11 @@ export async function listCases({
     ...(search ? { search, search_by: ['prepetrator_name', 'content', 'category'] } : {}),
   }
 
-  const cacheKey = 'listCases:' + JSON.stringify(payload)
+  const cacheKey = (username || '_') + ':listCases:' + JSON.stringify(payload)
   const cached = cacheGet(cacheKey)
   if (cached) return cached
 
-  const { body } = await apiCall('/api/v1/apps/data/management/get-all', {
+  const { body } = await apiCall(username, '/api/v1/apps/data/management/get-all', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -258,8 +291,7 @@ export async function listCases({
   return result
 }
 
-// Fetch a single case by prepetrator_id (composite key like '2026062400064-00001')
-export async function getCase(prepetratorId) {
+export async function getCase(username = null, prepetratorId) {
   const payload = {
     connectionId: CONNECTION_ID,
     table: 'gold.report',
@@ -278,15 +310,14 @@ export async function getCase(prepetratorId) {
       },
     ],
   }
-  const { body } = await apiCall('/api/v1/apps/data/management/get-all', {
+  const { body } = await apiCall(username, '/api/v1/apps/data/management/get-all', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
   return body?.data?.[0] || null
 }
 
-// Get case attachments (dokumen sumber pengaduan) — via config/handler predefined query
-export async function getCaseAttachments(prepetratorId) {
+export async function getCaseAttachments(username = null, prepetratorId) {
   const payload = {
     connectionId: CONNECTION_ID,
     queryId: '4f602f42d1b2b8a6d387b6026c5efba5',
@@ -307,19 +338,17 @@ export async function getCaseAttachments(prepetratorId) {
       },
     ],
   }
-  const { body } = await apiCall('/api/v2/apps/config/handler', {
+  const { body } = await apiCall(username, '/api/v2/apps/config/handler', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
   const data = body?.data || []
-  // First row is header. Convert to objects.
   if (data.length < 2) return []
   const [header, ...rows] = data
   return rows.map((row) => Object.fromEntries(header.map((k, i) => [k, row[i]])))
 }
 
-// Get list of categories that exist in Gajamada for a specific unit
-export async function getCategories(disposisiCasePosition) {
+export async function getCategories(username = null, disposisiCasePosition) {
   const payload = {
     page: 1,
     size: 100,
@@ -347,15 +376,14 @@ export async function getCategories(disposisiCasePosition) {
       }] : []),
     ],
   }
-  const { body } = await apiCall('/api/v1/apps/data/management/get-all', {
+  const { body } = await apiCall(username, '/api/v1/apps/data/management/get-all', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
   return (body?.data || []).map((r) => r.value).filter(Boolean)
 }
 
-// Get list of status labels
-export async function getStatuses(disposisiCasePosition) {
+export async function getStatuses(username = null, disposisiCasePosition) {
   const payload = {
     page: 1,
     size: 100,
@@ -390,15 +418,14 @@ export async function getStatuses(disposisiCasePosition) {
       }] : []),
     ],
   }
-  const { body } = await apiCall('/api/v1/apps/data/management/get-all', {
+  const { body } = await apiCall(username, '/api/v1/apps/data/management/get-all', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
   return (body?.data || []).map((r) => r.value).filter(Boolean)
 }
 
-// Get downstream units (children of a case_position)
-export async function getUnitsCatalog(parentPosition) {
+export async function getUnitsCatalog(username = null, parentPosition) {
   const payload = {
     orderBy: '',
     order: 'asc',
@@ -415,15 +442,14 @@ export async function getUnitsCatalog(parentPosition) {
       value: { is: parentPosition },
     }] : [],
   }
-  const { body } = await apiCall('/api/v1/apps/data/management/get-all', {
+  const { body } = await apiCall(username, '/api/v1/apps/data/management/get-all', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
   return body?.data || []
 }
 
-// Get timeline entries from Gajamada (report_officer_detail table)
-export async function getTimeline(prepetratorId) {
+export async function getTimeline(username = null, prepetratorId) {
   const payload = {
     connectionId: CONNECTION_ID,
     queryId: '7761377d7802b8a2f07e200d8cde526b',
@@ -442,7 +468,7 @@ export async function getTimeline(prepetratorId) {
       },
     ],
   }
-  const { body } = await apiCall('/api/v2/apps/config/handler', {
+  const { body } = await apiCall(username, '/api/v2/apps/config/handler', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -452,32 +478,28 @@ export async function getTimeline(prepetratorId) {
   return rows.map((row) => Object.fromEntries(header.map((k, i) => [k, row[i]])))
 }
 
-// Push update to Gajamada via gateway execute
-export async function pushUpdate(caseBody) {
+export async function pushUpdate(username = null, caseBody) {
   const payload = {
     client: 'Propam Polri',
     gatewayId: UPDATE_GATEWAY_ID,
     params: {},
     body: caseBody,
   }
-  const { status, body } = await apiCall('/api/v1/apps/api/gateway/execute', {
+  const { status, body } = await apiCall(username, '/api/v1/apps/api/gateway/execute', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
   return { status, body }
 }
 
-// Upload a file into Gajamada's own storage (used so followup documents are
-// genuinely stored inside Gajamada, not only in our internal Supabase bucket).
-// Endpoint + response shape discovered from live Gajamada frontend bundle
-// (POST /api/v1/apps/upload/upload-file, multipart 'file' + 'tags').
-export async function uploadFile(buffer, filename, mimeType) {
-  await ensureSession()
+export async function uploadFile(username = null, buffer, filename, mimeType) {
+  await ensureSession(username)
+  const sess = _getSession(username)
   const qs = new URLSearchParams({
     folder: 'agent',
     workspaceId: '',
     dashboardId: APP_ID,
-    createdBy: _session.user?.id || '',
+    createdBy: sess?.user?.id || '',
     extractFile: 'false',
   })
   const form = new FormData()
@@ -486,24 +508,23 @@ export async function uploadFile(buffer, filename, mimeType) {
   form.append('tags', 'assets')
   const res = await fetch(`${BASE_URL}/api/v1/apps/upload/upload-file?${qs.toString()}`, {
     method: 'POST',
-    headers: { Cookie: _session.cookieString || '' },
+    headers: { Cookie: sess?.cookieString || '' },
     body: form,
   })
   if (res.status === 401 || res.status === 403) {
-    await doLogin()
-    return uploadFile(buffer, filename, mimeType)
+    await doLogin(username)
+    return uploadFile(username, buffer, filename, mimeType)
   }
   const body = await res.json().catch(() => null)
   if (!res.ok || !body?.data?.path) {
     throw new Error('Gajamada upload gagal: ' + (body?.message || res.status))
   }
-  return body.data // { id, path, filesize, ... }
+  return body.data
 }
 
-// Attach an already-uploaded Gajamada file to a report, WITHOUT touching the
-// report's status/case_position (additive-only gateway, safe for automated use).
 const ATTACH_GATEWAY_ID = process.env.GAJAMADA_ATTACH_GATEWAY_ID || '314b80f7ce408ee9911ac3d4723ba0f9'
-export async function attachToReport(reportId, attachments) {
+export async function attachToReport(username = null, reportId, attachments) {
+  const sess = _getSession(username)
   const payload = {
     client: 'Propam Polri',
     gatewayId: ATTACH_GATEWAY_ID,
@@ -514,7 +535,7 @@ export async function attachToReport(reportId, attachments) {
     additionalParams: {},
     additionalFileParams: {},
     tags: ['Propam Polri'],
-    createdBy: _session.user?.id || '',
+    createdBy: sess?.user?.id || '',
     startDate: '',
     endDate: '',
     dashboardId: APP_ID,
@@ -522,23 +543,42 @@ export async function attachToReport(reportId, attachments) {
     logging: false,
     appendedLog: false,
   }
-  const { status, body } = await apiCall('/api/v1/apps/api/gateway/execute', {
+  const { status, body } = await apiCall(username, '/api/v1/apps/api/gateway/execute', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
   return { status, body }
 }
 
-// Proxy-download a Gajamada file (used to serve attachments to internal users).
-// Accepts absolute URL or s3:// path
-export async function downloadAttachment(url) {
-  await ensureSession()
+export async function downloadAttachment(username = null, url) {
+  await ensureSession(username)
+  const sess = _getSession(username)
   let finalUrl = url
   if (url.startsWith('s3://fusion/')) {
-    // Serve via /cdn/media/fusion/... pattern
     const key = url.substring('s3://fusion/'.length)
     finalUrl = `${BASE_URL}/cdn/media/fusion/${key}`
   }
-  const res = await fetch(finalUrl, { headers: commonHeaders() })
+  const res = await fetch(finalUrl, { headers: commonHeaders(sess) })
   return res
+}
+
+// Test connection with provided credentials (does not store, just validates)
+export async function testLogin({ email, password }) {
+  const url = `${BASE_URL}/api/v1/apps/auth/login`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json, text/plain, */*',
+      'Content-Type': 'application/json',
+      'Origin': BASE_URL,
+      'Referer': `${BASE_URL}/report/laporan-pengaduan`,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    },
+    body: JSON.stringify({ email, password }),
+  })
+  const body = await res.json().catch(() => null)
+  if (!res.ok || !body || body.metaData?.status !== true) {
+    return { ok: false, error: body?.metaData?.message || body?.message || `HTTP ${res.status}` }
+  }
+  return { ok: true, user: body.data?.user || null }
 }

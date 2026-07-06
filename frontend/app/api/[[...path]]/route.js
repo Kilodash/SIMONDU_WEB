@@ -5,7 +5,7 @@ import { getDb, getActiveUnits } from '@/lib/db'
 import { authenticate, signSession, getCookieHeader, clearCookieHeader, getUserFromRequest } from '@/lib/auth'
 import { CHILD_UNITS, KASUBBID_UNIT, KASUBBID_UNIT_ALIASES, PAMINAL_SCOPE_UNITS, CATEGORY_OPTIONS, DERIVED_STATUS } from '@/lib/units'
 import { getSupabaseAdmin, STORAGE_BUCKET, ensureBucket } from '@/lib/supabase-admin'
-import { FOLLOWUP_DOC_TYPES, STAGE_LABELS, HASIL_LIDIK_OPTIONS, SETTLEMENT_OPTIONS, renderNumberTemplate, computeChecklist } from '@/lib/checklist'
+import { FOLLOWUP_DOC_TYPES, NON_DUMAS_DOC_TYPES, STAGE_LABELS, NON_DUMAS_STAGE_LABELS, HASIL_LIDIK_OPTIONS, SETTLEMENT_OPTIONS, renderNumberTemplate, computeChecklist, getDocTypes, getStageOrder, getStageLabels } from '@/lib/checklist'
 
 // Lazy-load astina modules (avoid loading imap/native modules at import time)
 function loadAstinaClient() { return require('@/lib/astina-client') }
@@ -100,7 +100,7 @@ async function enrichCase(caseObj) {
 async function backgroundSync(pid, actor, reason) {
   try {
     const db = await getDb()
-    const original = await gajamada.getCase(pid)
+    const original = await gajamada.getCase(actor?.username || null, pid)
     if (!original) return
     const latestDisp = await db.collection('dispositions').findOne({ prepetrator_id: pid }, { sort: { created_at: -1 } })
     const completed = await db.collection('completions').findOne({ prepetrator_id: pid })
@@ -123,14 +123,18 @@ async function backgroundSync(pid, actor, reason) {
       disposisi_police_function: original.disposisi_police_function || 'PAMINAL',
       category: original.category,
       atensi: !!latestDisp?.is_atensi,
-      timeline_note: timelines.map((t) => `${new Date(t.created_at).toISOString()} - ${t.title}: ${t.description}`).join('\n'),
+      timeline_note: timelines.map((t) => {
+        const dt = new Date(t.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })
+        const actorName = t.by?.name || 'SIMONDU'
+        return `${t.title}\n\n${t.source_name || 'SIMONDU'}\n${actorName} · ${dt}\n\n${t.from_unit || KASUBBID_UNIT} → ${t.to_unit || latestDisp?.to_unit || '-'}\n\n${t.description}`
+      }).join('\n\n---\n\n'),
     }
     const syncLog = {
       id: uuidv4(), prepetrator_id: pid, payload: pushBody, status: 'pending',
       request_at: new Date(), reason, by: { username: actor?.username, role: actor?.role },
     }
     try {
-      const { status, body } = await gajamada.pushUpdate(pushBody)
+      const { status, body } = await gajamada.pushUpdate(actor?.username || null, pushBody)
       syncLog.response = body; syncLog.http_status = status
       syncLog.status = (status >= 200 && status < 300 && body?.metaData?.status !== false) ? 'success' : 'failed'
     } catch (e) {
@@ -177,7 +181,7 @@ async function handleRoute(request, ctx) {
 
   async function getSatkerUnits() {
     if (handleRoute._satkerCache && Date.now() - handleRoute._satkerCacheTime < SATKER_CACHE_TTL) return handleRoute._satkerCache
-    const cases = await gajamada.listCases({ size: 500 }).catch(() => ({ data: [] }))
+    const cases = await gajamada.listCases(null, { size: 500 }).catch(() => ({ data: [] }))
     const paminalSet = new Set([KASUBBID_UNIT, ...CHILD_UNITS].map((u) => u.toUpperCase()))
     handleRoute._satkerCache = [...new Set((cases.data || []).map((c) => c.disposisi_case_position).filter(Boolean))]
       .filter((u) => !paminalSet.has(u.toUpperCase()))
@@ -382,9 +386,43 @@ autoLogin();
     const me = await requireAuth(request)
     if (!me) return fail('Unauthorized', 401)
 
+    // Inject env keys into astina-auth module — load from DB first, fall back to process.env
+    const _astinaAuth = loadAstinaAuth()
+    let _aiKeys = {}
+    try {
+      const _db = await getDb()
+      const rows = await _db.collection('app_settings').find({ key: { $in: ['gemini_api_key', 'opencode_api_key', 'opencode_base_url', 'captcha_model'] } }).toArray()
+      for (const r of rows) _aiKeys[r.key] = r.value
+    } catch (_) {}
+    _astinaAuth.setEnvKeys({
+      gemini: _aiKeys.gemini_api_key || process.env.GEMINI_API_KEY || '',
+      opencode: _aiKeys.opencode_api_key || process.env.OPENCODE_API_KEY || '',
+      opencode_base: _aiKeys.opencode_base_url || process.env.OPENCODE_BASE_URL || 'https://opencode.ai/zen/go',
+      captcha_model: _aiKeys.captcha_model || process.env.CAPTCHA_MODEL || 'kimi-k2.7-code',
+    })
+
+    // Load per-user credentials from DB into in-memory Maps on each request
+    async function ensureCreds(username) {
+      try {
+        const db = await getDb()
+        const creds = await db.collection('user_credentials').findOne({ username })
+        if (!creds) return
+        if (creds.gajamada_email && creds.gajamada_password) {
+          gajamada.setCreds(username, { email: creds.gajamada_email, password: creds.gajamada_password })
+        }
+        if (creds.astina_email && creds.astina_password) {
+          loadAstinaAuth().setCreds(username, {
+            astina_email: creds.astina_email, astina_password: creds.astina_password,
+            zimbra_email: creds.zimbra_email || '', zimbra_password: creds.zimbra_password || '',
+          })
+        }
+      } catch (_) {}
+    }
+    await ensureCreds(me.username)
+
     // ---------- ASTINA (api-gw.polri.go.id) auto-login + fetch ----------
     if (route === '/astina/status' && method === 'GET') {
-      const s = await loadAstinaAuth().currentSession()
+      const s = await loadAstinaAuth().currentSession(me.username)
       return ok({
         session: {
           authenticated: !!s.access_token && !!s.otp_verified,
@@ -397,7 +435,7 @@ autoLogin();
     }
 
     if (route === '/astina/logout' && method === 'POST') {
-      await loadAstinaAuth().logoutSession()
+      await loadAstinaAuth().logoutSession(me.username)
       await logAudit(me, 'astina_logout', 'session')
       return ok({ ok: true })
     }
@@ -407,7 +445,7 @@ autoLogin();
       const page = parseInt(url.searchParams.get('page') || '1', 10)
       const q = url.searchParams.get('q') || ''
       try {
-        const r = await loadAstinaClient().getSuratBaru({ per_page, page, q })
+        const r = await loadAstinaClient().getSuratBaru({ per_page, page, q, username: me.username })
         return ok(r)
       } catch (e) {
         if (e.code === 'OTP_REQUIRED') return fail('ASTINA OTP required. POST /api/astina/verify-otp', 428)
@@ -420,7 +458,7 @@ autoLogin();
       const page = parseInt(url.searchParams.get('page') || '1', 10)
       const q = url.searchParams.get('q') || ''
       try {
-        const r = await loadAstinaClient().getSuratMasuk({ per_page, page, q })
+        const r = await loadAstinaClient().getSuratMasuk({ per_page, page, q, username: me.username })
         return ok(r)
       } catch (e) {
         if (e.code === 'OTP_REQUIRED') return fail('ASTINA OTP required. POST /api/astina/verify-otp', 428)
@@ -433,7 +471,7 @@ autoLogin();
       if (m && method === 'GET') {
         const id = decodeURIComponent(m[1])
         try {
-          const r = await loadAstinaClient().getRiwayatDisposisi(id)
+          const r = await loadAstinaClient().getRiwayatDisposisi(id, me.username)
           return ok({ riwayat_disposisi: r.data || [], source_path: r.source_path })
         } catch (e) {
           if (e.code === 'OTP_REQUIRED') return fail('ASTINA OTP required', 428)
@@ -448,8 +486,8 @@ autoLogin();
         const id = decodeURIComponent(m[1])
         try {
           const [detail, riwayat] = await Promise.all([
-            loadAstinaClient().getSuratDetail(id),
-            loadAstinaClient().getRiwayatDisposisi(id).catch(() => ({ status: false, data: [] })),
+            loadAstinaClient().getSuratDetail(id, me.username),
+            loadAstinaClient().getRiwayatDisposisi(id, me.username).catch(() => ({ status: false, data: [] })),
           ])
           return ok({ detail: detail.data, riwayat_disposisi: riwayat.data || [] })
         } catch (e) {
@@ -465,8 +503,8 @@ autoLogin();
         const id = decodeURIComponent(m[1])
         try {
           const [tujuan, det] = await Promise.all([
-            loadAstinaClient().getTujuanDisposisi(id),
-            loadAstinaClient().getSuratBaruDetail(id).catch(() => ({ ok: false })),
+            loadAstinaClient().getTujuanDisposisi(id, me.username),
+            loadAstinaClient().getSuratBaruDetail(id, me.username).catch(() => ({ ok: false })),
           ])
           return ok({
             tujuan: tujuan.data || [],
@@ -490,6 +528,7 @@ autoLogin();
             notes: b.notes || b.note || [],
             tujuan: b.tujuan || [],
             custom: b.custom || [],
+            username: me.username,
           })
           if (!r.ok) return fail('ASTINA disposisi ditolak: ' + r.message, 502)
           await logAudit(me, 'astina_disposisi', id, { notes: b.notes, tujuan: b.tujuan })
@@ -506,7 +545,7 @@ autoLogin();
       if (m && method === 'GET') {
         const fileId = decodeURIComponent(m[1])
         try {
-          const link = await loadAstinaClient().getFileLink(fileId)
+          const link = await loadAstinaClient().getFileLink(fileId, me.username)
           if (!link.ok) return fail('Gagal ambil link attachment: ' + link.message, 502)
           // Fetch the signed file URL (no auth needed once signed)
           const upstream = await fetch(link.url)
@@ -537,7 +576,7 @@ autoLogin();
       const [dynamicUnits, db, gajamadaStatuses, nonPaminal] = await Promise.all([
         getActiveUnits(),
         getDb(),
-        gajamada.getStatuses().catch(() => []),
+        gajamada.getStatuses(null).catch(() => []),
         getSatkerUnits(),
       ])
       const satkerRows = await db.collection('satker_satwil').find({}).sort({ order: 1, name: 1 }).toArray()
@@ -566,7 +605,9 @@ autoLogin();
         categories: CATEGORY_OPTIONS,
         default_disposisi_tasks: DEFAULT_DISPOSISI_TASKS,
         followup_doc_types: FOLLOWUP_DOC_TYPES,
+        non_dumas_doc_types: NON_DUMAS_DOC_TYPES,
         stage_labels: STAGE_LABELS,
+        non_dumas_stage_labels: NON_DUMAS_STAGE_LABELS,
         hasil_lidik_options: HASIL_LIDIK_OPTIONS,
         settlement_options: SETTLEMENT_OPTIONS,
         satker_satwil: satkerRows.map(({ _id, ...r }) => r),
@@ -594,7 +635,7 @@ autoLogin();
     }
     if (route === '/units-master/sync-gajamada' && method === 'POST') {
       if (!(me.role === 'kasubbid' || me.role === 'admin')) return fail('Hanya Kasubbid/Admin', 403)
-      const catalog = await gajamada.getUnitsCatalog(KASUBBID_UNIT)
+      const catalog = await gajamada.getUnitsCatalog(null, KASUBBID_UNIT)
       const db = await getDb()
       let added = 0, existing = 0
       for (const c of catalog) {
@@ -704,7 +745,7 @@ autoLogin();
         params.statuses = resolveGajamadaStatuses(params.status)
         delete params.status
       }
-      const r = await gajamada.listCases(params).catch((e) => {
+      const r = await gajamada.listCases(me.username, params).catch((e) => {
         if (e.code === 'GAJAMADA_DISABLED') return { data: [], meta: { total: 0, disabled: true } }
         throw e
       })
@@ -767,7 +808,7 @@ autoLogin();
       const db = await getDb()
 
       // Gajamada cases at KASUBBID position, not yet dispositioned
-      const r = await gajamada.listCases({ units: KASUBBID_UNIT_ALIASES, size: 100 }).catch(() => ({ data: [] }))
+      const r = await gajamada.listCases(me.username, { units: KASUBBID_UNIT_ALIASES, size: 100 }).catch(() => ({ data: [] }))
       const pids = r.data.map((c) => c.prepetrator_id)
       const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
       const dispSet = new Set(disp.map((d) => d.prepetrator_id))
@@ -806,22 +847,40 @@ autoLogin();
       let astinaError = null
       try {
         // Check ASTINA session first — skip auto-login in queue to avoid long captcha+OTP flow
-        const sess = await loadAstinaAuth().currentSession().catch(() => ({}))
+        const sess = await loadAstinaAuth().currentSession(me.username).catch(() => ({}))
         if (!sess.access_token || !sess.otp_verified) {
           astinaError = 'ASTINA belum login. Silakan login manual.'
         } else {
-          const r = await loadAstinaClient().getSuratBaru({ per_page: 30, page: 1 })
+          const r = await loadAstinaClient().getSuratBaru({ per_page: 30, page: 1, username: me.username })
           const suratBaru = r.status ? (r.data || []) : []
           const astinaIds = suratBaru.map((s) => s.id)
           const astinaDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: astinaIds } }).toArray().catch(() => [])
           const astinaDispSet = new Set(astinaDisp.map((d) => d.prepetrator_id))
           const riwayatMap = {}
-          await Promise.all(suratBaru.slice(0, 20).map(async (s) => {
-            try {
-              const rr = await loadAstinaClient().getRiwayatDisposisi(s.id)
-              riwayatMap[s.id] = rr.status ? (rr.data || []) : []
-            } catch (_) { riwayatMap[s.id] = [] }
-          }))
+
+          // Persist ASTINA surat to local_cases (cache so queue works offline)
+          if (suratBaru.length > 0) {
+            await Promise.all(suratBaru.slice(0, 20).map(async (s) => {
+              try {
+                const rr = await loadAstinaClient().getRiwayatDisposisi(s.id, me.username)
+                riwayatMap[s.id] = rr.status ? (rr.data || []) : []
+              } catch (_) { riwayatMap[s.id] = [] }
+              try {
+                await db.collection('local_cases').updateOne(
+                  { prepetrator_id: s.id },
+                  { $setOnInsert: {
+                    prepetrator_id: s.id, source: 'astina', status: 'Laporan Diterima',
+                    perihal: s.perihal || '', nomor_surat: s.no_surat || '',
+                    pengirim: s.pengirim || s.dari_name || '',
+                    tgl_surat: s.tanggal_surat || s.tanggal,
+                    case_type: 'non_pengaduan', source_alias: 'ASTINA',
+                    raw_data: s, created_at: new Date(),
+                  }, $set: { updated_at: new Date() } },
+                  { upsert: true }
+                )
+              } catch (_) {}
+            }))
+          }
           for (const s of suratBaru) {
             if (!astinaDispSet.has(s.id)) {
               astinaQueue.push({
@@ -849,23 +908,39 @@ autoLogin();
         console.error('[disposisi-queue] ASTINA error:', astinaError)
       }
 
-      const queue = [...gajamadaQueue, ...localQueue, ...astinaQueue]
+      const queue = [...gajamadaQueue, ...localQueue, ...astinaQueue].filter((item) => item.prepetrator_id && (item.perihal || item.prepetrator_name !== '-'))
       return ok({ data: queue, total: queue.length, astina_error: astinaError })
     }
 
-    // Lightweight count-only endpoint for sidebar notification badge
+// Lightweight count-only endpoint for sidebar notification badge
     if (route === '/disposisi-queue/count' && method === 'GET') {
       if (!(me.role === 'kasubbid' || me.role === 'admin')) return ok({ count: 0 })
-      const r = await gajamada.listCases({ units: KASUBBID_UNIT_ALIASES, size: 100 }).catch(() => ({ data: [] }))
       const db = await getDb()
-      const pids = r.data.map((c) => c.prepetrator_id)
-      const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
-      const dispSet = new Set(disp.map((d) => d.prepetrator_id))
-      let count = r.data.filter((c) => !dispSet.has(c.prepetrator_id)).length
+      let count = 0
 
-      // Add ASTINA count (best-effort, uses Bearer session; ignores if not logged in)
+      // Gajamada undisposed
       try {
-        const r = await loadAstinaClient().getSuratBaru({ per_page: 30, page: 1 })
+        const r = await gajamada.listCases(me.username, { units: KASUBBID_UNIT_ALIASES, size: 100 }).catch(() => ({ data: [] }))
+        const pids = r.data.map((c) => c.prepetrator_id)
+        const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
+        const dispSet = new Set(disp.map((d) => d.prepetrator_id))
+        count += r.data.filter((c) => !dispSet.has(c.prepetrator_id)).length
+      } catch (_) {}
+
+      // Local cases undisposed
+      try {
+        const localCases = await db.collection('local_cases').find({ status: 'Laporan Diterima' }).toArray()
+        const localPids = localCases.map((c) => c.prepetrator_id)
+        if (localPids.length) {
+          const localDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
+          const localDispSet = new Set(localDisp.map((d) => d.prepetrator_id))
+          count += localCases.filter((c) => !localDispSet.has(c.prepetrator_id)).length
+        }
+      } catch (_) {}
+
+      // ASTINA undisposed
+      try {
+        const r = await loadAstinaClient().getSuratBaru({ per_page: 30, page: 1, username: me.username })
         if (r.status) {
           const astinaIds = (r.data || []).map((s) => s.id)
           const astinaDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: astinaIds } }).toArray().catch(() => [])
@@ -885,7 +960,9 @@ autoLogin();
       if (!to_unit || !CHILD_UNITS.includes(to_unit)) return fail('Unit tujuan tidak valid')
       const db = await getDb()
       const results = []
-      for (const pid of items) {
+      for (const item of items) {
+        const pid = typeof item === 'string' ? item : item.pid
+        const itemSource = typeof item === 'string' ? (item.length > 30 ? 'astina' : 'gajamada') : (item.source || 'gajamada')
         const disp = {
           id: uuidv4(),
           prepetrator_id: pid,
@@ -893,29 +970,78 @@ autoLogin();
           from_unit: KASUBBID_UNIT,
           note: note || '',
           is_atensi: !!is_atensi,
-          case_type: case_type || 'dumas',
           by: { username: me.username, name: me.name, role: me.role },
           created_at: new Date(),
           synced_to_gajamada: false,
         }
         await db.collection('dispositions').insertOne(disp)
-        // Upsert case_type to local_cases for tab filtering
+        // Seed checklist items based on case_type
+        try {
+          const ctype = case_type || 'dumas'
+          const docTypes = getDocTypes(ctype)
+          for (const dt of docTypes) {
+            await db.collection('followup_checklist').updateOne(
+              { prepetrator_id: pid, document_type: dt.key },
+              { $setOnInsert: { prepetrator_id: pid, document_type: dt.key, status: 'pending', note: '', updated_at: new Date().toISOString() }, $set: {} },
+              { upsert: true }
+            )
+          }
+        } catch (_) {}
+        // Upsert case_type + update status to local_cases
         try {
           await db.collection('local_cases').updateOne(
             { prepetrator_id: pid },
-            { $set: { case_type: case_type || 'dumas', updated_at: new Date() }, $setOnInsert: { prepetrator_id: pid, source: 'gajamada', created_at: new Date() } },
+            { $set: { case_type: case_type || 'dumas', status: 'Didistribusi', updated_at: new Date() }, $setOnInsert: { prepetrator_id: pid, source: 'gajamada', created_at: new Date() } },
             { upsert: true }
           )
         } catch (_) {}
+        const dateStr = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })
+        const timelineTitle = `Didistribusi ${to_unit} - POLDA JAWA BARAT`
+        const timelineDesc = `${is_atensi ? 'ATENSI - ' : ''}${note || 'Disposisi oleh ' + me.name}`
         await db.collection('timelines').insertOne({
           id: uuidv4(), prepetrator_id: pid,
-          title: `Disposisi ke ${to_unit}${is_atensi ? ' (ATENSI)' : ''}`,
-          description: note || '-',
+          title: timelineTitle,
+          description: timelineDesc,
+          source_name: 'SIMONDU',
+          from_unit: KASUBBID_UNIT,
+          to_unit: to_unit,
           by: { username: me.username, name: me.name, role: me.role },
           created_at: new Date(),
         })
         scheduleSync(pid, me, 'disposisi')
         await logAudit(me, 'disposisi', pid, { to_unit, is_atensi: !!is_atensi })
+
+        // ASTINA sync: push disposition to ASTINA for ASTINA-sourced cases
+        if (itemSource === 'astina') {
+          try {
+            const astinaClient = loadAstinaClient()
+            const tujuanRes = await astinaClient.getTujuanDisposisi(pid, me.username).catch(() => null)
+            if (tujuanRes?.ok && tujuanRes.data?.length) {
+              const targetUnit = to_unit.toUpperCase()
+              let tujuanUuid = null
+              for (const group of tujuanRes.data) {
+                if (!group.jabatan) continue
+                for (const j of group.jabatan) {
+                  if (j.name && j.name.toUpperCase().includes(targetUnit)) { tujuanUuid = j.id; break }
+                }
+                if (tujuanUuid) break
+              }
+              if (tujuanUuid) {
+                const noteLabels = (note || '').split('\n').filter(Boolean).slice(0, 3)
+                const res = await astinaClient.postDisposisi({
+                  suratId: pid,
+                  notes: noteLabels.length ? noteLabels : ['TINDAKLANJUTI'],
+                  tujuan: [tujuanUuid],
+                  custom: note ? [note] : [],
+                  username: me.username,
+                })
+                console.log(`[ASTINA] disposisi ${pid} → ${to_unit}: ${res.ok ? 'OK' : 'FAILED'}`)
+              } else {
+                console.log(`[ASTINA] disposisi ${pid}: tujuan ${to_unit} not found in ASTINA recipient list`)
+              }
+            }
+          } catch (e) { console.error('[ASTINA] disposisi sync error:', e.message) }
+        }
         results.push({ pid, ok: true })
       }
       return ok({ data: results })
@@ -930,7 +1056,7 @@ autoLogin();
       // Get case info from Gajamada in batches
       const caseMap = {}
       if (pids.length > 0) {
-        const r = await gajamada.listCases({ size: pids.length, units: PAMINAL_SCOPE_UNITS }).catch(() => ({ data: [] }))
+        const r = await gajamada.listCases(me.username, { size: pids.length, units: PAMINAL_SCOPE_UNITS }).catch(() => ({ data: [] }))
         for (const c of r.data) caseMap[c.prepetrator_id] = c
       }
       const enriched = dispositions.map((d) => ({
@@ -972,7 +1098,7 @@ autoLogin();
     const attMatch = route.match(/^\/cases\/([^/]+)\/attachments$/)
     if (attMatch && method === 'GET') {
       const pid = decodeURIComponent(attMatch[1])
-      const atts = await gajamada.getCaseAttachments(pid)
+      const atts = await gajamada.getCaseAttachments(me.username, pid)
       return ok({ data: atts })
     }
 
@@ -981,7 +1107,7 @@ autoLogin();
     if (tlAllMatch && method === 'GET') {
       const pid = decodeURIComponent(tlAllMatch[1])
       const [gjEntries, internal] = await Promise.all([
-        gajamada.getTimeline(pid).catch(() => []),
+        gajamada.getTimeline(me.username, pid).catch(() => []),
         (async () => {
           const db = await getDb()
           const rows = await db.collection('timelines').find({ prepetrator_id: pid }).sort({ created_at: -1 }).toArray()
@@ -1041,9 +1167,9 @@ autoLogin();
       // ke report via gateway attach-only (tidak mengubah status/case_position).
       let gajamadaPath = null, gajamadaAttachStatus = 'skipped', gajamadaError = null
       try {
-        const gjUpload = await gajamada.uploadFile(Buffer.from(arrayBuffer), file.name || 'dokumen', file.type)
+        const gjUpload = await gajamada.uploadFile(me.username, Buffer.from(arrayBuffer), file.name || 'dokumen', file.type)
         gajamadaPath = gjUpload.path
-        const { status, body } = await gajamada.attachToReport(pid, [{ url: gajamadaPath, name: file.name }])
+        const { status, body } = await gajamada.attachToReport(me.username, pid, [{ url: gajamadaPath, name: file.name }])
         gajamadaAttachStatus = (status >= 200 && status < 300 && body?.metaData?.status !== false) ? 'success' : 'failed'
       } catch (e) {
         gajamadaAttachStatus = 'failed'; gajamadaError = e.message
@@ -1354,7 +1480,7 @@ autoLogin();
     const caseMatch = route.match(/^\/cases\/([^/]+)$/)
     if (caseMatch && method === 'GET') {
       const pid = decodeURIComponent(caseMatch[1])
-      const c = await gajamada.getCase(pid)
+      const c = await gajamada.getCase(me.username, pid)
       if (!c) return fail('Kasus tidak ditemukan', 404)
       const enriched = await enrichCase(c)
       return ok({ data: enriched })
@@ -1364,7 +1490,7 @@ autoLogin();
     if (route === '/download' && method === 'GET') {
       const target = url.searchParams.get('url')
       if (!target) return fail('url param required')
-      const res = await gajamada.downloadAttachment(target)
+      const res = await gajamada.downloadAttachment(me.username, target)
       const buffer = await res.arrayBuffer()
       const contentType = res.headers.get('content-type') || 'application/octet-stream'
       const name = url.searchParams.get('name') || target.split('/').pop() || 'file'
@@ -1384,7 +1510,7 @@ autoLogin();
       const opts = { page: 1, size: 500 }
       if (me.role === 'unit') opts.units = [me.unit]
       else opts.units = scope === 'paminal' ? PAMINAL_SCOPE_UNITS : undefined
-      const result = await gajamada.listCases(opts).catch((e) => {
+      const result = await gajamada.listCases(me.username, opts).catch((e) => {
         if (e.code === 'GAJAMADA_DISABLED') return { data: [], total: 0, meta: { disabled: true } }
         throw e
       })
@@ -1448,22 +1574,124 @@ autoLogin();
       return ok({ data: rows.map(({ _id, ...r }) => r) })
     }
 
+    // ---------- USER CREDENTIALS (per-user Gajamada & ASTINA) ----------
+    if (route === '/user/credentials' && method === 'GET') {
+      const db = await getDb()
+      const row = await db.collection('user_credentials').findOne({ username: me.username })
+      if (!row) return ok({ gajamada: null, astina: null, zimbra: null })
+      const mask = (s) => !s ? null : s.length <= 6 ? '***' : s.slice(0, 3) + '***' + s.slice(-3)
+      return ok({
+        gajamada: row.gajamada_email ? { email: row.gajamada_email, has_password: true } : null,
+        astina: row.astina_email ? { email: row.astina_email, has_password: true } : null,
+        zimbra: row.zimbra_email ? { email: row.zimbra_email, has_password: true } : null,
+        saved_at: row.saved_at || null,
+      })
+    }
+
+    if (route === '/user/credentials' && method === 'POST') {
+      const { gajamada_email, gajamada_password, astina_email, astina_password, zimbra_email, zimbra_password } = await request.json().catch(() => ({}))
+      const db = await getDb()
+      const set = { username: me.username, saved_at: new Date(), updated_at: new Date().toISOString() }
+      if (gajamada_email !== undefined) set.gajamada_email = gajamada_email
+      if (gajamada_password !== undefined) set.gajamada_password = gajamada_password
+      if (astina_email !== undefined) set.astina_email = astina_email
+      if (astina_password !== undefined) set.astina_password = astina_password
+      if (zimbra_email !== undefined) set.zimbra_email = zimbra_email
+      if (zimbra_password !== undefined) set.zimbra_password = zimbra_password
+      await db.collection('user_credentials').updateOne({ username: me.username }, { $set: { ...set } }, { upsert: true })
+
+      // Load credentials into Gajamada/Astina modules
+      try {
+        if (gajamada_email && gajamada_password) {
+          gajamada.setCreds(me.username, { email: gajamada_email, password: gajamada_password })
+        }
+        if (astina_email && astina_password) {
+          const astinaAuth = loadAstinaAuth()
+          astinaAuth.setCreds(me.username, { astina_email, astina_password, zimbra_email: zimbra_email || '', zimbra_password: zimbra_password || '' })
+          // Trigger ASTINA auto-login in background (captcha + OTP) so connection goes green
+          if (zimbra_email && zimbra_password) {
+            setTimeout(() => {
+              astinaAuth.autoLogin({ waitOtp: true, username: me.username }).then((r) => {
+                if (r.step === 'authenticated') console.log(`[ASTINA] auto-login OK for ${me.username}`)
+              }).catch(() => {})
+            }, 500)
+          }
+        }
+      } catch (_) { /* best-effort */ }
+
+      await logAudit(me, 'save_credentials', 'user_credentials', { services: [gajamada_email ? 'gajamada' : null, astina_email ? 'astina' : null].filter(Boolean) })
+      return ok({ message: 'Kredensial disimpan' })
+    }
+
+    if (route === '/user/test-gajamada' && method === 'POST') {
+      const { email, password } = await request.json().catch(() => ({}))
+      if (!email || !password) return fail('Email dan password wajib')
+      const result = await gajamada.testLogin({ email, password })
+      return ok(result)
+    }
+
+    if (route === '/user/test-astina' && method === 'POST') {
+      const { email, password } = await request.json().catch(() => ({}))
+      if (!email || !password) return fail('Email dan password wajib')
+      const result = await loadAstinaAuth().testLogin({ email, password })
+      return ok(result)
+    }
+
+    // ---------- AI SETTINGS (global, stored in app_settings table) ----------
+    if (route === '/settings/ai' && method === 'GET') {
+      const db = await getDb()
+      const keys = ['gemini_api_key', 'opencode_api_key', 'opencode_base_url', 'captcha_model']
+      const rows = await db.collection('app_settings').find({ key: { $in: keys } }).toArray().catch(() => [])
+      const map = {}
+      for (const r of rows) map[r.key] = r.value
+      return ok({
+        gemini_api_key: map.gemini_api_key || '',
+        opencode_api_key: map.opencode_api_key || '',
+        opencode_base_url: map.opencode_base_url || 'https://api.opencode.ai',
+        captcha_model: map.captcha_model || 'gemini/gemini-2.5-flash',
+        has_gemini: !!map.gemini_api_key,
+        has_opencode: !!map.opencode_api_key,
+      })
+    }
+    if (route === '/settings/ai' && method === 'POST') {
+      if (me.role !== 'kasubbid' && me.role !== 'admin') return fail('Hanya Kasubbid/Admin', 403)
+      const body = await request.json().catch(() => ({}))
+      const db = await getDb()
+      const allowed = ['gemini_api_key', 'opencode_api_key', 'opencode_base_url', 'captcha_model']
+      for (const k of allowed) {
+        if (body[k] !== undefined) {
+          await db.collection('app_settings').updateOne(
+            { key: k },
+            { $set: { key: k, value: body[k], updated_at: new Date().toISOString() } },
+            { upsert: true }
+          )
+        }
+      }
+      await logAudit(me, 'save_ai_settings', 'app_settings', { keys: allowed.filter((k) => body[k] !== undefined) })
+      return ok({ message: 'Pengaturan AI disimpan' })
+    }
+    if (route === '/settings/ai/test' && method === 'POST') {
+      try {
+        const { captcha_base64 } = await request.json().catch(() => ({}))
+        const result = await loadAstinaAuth().testCaptchaSolving(captcha_base64)
+        return ok(result)
+      } catch (e) { return ok({ ok: false, error: e.message }) }
+    }
+
     // ---------- CONNECTION STATUS ----------
     if (route === '/connection-status' && method === 'GET') {
-      // Check ASTINA session
       let astinaConnected = false
       try {
-        const s = await loadAstinaAuth().currentSession()
+        const s = await loadAstinaAuth().currentSession(me.username)
         astinaConnected = !!(s.access_token && s.otp_verified)
       } catch (_) {}
 
-      // Check Gajamada session (lightweight: try a minimal API call)
       let gajamadaConnected = false
       try {
-        await gajamada.listCases({ size: 1 })
+        await gajamada.listCases(me.username, { size: 1 })
         gajamadaConnected = true
       } catch (e) {
-        gajamadaConnected = e.code !== 'GAJAMADA_DISABLED'
+        gajamadaConnected = e.code !== 'GAJAMADA_DISABLED' && !/belum di-set/.test(e.message || '')
       }
 
       return ok({
@@ -1475,37 +1703,31 @@ autoLogin();
 
     // ---------- SETTINGS ----------
     if (route === '/settings' && method === 'GET') {
-      const mask = (s) => !s ? null : s.length <= 6 ? '***' : s.slice(0, 3) + '***' + s.slice(-3)
-      const astinaSess = await loadAstinaAuth().currentSession().catch(() => ({}))
-      const aiCheck = {
-        captcha_model: process.env.CAPTCHA_MODEL || 'gemini/gemini-2.5-flash',
-        has_emergent_key: !!process.env.EMERGENT_LLM_KEY,
-        has_opencode_key: !!process.env.OPENCODE_API_KEY,
-      }
+      const db = await getDb()
+      const creds = await db.collection('user_credentials').findOne({ username: me.username }).catch(() => null)
+      const astinaSess = await loadAstinaAuth().currentSession(me.username).catch(() => ({}))
       return ok({
+        gajamada: {
+          base_url: process.env.GAJAMADA_BASE_URL || 'https://gajamada-propam.polri.go.id',
+          email: creds?.gajamada_email || null,
+          has_password: !!creds?.gajamada_password,
+          email_set: !!creds?.gajamada_email,
+          session_active: !!(astinaSess.access_token && astinaSess.otp_verified), // placeholder - needs per-user Gajamada session
+        },
         astina: {
           base_url: process.env.ASTINA_BASE_URL || 'https://astina.polri.go.id',
-          username: process.env.ASTINA_USERNAME || null,
-          has_password: !!process.env.ASTINA_PASSWORD,
+          email: creds?.astina_email || null,
+          has_password: !!creds?.astina_password,
+          email_set: !!creds?.astina_email,
           session: {
             authenticated: !!(astinaSess.access_token && astinaSess.otp_verified),
             obtained_at: astinaSess.obtained_at || null,
           },
         },
-        gajamada: {
-          base_url: process.env.GAJAMADA_BASE_URL || 'https://gajamada-propam.polri.go.id',
-          username: process.env.GAJAMADA_USERNAME || null,
-          has_password: !!process.env.GAJAMADA_PASSWORD,
-          database: process.env.GAJAMADA_DATABASE || 'divpropam',
-        },
-        ai: {
-          ...aiCheck,
-          emergent_key: mask(process.env.EMERGENT_LLM_KEY),
-          opencode_key: mask(process.env.OPENCODE_API_KEY),
-        },
         zimbra: {
-          email: process.env.ZIMBRA_EMAIL || null,
-          has_password: !!process.env.ZIMBRA_PASSWORD,
+          email: creds?.zimbra_email || null,
+          has_password: !!creds?.zimbra_password,
+          email_set: !!creds?.zimbra_email,
           imap_host: process.env.ZIMBRA_IMAP_HOST || 'mail.polri.go.id',
         },
       })

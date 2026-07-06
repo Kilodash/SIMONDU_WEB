@@ -252,3 +252,37 @@ CREATE TABLE IF NOT EXISTS surat_non_dumas (
 );
 CREATE INDEX IF NOT EXISTS idx_snd_letter ON surat_non_dumas(letter_id);
 ALTER TABLE surat_non_dumas ENABLE ROW LEVEL SECURITY;
+
+-- User credentials (per-user Gajamada + ASTINA credentials)
+CREATE TABLE IF NOT EXISTS user_credentials (
+  username TEXT PRIMARY KEY,
+  gajamada_email TEXT,
+  gajamada_password TEXT,
+  astina_email TEXT,
+  astina_password TEXT,
+  zimbra_email TEXT,
+  zimbra_password TEXT,
+  saved_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE user_credentials ENABLE ROW LEVEL SECURITY;
+
+-- ASTINA sessions (persisted Bearer tokens)
+CREATE TABLE IF NOT EXISTS astina_sessions (
+  username TEXT PRIMARY KEY,
+  access_token TEXT,
+  email TEXT,
+  "user" JSONB,
+  obtained_at BIGINT,
+  otp_verified BOOLEAN DEFAULT FALSE,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE astina_sessions ENABLE ROW LEVEL SECURITY;
+
+-- App settings (global key-value config, e.g. AI API keys)
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;

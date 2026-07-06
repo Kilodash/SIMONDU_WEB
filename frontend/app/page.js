@@ -21,7 +21,7 @@ import {
   Loader2, FileText, Upload, RefreshCw, Users, ChevronLeft, ChevronRight, Download, Paperclip,
   Building2, User, Calendar, Tag, CheckCircle2, XCircle, Clock,
   AlertCircle, ArrowRightLeft, History, Star, QrCode, Mail, Phone, MapPin,
-  Bell, Hash, Ban, Scale, Settings, Brain,
+  Bell, Hash, Ban, Scale, Settings, Brain, Eye, EyeOff,
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RTooltip, PieChart, Pie, Cell, Legend, CartesianGrid } from 'recharts'
 
@@ -1630,8 +1630,8 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
         </Card>
       </div>
 
-      {/* Sticky bottom navigation bar */}
-      <div className="sticky bottom-0 z-10 bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]" data-testid="bottom-nav">
+      {/* Navigation bar — below content, above bottom */}
+      <div className="bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]" data-testid="bottom-nav">
         <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
           <Button variant="outline" size="sm" onClick={goPrev} disabled={idx === 0} className="text-xs min-w-[80px]" data-testid="btn-prev">
             <ChevronLeft className="h-4 w-4 mr-1" /> Prev
@@ -2244,12 +2244,57 @@ function PersonelPage() {
 }
 
 // ---------------- Settings Page ----------------
+const PassInput = memo(({ value, onChange, placeholder }) => {
+  const [show, setShow] = useState(false)
+  return (
+    <div className="relative">
+      <Input type={show ? 'text' : 'password'} value={value} onChange={onChange} placeholder={placeholder} className="h-9 text-sm pr-8" />
+      <button type="button" tabIndex={-1} onClick={() => setShow(!show)} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+        {show ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+      </button>
+    </div>
+  )
+})
+PassInput.displayName = 'PassInput'
+
 function SettingsPage({ connStatus }) {
-  const [settings, setSettings] = useState(null)
+  const [saved, setSaved] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState({})
+  const [testing, setTesting] = useState({})
+  const [showPass, setShowPass] = useState({})
+
+  // Gajamada fields
+  const [gjEmail, setGjEmail] = useState('')
+  const [gjPass, setGjPass] = useState('')
+  // ASTINA fields
+  const [asEmail, setAsEmail] = useState('')
+  const [asPass, setAsPass] = useState('')
+  const [zimEmail, setZimEmail] = useState('')
+  const [zimPass, setZimPass] = useState('')
+  // AI field
+  const [aiKey, setAiKey] = useState('')
+
+  const toggleShow = (k) => setShowPass((p) => ({ ...p, [k]: !p[k] }))
+  const PassInput = ({ value, onChange, placeholder, field }) => (
+    <div className="relative">
+      <Input type={showPass[field] ? 'text' : 'password'} value={value} onChange={onChange} placeholder={placeholder} className="h-9 text-sm pr-8" />
+      <button type="button" onClick={() => toggleShow(field)} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+        {showPass[field] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+      </button>
+    </div>
+  )
 
   useEffect(() => {
-    api('/settings').then((r) => { setSettings(r) }).catch(() => {}).finally(() => setLoading(false))
+    api('/settings').then((r) => {
+      setSaved(r)
+      if (r.gajamada?.email_set) setGjEmail(r.gajamada.email || '')
+      if (r.astina?.email_set) setAsEmail(r.astina.email || '')
+      if (r.zimbra?.email_set) setZimEmail(r.zimbra.email || '')
+    }).catch(() => {}).finally(() => setLoading(false))
+    api('/settings/ai').then((r) => {
+      if (r.opencode_api_key) setAiKey(r.opencode_api_key)
+    }).catch(() => {})
   }, [])
 
   if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin text-blue-800" /></div>
@@ -2257,97 +2302,118 @@ function SettingsPage({ connStatus }) {
   const Dot = ({ ok }) => (
     <span className={`inline-block h-2.5 w-2.5 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'} ${ok ? 'shadow-[0_0_6px_rgba(74,222,128,0.6)]' : 'shadow-[0_0_6px_rgba(248,113,113,0.6)]'}`} />
   )
-  const Row = ({ label, value, isPassword }) => (
-    <div className="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
-      <span className="text-xs text-slate-500">{label}</span>
-      <span className="text-xs font-mono text-slate-700">{isPassword ? (value ? '***' : '-') : (value || '-')}</span>
-    </div>
-  )
+
+  const saveService = async (service) => {
+    setSaving((p) => ({ ...p, [service]: true }))
+    const body = {}
+    if (service === 'gajamada') { body.gajamada_email = gjEmail; body.gajamada_password = gjPass }
+    if (service === 'astina') {
+      body.astina_email = asEmail; body.astina_password = asPass
+      body.zimbra_email = zimEmail; body.zimbra_password = zimPass
+    }
+    try {
+      await api('/user/credentials', { method: 'POST', body: JSON.stringify(body) })
+      toast.success('Kredensial ' + (service === 'gajamada' ? 'Gajamada' : 'ASTINA/Zimbra') + ' disimpan')
+    } catch (e) {
+      toast.error('Gagal menyimpan: ' + (e.message || 'error'))
+    } finally {
+      setSaving((p) => ({ ...p, [service]: false }))
+    }
+  }
+
+  const testLogin = async (service) => {
+    setTesting((p) => ({ ...p, [service]: true }))
+    const endpoint = service === 'gajamada' ? '/user/test-gajamada' : '/user/test-astina'
+    const body = service === 'gajamada'
+      ? { email: gjEmail, password: gjPass }
+      : { email: asEmail, password: asPass }
+    try {
+      const r = await api(endpoint, { method: 'POST', body: JSON.stringify(body) })
+      if (r.ok) toast.success('Login ' + (service === 'gajamada' ? 'Gajamada' : 'ASTINA') + ' berhasil')
+      else toast.error('Login gagal: ' + (r.error || 'kredensial salah'))
+    } catch (e) {
+      toast.error('Test gagal: ' + (e.message || 'error'))
+    } finally {
+      setTesting((p) => ({ ...p, [service]: false }))
+    }
+  }
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><Settings className="h-6 w-6" /> Pengaturan</h2>
+    <div className="space-y-4 max-w-2xl">
+      <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><Settings className="h-6 w-6" /> Koneksi Eksternal</h2>
+      <p className="text-sm text-slate-500 -mt-2">Setiap user memiliki kredensial Gajamada dan ASTINA sendiri. Masukkan kredensial akun Anda.</p>
 
-      {/* ASTINA */}
+      {/* Gajamada */}
       <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Dot ok={connStatus.astina} />
-            <span>ASTINA (e-Office Polri)</span>
-            <Badge variant="outline" className={`text-[10px] ml-auto ${connStatus.astina ? 'text-green-700 border-green-300' : 'text-red-700 border-red-300'}`}>{connStatus.astina ? 'Terhubung' : 'Terputus'}</Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm">
-          {settings?.astina ? (
-            <>
-              <Row label="Base URL" value={settings.astina.base_url} />
-              <Row label="Username" value={settings.astina.username} />
-              <Row label="Password" isPassword value={settings.astina.has_password} />
-              <Row label="Session OTP Verified" value={settings.astina.session?.otp_verified ? 'Ya' : 'Tidak'} />
-              <Row label="Terakhir Aktif" value={settings.astina.session?.obtained_at ? new Date(settings.astina.session.obtained_at).toLocaleString('id-ID') : '-'} />
-            </>
-          ) : <p className="text-xs text-slate-400 italic">Tidak ada data</p>}
-        </CardContent>
-      </Card>
-
-      {/* GAJAMADA */}
-      <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="pb-3">
           <CardTitle className="text-sm flex items-center gap-2">
             <Dot ok={connStatus.gajamada} />
             <span>Gajamada (eBdesk Fusion)</span>
-            <Badge variant="outline" className={`text-[10px] ml-auto ${connStatus.gajamada ? 'text-green-700 border-green-300' : 'text-red-700 border-red-300'}`}>{connStatus.gajamada ? 'Terhubung' : 'Terputus'}</Badge>
+            <Badge variant="outline" className={`text-[10px] ml-auto ${connStatus.gajamada ? 'text-green-700 border-green-300' : 'text-red-700 border-red-300'}`}>
+              {connStatus.gajamada ? 'Terhubung' : saved?.gajamada?.email_set ? 'Kredensial tersimpan' : 'Belum login'}
+            </Badge>
           </CardTitle>
         </CardHeader>
-        <CardContent className="text-sm">
-          {settings?.gajamada ? (
-            <>
-              <Row label="Base URL" value={settings.gajamada.base_url} />
-              <Row label="Username" value={settings.gajamada.username} />
-              <Row label="Password" isPassword value={settings.gajamada.has_password} />
-              <Row label="Database" value={settings.gajamada.database} />
-            </>
-          ) : <p className="text-xs text-slate-400 italic">Tidak ada data</p>}
+        <CardContent className="space-y-3">
+          <div>
+            <Label className="text-xs">Email</Label>
+            <Input value={gjEmail} onChange={(e) => setGjEmail(e.target.value)} placeholder="email@gajamada" className="h-9 text-sm" />
+          </div>
+          <div>
+            <Label className="text-xs">Password</Label>
+            <PassInput value={gjPass} onChange={(e) => setGjPass(e.target.value)} placeholder="••••••••" field="gj" />
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => testLogin('gajamada')} disabled={testing.gajamada || !gjEmail || !gjPass}>
+              {testing.gajamada ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null} Test Login
+            </Button>
+            <Button size="sm" onClick={() => saveService('gajamada')} disabled={saving.gajamada || !gjEmail || !gjPass}>
+              {saving.gajamada ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null} Simpan
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
-      {/* AI */}
+      {/* ASTINA */}
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="pb-3">
           <CardTitle className="text-sm flex items-center gap-2">
-            <Dot ok={connStatus.ai} />
-            <Brain className="h-4 w-4" />
-            <span>AI (Vision / Captcha Solver)</span>
-            <Badge variant="outline" className={`text-[10px] ml-auto ${connStatus.ai ? 'text-green-700 border-green-300' : 'text-red-700 border-red-300'}`}>{connStatus.ai ? 'Aktif' : 'Tidak Aktif'}</Badge>
+            <Dot ok={connStatus.astina} />
+            <span>ASTINA (e-Office Polri)</span>
+            <Badge variant="outline" className={`text-[10px] ml-auto ${connStatus.astina ? 'text-green-700 border-green-300' : saved?.astina?.email_set ? 'text-green-700 border-green-300' : 'text-red-700 border-red-300'}`}>
+              {connStatus.astina ? 'Session aktif' : saved?.astina?.email_set ? 'Kredensial tersimpan' : 'Belum login'}
+            </Badge>
           </CardTitle>
         </CardHeader>
-        <CardContent className="text-sm">
-          {settings?.ai ? (
-            <>
-              <Row label="Model (Captcha)" value={settings.ai.captcha_model} />
-              <Row label="Emergent LLM Key" isPassword value={settings.ai.has_emergent_key} />
-              <Row label="OpenCode Key" isPassword value={settings.ai.has_opencode_key} />
-            </>
-          ) : <p className="text-xs text-slate-400 italic">Tidak ada data</p>}
-        </CardContent>
-      </Card>
-
-      {/* ZIMBRA */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Mail className="h-4 w-4 text-slate-500" />
-            <span>Zimbra (OTP Email)</span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm">
-          {settings?.zimbra ? (
-            <>
-              <Row label="Email" value={settings.zimbra.email} />
-              <Row label="Password" isPassword value={settings.zimbra.has_password} />
-              <Row label="IMAP Host" value={settings.zimbra.imap_host} />
-            </>
-          ) : <p className="text-xs text-slate-400 italic">Tidak ada data</p>}
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">Email ASTINA</Label>
+              <Input value={asEmail} onChange={(e) => setAsEmail(e.target.value)} placeholder="email@polri" className="h-9 text-sm" />
+            </div>
+            <div>
+              <Label className="text-xs">Password ASTINA</Label>
+              <Input type="password" value={asPass} onChange={(e) => setAsPass(e.target.value)} placeholder="••••••••" className="h-9 text-sm" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">Email Zimbra (OTP)</Label>
+              <Input value={zimEmail} onChange={(e) => setZimEmail(e.target.value)} placeholder="email@polri.go.id" className="h-9 text-sm" />
+            </div>
+            <div>
+              <Label className="text-xs">Password Zimbra</Label>
+              <Input type="password" value={zimPass} onChange={(e) => setZimPass(e.target.value)} placeholder="••••••••" className="h-9 text-sm" />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => testLogin('astina')} disabled={testing.astina || !asEmail || !asPass}>
+              {testing.astina ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null} Test Login (Step 1)
+            </Button>
+            <Button size="sm" onClick={() => saveService('astina')} disabled={saving.astina || !asEmail || !asPass}>
+              {saving.astina ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null} Simpan
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>
