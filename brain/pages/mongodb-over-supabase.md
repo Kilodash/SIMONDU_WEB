@@ -2,9 +2,9 @@
 id: mongodb-over-supabase
 title: MongoDB menggantikan Supabase PostgreSQL
 category: decision
-status: active
+status: archived
 created: "2026-07-06T10:27:31"
-updated: "2026-07-06T10:28:05"
+updated: "2026-07-06T14:33:51"
 ---
 
 ## compiled_truth
@@ -37,4 +37,10 @@ Dokumen semi-structured (disposisi, checklist, timelines) lebih natural di Mongo
   kind: decision
   summary: "Captured from code: MongoDB replaced Supabase PostgreSQL"
   source: code review
+  affects: [mongodb-over-supabase]
+
+- time: 2026-07-06T14:33:51
+  kind: reversal
+  summary: "Migration reversed: MongoDB was replaced back by Supabase PostgreSQL via db.js adapter. Latest commit 'fbfcd6e feat: migrasi MongoDB ke Supabase' confirms the reversal."
+  source: brain archive-page
   affects: [mongodb-over-supabase]

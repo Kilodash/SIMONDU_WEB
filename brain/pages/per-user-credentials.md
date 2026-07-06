@@ -4,14 +4,14 @@ title: Migrasi kredensial global ke per-user
 category: decision
 status: active
 created: "2026-07-06T10:27:32"
-updated: "2026-07-06T10:28:06"
+updated: "2026-07-06T14:34:37"
 ---
 
 ## compiled_truth
 
 ## Keputusan
 
-Setiap SIMONDU user (kasubbid, unit) memiliki kredensial Gajamada dan ASTINA sendiri, disimpan di koleksi MongoDB `user_credentials`, bukan di environment variables global. Setiap API call ke Gajamada/ASTINA menggunakan kredensial user yang sedang login.
+Setiap SIMONDU user (kasubbid, unit) memiliki kredensial Gajamada dan ASTINA sendiri, disimpan di koleksi `user_credentials`, bukan di environment variables global. Setiap API call ke Gajamada/ASTINA menggunakan kredensial user yang sedang login.
 
 ## Alternatif
 
@@ -20,7 +20,7 @@ Setiap SIMONDU user (kasubbid, unit) memiliki kredensial Gajamada dan ASTINA sen
 
 ## Status
 
-**In Progress** ??? `lib/gajamada.js` dan `lib/astina-auth.js` sudah di-refactor untuk session per-user. API endpoint `GET/POST /api/user/credentials` sudah ditambahkan. UI Pengaturan sedang diubah jadi form login kredensial.
+**Completed** (commit `fbfcd6e`). `lib/gajamada.js` dan `lib/astina-auth.js` sudah di-refactor untuk session per-user. API endpoint `GET/POST /api/user/credentials` sudah ditambahkan. UI Pengaturan sudah jadi form login kredensial per-user.
 
 ## Alasan
 
@@ -28,7 +28,7 @@ Unit berbeda memiliki akses ke subset data berbeda di Gajamada. Menggunakan satu
 
 ## Blast Radius
 
-- **Kredensial di MongoDB**: Plaintext storage (untuk MVP, sama seperti env vars sebelumnya)
+- **Kredensial di database**: Plaintext storage (untuk MVP, sama seperti env vars sebelumnya)
 - **Session management**: Setiap user punya session Gajamada/ASTINA terpisah ??? memory usage naik
 - **Compatibility**: Fallback ke env vars untuk endpoint yang berjalan tanpa user context (background sync)
 
@@ -45,4 +45,10 @@ Unit berbeda memiliki akses ke subset data berbeda di Gajamada. Menggunakan satu
   kind: decision
   summary: "Captured ongoing work: migrating from global env-var credentials to per-user credentials"
   source: ongoing work
+  affects: [per-user-credentials]
+
+- time: 2026-07-06T14:34:37
+  kind: decision
+  summary: "Marked as completed: per-user credentials fully implemented in commit fbfcd6e"
+  source: "git log: fbfcd6e"
   affects: [per-user-credentials]

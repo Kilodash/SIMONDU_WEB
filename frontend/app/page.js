@@ -891,6 +891,41 @@ function CasesList({ user, onOpenCase }) {
   const [astinaCookie, setAstinaCookie] = useState('')
   const [loading, setLoading] = useState(true)
   const [reference, setReference] = useState({ units: [], statuses: [], categories: [] })
+  const [editOpen, setEditOpen] = useState(false)
+  const [editForm, setEditForm] = useState({})
+  const [aiLoading, setAiLoading] = useState(false)
+
+  const openEditLocal = (c) => { setEditForm({ ...c }); setEditOpen(true) }
+  const saveEditLocal = async () => {
+    const { prepator_name, pengirim, perihal, nomor_surat, tgl_surat, category, summary, case_type } = editForm
+    const patch = { prepetrator_name: prepator_name, pengirim, perihal, nomor_surat, tgl_surat, category, summary, case_type }
+    try {
+      await api(`/local-cases/${encodeURIComponent(editForm.id)}`, { method: 'PUT', body: JSON.stringify(patch) })
+      toast.success('Data diperbarui')
+      setEditOpen(false)
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
+  const runAiEnrich = async () => {
+    const pid = editForm.prepator_id || editForm.prepetrator_id || editForm.id
+    if (!pid) return toast.error('ID surat tidak ditemukan')
+    setAiLoading(true)
+    try {
+      const r = await api('/astina-enrich', { method: 'POST', body: JSON.stringify({ surat_id: pid }) })
+      if (r.ok) {
+        const d = r.data
+        if (!d.prepetrator_name && !d.summary && !d.pengirim && !d.perihal) {
+          toast.warning('AI tidak menemukan data. Surat mungkin tidak punya teks/cukup informasi.')
+        } else {
+          setEditForm((prev) => ({ ...prev, prepator_name: d.prepetrator_name || d.prepator_name || prev.prepetrator_name || prev.prepator_name, pengirim: d.pengirim || prev.pengirim, perihal: d.perihal || prev.perihal, nomor_surat: d.nomor_surat || prev.nomor_surat, tgl_surat: d.tgl_surat || prev.tgl_surat, summary: d.summary || prev.summary, category: d.category || prev.category }))
+          toast.success('AI enrich selesai')
+        }
+      } else {
+        toast.error(r.message || 'AI enrich gagal')
+      }
+    } catch (e) { toast.error('AI enrich gagal: ' + e.message) }
+    finally { setAiLoading(false) }
+  }
 
   const load = useCallback(async () => {
     if (sourceFilter === 'manual' || sourceFilter === 'non_dumas' || sourceFilter === 'laporan_informasi') {
@@ -916,27 +951,7 @@ function CasesList({ user, onOpenCase }) {
     if (sourceFilter === 'astina') {
       setLoading(true)
       try {
-        const [r, lc] = await Promise.all([
-          api('/astina-fetch').catch(() => ({ data: null })),
-          api('/local-cases?source=astina').catch(() => ({ data: [] })),
-        ])
-        const astinaLive = (Array.isArray(r.data) ? r.data : (r.data?.data || [])).map(s => ({
-          id: s.id,
-          prepetrator_id: s.id,
-          created_date: s.tanggal_surat || s.tanggal || new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          status_label: 'Diterima',
-          pengirim: s.pengirim || '',
-          summary: s.perihal || '',
-          source_alias: 'ASTINA',
-          derived_status: 'Diterima',
-          nomor_surat: s.no_surat || '',
-          tgl_surat: s.tanggal_surat || s.tanggal || '',
-          perihal: s.perihal || '',
-          jenis_surat: s.klasifikasi || s.tipe || '',
-          _source: 'astina',
-          _is_live: true,
-        }))
+        const lc = await api('/local-cases?source=astina&case_type=dumas').catch(() => ({ data: [] }))
         const localData = (lc.data || []).map(c => ({
           ...c, id: c.id, prepetrator_id: c.prepator_id, created_date: c.created_at, updated_at: c.updated_at,
           status_label: c.status, category: c.category || 'NON-DUMAS', pengirim: c.pengirim,
@@ -944,10 +959,9 @@ function CasesList({ user, onOpenCase }) {
           source_alias: c.source_alias, derived_status: c.status,
           nomor_surat: c.nomor_surat, tgl_surat: c.tgl_surat, perihal: c.perihal,
         }))
-        const localPids = new Set(localData.map(l => l.prepator_id))
-        const newLive = astinaLive.filter(s => !localPids.has(s.prepator_id))
-        setCases([...localData, ...newLive])
-        setTotal(localData.length + newLive.length)
+        // ASTINA tab: only DUMAS (from local_cases), exclude live/unclassified
+        setCases(localData)
+        setTotal(localData.length)
       } catch(e) { toast.error('Gagal fetch ASTINA: ' + e.message) }
       finally { setLoading(false) }
       return
@@ -995,39 +1009,9 @@ function CasesList({ user, onOpenCase }) {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="outline" className="bg-blue-50 text-blue-900 border-blue-200">Total: {total.toLocaleString('id-ID')}</Badge>
-          <Button variant="outline" size="sm" onClick={async () => {
-            if (sourceFilter === 'astina') {
-              try { await api('/astina-refresh-cookie', { method: 'POST' }); setAstinaTokenSet(true) } catch (_) {}
-            }
-            load()
-          }}><RefreshCw className="h-4 w-4 mr-2" /> Refresh</Button>
+          <Button variant="outline" size="sm" onClick={load}><RefreshCw className="h-4 w-4 mr-2" /> Refresh</Button>
         </div>
       </div>
-
-      {sourceFilter === 'astina' && (
-        <Card className="border-amber-300 bg-amber-50">
-          <CardContent className="p-3 space-y-2">
-            <p className="text-sm text-amber-800">⚠ ASTINA gunakan cookie session untuk fetch data.</p>
-            <div className="flex items-center gap-2">
-              <Input value={astinaCookie} onChange={(e) => setAstinaCookie(e.target.value)}
-                placeholder="Tempel cookie browser di sini..." className="h-8 text-xs flex-1" />
-              <Button size="sm" variant="outline" className="border-amber-500 text-amber-800 hover:bg-amber-100 shrink-0"
-                onClick={async () => {
-                  if (!astinaCookie) return toast.error('Cookie kosong')
-                  try {
-                    await api('/astina-cookie', { method: 'POST', body: JSON.stringify({ cookie: astinaCookie }) })
-                    toast.success('Cookie disimpan')
-                    setAstinaTokenSet(true)
-                    setAstinaCookie('')
-                    load()
-                  } catch (e) { toast.error(e.message) }
-                }}>
-                Set Cookie
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       <Card>
         <CardContent className="p-4">
@@ -1077,7 +1061,7 @@ function CasesList({ user, onOpenCase }) {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader className="bg-slate-50 sticky top-0">
-                  {sourceFilter ? (
+                  {sourceFilter && sourceFilter !== 'astina' ? (
                     <TableRow>
                       <TableHead className="w-10 text-sm">No</TableHead>
                       <TableHead className="text-sm">Perihal</TableHead>
@@ -1085,7 +1069,6 @@ function CasesList({ user, onOpenCase }) {
                       <TableHead className="w-[110px] text-sm">Tgl Surat</TableHead>
                       <TableHead className="text-sm">Pengirim</TableHead>
                       <TableHead className="text-sm">Sumber</TableHead>
-                      <TableHead className="w-[140px] text-sm">Aksi</TableHead>
                     </TableRow>
                   ) : (
                     <TableRow>
@@ -1102,32 +1085,42 @@ function CasesList({ user, onOpenCase }) {
                   )}
                 </TableHeader>
                 <TableBody>
-                  {sourceFilter ? (
+                  {sourceFilter && sourceFilter !== 'astina' ? (
                     cases.length === 0 ? (
                       <TableRow><TableCell colSpan={6} className="text-center py-12 text-slate-500">Tidak ada data.</TableCell></TableRow>
                     ) : (
                       cases.map((c, idx) => (
-                        <TableRow key={c.prepator_id || idx} className="cursor-pointer hover:bg-blue-50/40 align-top">
+                        <TableRow key={`${c._source || c.source || 'other'}-${c.prepator_id || c.prepetrator_id || idx}`} className="cursor-pointer hover:bg-blue-50/40 align-top" onClick={() => onOpenCase(c.prepator_id || c.prepetrator_id)}>
                           <TableCell className="text-sm text-slate-500 pt-3">{idx + 1}</TableCell>
                           <TableCell className="pt-3">
                             <p className="text-sm font-medium">{c.perihal || c.summary || '-'}</p>
-                            {c.source_alias && <Badge className="mt-1 text-xs bg-purple-100 text-purple-800 border-purple-300">ASTINA</Badge>}
+                            {c.source_alias && <Badge className={`mt-1 text-xs ${sourceColor(c.source_alias)}`}>{c.source_alias}</Badge>}
                           </TableCell>
                           <TableCell className="pt-3 text-sm font-mono">{c.nomor_surat || '-'}</TableCell>
                           <TableCell className="pt-3 text-sm">{c.tgl_surat ? fmtDateShort(c.tgl_surat) : fmtDateShort(c.created_date)}</TableCell>
                           <TableCell className="pt-3 text-sm">{c.pengirim || '-'}</TableCell>
                           <TableCell className="pt-3"><Badge className={statusColor(c.status_label)}>{c.status_label || 'Diterima'}</Badge></TableCell>
+                          <TableCell className="pt-3"><Button size="sm" variant="ghost" className="h-7 text-xs" onClick={(e) => { e.stopPropagation(); openEditLocal(c) }}>Edit</Button></TableCell>
                         </TableRow>
                       ))
                     )
                   ) : (
                     <>
                       {cases.map((c, idx) => (
-                        <TableRow key={c.prepetrator_id} className="cursor-pointer hover:bg-blue-50/40 align-top" onClick={() => onOpenCase(c.prepetrator_id)}>
+                        <TableRow key={`${c._source || 'gajamada'}-${c.prepetrator_id || idx}`} className="cursor-pointer hover:bg-blue-50/40 align-top" onClick={() => onOpenCase(c.prepetrator_id)}>
                           <TableCell className="text-sm text-slate-500 pt-3">{(page - 1) * size + idx + 1}</TableCell>
                           <TableCell className="pt-3">
-                            <p className="text-sm font-mono font-semibold">{c.id}</p>
-                            <p className="text-xs text-slate-500 mt-0.5">{fmtDate(c.created_date)}</p>
+                            {c.source_alias === 'ASTINA' ? (
+                              <>
+                                <p className="text-sm font-medium">{c.perihal || c.summary || c.nomor_surat || '-'}</p>
+                                {c.nomor_surat && <p className="text-xs text-slate-500 mt-0.5">No. {c.nomor_surat}</p>}
+                              </>
+                            ) : (
+                              <>
+                                <p className="text-sm font-mono font-semibold">{c.id}</p>
+                                <p className="text-xs text-slate-500 mt-0.5">{fmtDate(c.created_date)}</p>
+                              </>
+                            )}
                             {c.source_alias && <Badge className={`mt-1.5 text-xs ${sourceColor(c.source_alias)}`}>{c.source_alias}</Badge>}
                           </TableCell>
                           <TableCell className="pt-3 min-w-[220px]">
@@ -1144,7 +1137,7 @@ function CasesList({ user, onOpenCase }) {
                             {c['5w1h_when'] && <p className="text-xs text-slate-500 mt-0.5">{fmtDateShort(c['5w1h_when'])}</p>}
                           </TableCell>
                           <TableCell className="pt-3 max-w-[180px]">
-                            <p className="text-sm line-clamp-2">{c.category || <span className="text-slate-400">-</span>}</p>
+                            {c.category ? <Badge className={`text-xs ${c.category === 'NON-DUMAS' || c.category === 'non_dumas' ? 'bg-slate-100 text-slate-700' : 'bg-blue-50 text-blue-800'}`}>{c.category}</Badge> : <span className="text-slate-400">-</span>}
                           </TableCell>
                           <TableCell className="pt-3">
                             <p className="text-sm text-slate-700 line-clamp-5">{c.summary || c.content || <span className="text-slate-400">-</span>}</p>
@@ -1183,6 +1176,31 @@ function CasesList({ user, onOpenCase }) {
           <Button variant="outline" size="sm" disabled={cases.length < size} onClick={() => setPage(maxPage)}>Akhir</Button>
         </div>
       </div>
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit Data Surat</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><Label>Terlapor</Label><Input value={editForm.prepator_name || ''} onChange={(e) => setEditForm({ ...editForm, prepator_name: e.target.value })} /></div>
+            <div><Label>Pelapor/Pengirim</Label><Input value={editForm.pengirim || ''} onChange={(e) => setEditForm({ ...editForm, pengirim: e.target.value })} /></div>
+            <div><Label>Perihal</Label><Input value={editForm.perihal || ''} onChange={(e) => setEditForm({ ...editForm, perihal: e.target.value })} /></div>
+            <div><Label>Nomor Surat</Label><Input value={editForm.nomor_surat || ''} onChange={(e) => setEditForm({ ...editForm, nomor_surat: e.target.value })} /></div>
+            <div><Label>Tgl Surat</Label><Input value={editForm.tgl_surat || ''} onChange={(e) => setEditForm({ ...editForm, tgl_surat: e.target.value })} placeholder="YYYY-MM-DD" /></div>
+            <div>
+              <Label>Jenis</Label>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                <button type="button" onClick={() => setEditForm({ ...editForm, case_type: 'dumas' })} className={`px-3 py-1.5 rounded-md border text-xs font-medium ${(editForm.case_type || 'non_dumas') === 'dumas' ? 'bg-blue-800 text-white border-blue-900' : 'bg-white text-slate-700 border-slate-300'}`}>DUMAS</button>
+                <button type="button" onClick={() => setEditForm({ ...editForm, case_type: 'non_dumas' })} className={`px-3 py-1.5 rounded-md border text-xs font-medium ${(editForm.case_type || 'non_dumas') !== 'dumas' ? 'bg-slate-800 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300'}`}>NON-DUMAS</button>
+              </div>
+            </div>
+            <div><Label>Kategori</Label><Select value={editForm.category || ''} onValueChange={(v) => setEditForm({ ...editForm, category: v })}>
+              <SelectTrigger><SelectValue placeholder="Pilih kategori" /></SelectTrigger>
+              <SelectContent>{reference.categories?.map((cat) => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}</SelectContent>
+            </Select></div>
+            <div><Label>Rangkuman</Label><Textarea value={editForm.summary || ''} onChange={(e) => setEditForm({ ...editForm, summary: e.target.value })} className="min-h-[80px]" /></div>
+          </div>
+          <DialogFooter><Button variant="ghost" onClick={() => setEditOpen(false)}>Batal</Button><Button variant="outline" size="sm" onClick={runAiEnrich} disabled={aiLoading}>{aiLoading ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> AI...</> : 'AI Isi'}</Button><Button onClick={saveEditLocal}>Simpan</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -1195,8 +1213,10 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   const [tab, setTab] = useState('antrian')
   const [riwayat, setRiwayat] = useState([])
   const [editDisp, setEditDisp] = useState(null)
-  const [editForm, setEditForm] = useState({ to_unit: '', note: '', is_atensi: false })
+  const [editFormData, setEditFormData] = useState({ to_unit: '', note: '', is_atensi: false })
   const [editOpen, setEditOpen] = useState(false)
+  const [editMode, setEditMode] = useState(null) // full edit mode: disposition object
+  const [editQueueItem, setEditQueueItem] = useState(null) // synthetic queue item for edit mode
   const [reference, setReference] = useState({ units: [], default_disposisi_tasks: [] })
   // Form state
   const [toUnit, setToUnit] = useState('')
@@ -1214,9 +1234,17 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   const [pdfIdx, setPdfIdx] = useState(0)
   const [kronologiMode, setKronologiMode] = useState('singkat')
 
-  const resetForm = (ref) => {
-    setToUnit(''); setNote(''); setIsAtensi(false); setCaseType('dumas')
-    const defaults = (ref?.default_disposisi_tasks || reference.default_disposisi_tasks || [])
+  const resetForm = (ref, item) => {
+    setToUnit(''); setNote(''); setIsAtensi(false)
+    const ct = item?.case_type || ''
+    const src = item?._source || ''
+    if (ct === 'non_pengaduan' || ct === 'non_dumas') setCaseType('non_dumas')
+    else if (src === 'astina') setCaseType('non_dumas')
+    else setCaseType('dumas')
+    const dumasTasks = ref?.default_disposisi_tasks || reference.default_disposisi_tasks || []
+    const nonDumasTasks = ref?.non_dumas_disposisi_tasks || reference.non_dumas_disposisi_tasks || dumasTasks
+    const isNonDumas = ct === 'non_pengaduan' || ct === 'non_dumas' || src === 'astina'
+    const defaults = isNonDumas ? nonDumasTasks : dumasTasks
     setTasks(defaults.map((label) => ({ label, checked: false })))
   }
 
@@ -1226,7 +1254,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
     setLoading(true)
     try {
       const [q, r] = await Promise.all([api('/disposisi-queue'), api('/reference')])
-      setQueue(q.data); setReference(r); resetForm(r); setIdx(0)
+      setQueue(q.data); setReference(r); resetForm(r, q.data?.[0]); setIdx(0)
       if (q.astina_error) {
         setAstinaError(q.astina_error)
         if (q.astina_error === 'OTP_REQUIRED') {
@@ -1243,13 +1271,55 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   useEffect(() => { loadQueue() }, [])
 
   const loadRiwayat = async () => { try { const r = await api('/disposisi-history'); setRiwayat(r.data) } catch (e) { toast.error(e.message) } }
-  const openEdit = (d) => { setEditDisp(d); setEditForm({ to_unit: d.to_unit || '', note: d.note || '', is_atensi: !!d.is_atensi }); setEditOpen(true) }
+  const openEdit = async (d) => {
+    const src = d.case_info?.source_alias || 'GAJAMADA'
+    const item = { prepetrator_id: d.prepetrator_id, _source: src === 'ASTINA' ? 'astina' : 'gajamada', perihal: d.case_info?.perihal || '', nomor_surat: d.case_info?.nomor_surat || '', pengirim: d.case_info?.pengirim || '', source_alias: src, localCaseId: null }
+    setEditQueueItem(item)
+    setToUnit(d.to_unit || '')
+    const rawNote = d.note || ''
+    const tasksMatch = rawNote.match(/^TASKS:\s*(.+?)\n/)
+    const savedTasks = tasksMatch ? tasksMatch[1].split(/,\s*/).filter(Boolean) : []
+    const cleanNote = tasksMatch ? rawNote.slice(tasksMatch[0].length).trim() : rawNote
+    setNote(cleanNote)
+    setIsAtensi(!!d.is_atensi)
+    // Fetch case_type from case detail
+    let ct = src === 'ASTINA' ? 'non_dumas' : 'dumas'
+    let localCaseId = null
+    try {
+      const caseData = await api(`/cases/${encodeURIComponent(d.prepetrator_id)}`)
+      if (caseData.data) {
+        const ctype = caseData.data.case_type || ''
+        if (ctype === 'dumas' || ctype === 'pengaduan') ct = 'dumas'
+        else if (ctype === 'non_dumas' || ctype === 'non_pengaduan') ct = 'non_dumas'
+        localCaseId = caseData.data.id
+      }
+    } catch (_) {}
+    setEditQueueItem({ ...item, localCaseId })
+    setCaseType(ct)
+    const dumasTasks = reference.default_disposisi_tasks || []
+    const nonDumasTasks = reference.non_dumas_disposisi_tasks || dumasTasks
+    const defaults = ct === 'non_dumas' ? nonDumasTasks : dumasTasks
+    setTasks(defaults.map((label) => ({ label, checked: savedTasks.some((l) => l.toUpperCase().includes(label.toUpperCase()) || label.toUpperCase().includes(l.toUpperCase())) })))
+    setEditMode(d)
+    setTab('antrian')
+  }
+  const cancelEdit = () => { setEditMode(null); setEditQueueItem(null); setTab('riwayat'); loadRiwayat() }
   const saveEdit = async () => {
-    try { await api(`/dispositions/${encodeURIComponent(editDisp.id)}`, { method: 'PUT', body: JSON.stringify(editForm) }); toast.success('Disposisi diperbarui'); setEditOpen(false); loadRiwayat(); onQueueChange?.() }
-    catch (e) { toast.error(e.message) }
+    if (!toUnit || !reference.units?.includes(toUnit)) return toast.error('Pilih unit tujuan')
+    setSubmitting(true)
+    try {
+      const checkedTasks = tasks.filter((t) => t.checked && t.label).map((t) => t.label)
+      const taskPrefix = checkedTasks.length ? `TASKS: ${checkedTasks.join(', ')}\n` : ''
+      await api(`/dispositions/${encodeURIComponent(editMode.id)}`, { method: 'PUT', body: JSON.stringify({ to_unit: toUnit, note: taskPrefix + note, is_atensi: isAtensi }) })
+      // Update case_type di local_cases
+      if (editQueueItem?.localCaseId) api(`/local-cases/${encodeURIComponent(editQueueItem.localCaseId)}`, { method: 'PUT', body: JSON.stringify({ case_type: caseType }) }).catch(() => {})
+      toast.success('Disposisi diperbarui')
+      setEditMode(null); setEditQueueItem(null); setTab('riwayat'); loadRiwayat(); onQueueChange?.()
+    } catch (e) { toast.error(e.message) }
+    finally { setSubmitting(false) }
   }
 
-  const current = queue[idx]
+  const current = editMode ? { ...editQueueItem, _editMode: true } : queue[idx]
 
   // Load detail + attachments + timeline for current case (source-aware)
   useEffect(() => {
@@ -1264,6 +1334,8 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
         if (isAstina) {
           const r = await api(`/astina/surat/${encodeURIComponent(pid)}/riwayat`).catch(() => ({ riwayat_disposisi: [] }))
           if (!cancelled) setTimeline((r.riwayat_disposisi || current._riwayat_disposisi || []).map((e) => ({ ...e, _source: 'astina' })))
+          // AI enrich: ekstrak PDF untuk isi data surat
+          api(`/astina-enrich`, { method: 'POST', body: JSON.stringify({ surat_id: pid }) }).catch(() => {})
         } else {
           const [d, a, t] = await Promise.all([
             api(`/cases/${encodeURIComponent(pid)}`).catch(() => ({ data: null })),
@@ -1274,7 +1346,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
         }
       } catch (_) { /* ignore */ }
     })()
-    resetForm()
+    if (!editMode) resetForm(null, current)
     setActiveTab('info')
     setPdfIdx(0)
     setKronologiMode('singkat')
@@ -1326,14 +1398,14 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
     try {
       await api('/disposisi-bulk', { method: 'POST', body: JSON.stringify({
         items: [current.prepetrator_id], to_unit: toUnit, note, is_atensi: isAtensi, case_type: caseType,
-        tasks: tasks.filter((t) => t.label),
+        tasks: tasks.filter((t) => t.checked && t.label),
       }) })
       toast.success(`Disposisi ke ${shortUnit(toUnit)} berhasil`)
       // Remove from local queue, advance
       const newQueue = queue.filter((_, i) => i !== idx)
       setQueue(newQueue)
       setIdx(Math.min(idx, newQueue.length - 1))
-      resetForm()
+    resetForm(null, current)
       onQueueChange?.()
     } catch (e) { toast.error(e.message) }
     finally { setSubmitting(false) }
@@ -1358,13 +1430,16 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
         <Card><CardContent className="p-0">
           <div className="overflow-x-auto"><Table>
             <TableHeader className="bg-slate-50"><TableRow>
-              <TableHead className="text-sm">Waktu</TableHead><TableHead className="text-sm">ID Kasus</TableHead><TableHead className="text-sm">Unit Tujuan</TableHead><TableHead className="text-sm">Oleh</TableHead><TableHead className="text-sm">ATENSI</TableHead><TableHead className="w-[80px] text-sm">Aksi</TableHead>
+              <TableHead className="text-sm">Waktu</TableHead><TableHead className="text-sm">Surat</TableHead><TableHead className="text-sm">Unit Tujuan</TableHead><TableHead className="text-sm">Oleh</TableHead><TableHead className="text-sm">ATENSI</TableHead><TableHead className="w-[80px] text-sm">Aksi</TableHead>
             </TableRow></TableHeader>
             <TableBody>
               {riwayat.map((d) => (
                 <TableRow key={d.id}>
                   <TableCell className="text-xs">{fmtDate(d.created_at)}</TableCell>
-                  <TableCell className="text-xs font-mono cursor-pointer hover:text-blue-800" onClick={() => onOpenCase(d.prepetrator_id)}>{d.prepetrator_id}</TableCell>
+                  <TableCell className="text-xs cursor-pointer hover:text-blue-800" onClick={() => onOpenCase(d.prepetrator_id)}>
+                    <div className="font-medium">{d.case_info?.pengirim || '-'}</div>
+                    <div className="text-slate-500">{d.case_info?.nomor_surat || ''} {d.case_info?.perihal || d.prepetrator_id}</div>
+                  </TableCell>
                   <TableCell className="text-sm">{shortUnit(d.to_unit)}</TableCell>
                   <TableCell className="text-xs">{d.by?.name || '-'}</TableCell>
                   <TableCell>{d.is_atensi ? <Badge className="bg-amber-100 text-amber-800 text-xs"><Star className="h-2.5 w-2.5 mr-0.5" />Ya</Badge> : <span className="text-xs text-slate-400">-</span>}</TableCell>
@@ -1375,23 +1450,6 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
             </TableBody>
           </Table></div>
         </CardContent></Card>
-        <Dialog open={editOpen} onOpenChange={setEditOpen}>
-          <DialogContent>
-            <DialogHeader><DialogTitle>Edit Disposisi</DialogTitle></DialogHeader>
-            <div className="space-y-3">
-              <p className="text-sm font-mono">{editDisp?.prepetrator_id}</p>
-              <div><Label>Unit Tujuan</Label>
-                <Select value={editForm.to_unit} onValueChange={(v) => setEditForm({ ...editForm, to_unit: v })}>
-                  <SelectTrigger><SelectValue placeholder="Pilih unit" /></SelectTrigger>
-                  <SelectContent>{reference.units?.map((u) => <SelectItem key={u} value={u}>{shortUnit(u)}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div><Label>Catatan</Label><Textarea value={editForm.note} onChange={(e) => setEditForm({ ...editForm, note: e.target.value })} className="min-h-[60px]" /></div>
-              <div className="flex items-center gap-2"><Checkbox id="de-atensi" checked={editForm.is_atensi} onCheckedChange={(v) => setEditForm({ ...editForm, is_atensi: !!v })} /><Label htmlFor="de-atensi"><Star className="h-3 w-3 text-amber-500 inline mr-1" />ATENSI</Label></div>
-            </div>
-            <DialogFooter><Button variant="ghost" onClick={() => setEditOpen(false)}>Batal</Button><Button onClick={saveEdit}>Simpan</Button></DialogFooter>
-          </DialogContent>
-        </Dialog>
       </div>
     )
   }
@@ -1408,25 +1466,32 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
         <Button variant="outline" size="sm" onClick={loadQueue}><RefreshCw className="h-4 w-4 mr-2" /> Refresh</Button>
       </div>
 
-      {queue.length === 0 ? (
+      {(!editMode && queue.length === 0 && tab === 'antrian') ? (
         <Card><CardContent className="py-16 text-center" data-testid="disposisi-empty">
           <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-green-500" />
           <p className="text-lg font-medium text-slate-700">Tidak ada surat/pengaduan di antrian</p>
         </CardContent></Card>
-      ) : (
+      ) : tab === 'antrian' && (
       <>
+      {editMode && (
+        <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg p-3 mb-2">
+          <Badge className="bg-amber-200 text-amber-900">Edit Disposisi</Badge>
+          <span className="text-xs text-amber-800">Unit sebelumnya: <strong>{shortUnit(editMode.to_unit)}</strong> · Oleh: {editMode.by?.name || '-'}</span>
+          <Button variant="ghost" size="sm" onClick={cancelEdit} className="ml-auto text-xs">Batal</Button>
+        </div>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* PANEL 1: Detail + Preview/Kronologi + Timeline (scrollable) */}
         <Card className="lg:col-span-7 flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 180px)' }}>
-          <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white p-3 shrink-0">
+          <div className={`${editMode ? 'bg-gradient-to-r from-amber-800 to-amber-900' : 'bg-gradient-to-r from-blue-900 to-indigo-900'} text-white p-3 shrink-0`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="text-[10px] uppercase text-blue-200">Surat #{idx + 1} dari {queue.length}</p>
+                <p className="text-[10px] uppercase text-blue-200">{editMode ? 'Edit Disposisi' : `Surat #${idx + 1} dari ${queue.length}`}</p>
                 <p className="text-xs font-bold font-mono mt-0.5 truncate" data-testid="current-case-id">{current?.prepetrator_id}</p>
               </div>
               <div className="flex flex-col items-end gap-1 shrink-0">
-                {current?.source_alias && <Badge className={`${sourceColor(current.source_alias)} text-[10px]`}>{current._source === 'astina' ? 'ASTINA' : 'GAJAMADA'}</Badge>}
-                <button onClick={onGoMasterUnit} className="text-[10px] text-blue-200 hover:underline mt-1">Master Unit</button>
+                {current?.source_alias && <Badge className={`${sourceColor(current.source_alias)} text-[10px]`}>{current.source_alias}</Badge>}
+                {!editMode && <button onClick={onGoMasterUnit} className="text-[10px] text-blue-200 hover:underline mt-1">Master Unit</button>}
               </div>
             </div>
           </div>
@@ -1576,8 +1641,8 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
             <div>
               <Label className="text-xs">Jenis Kasus</Label>
               <div className="grid grid-cols-2 gap-2 mt-1">
-                <button type="button" onClick={() => setCaseType('dumas')} className={`px-3 py-1.5 rounded-md border text-xs font-medium ${caseType === 'dumas' ? 'bg-blue-800 text-white border-blue-900' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`} data-testid="case-type-dumas">DUMAS</button>
-                <button type="button" onClick={() => setCaseType('non_dumas')} className={`px-3 py-1.5 rounded-md border text-xs font-medium ${caseType === 'non_dumas' ? 'bg-slate-800 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`} data-testid="case-type-non-dumas">NON-DUMAS</button>
+                <button type="button" onClick={() => { setCaseType('dumas'); const defaults = reference.default_disposisi_tasks || []; setTasks(defaults.map((label) => ({ label, checked: false }))) }} className={`px-3 py-1.5 rounded-md border text-xs font-medium ${caseType === 'dumas' ? 'bg-blue-800 text-white border-blue-900' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`} data-testid="case-type-dumas">DUMAS</button>
+                <button type="button" onClick={() => { setCaseType('non_dumas'); const defaults = reference.non_dumas_disposisi_tasks || reference.default_disposisi_tasks || []; setTasks(defaults.map((label) => ({ label, checked: false }))) }} className={`px-3 py-1.5 rounded-md border text-xs font-medium ${caseType === 'non_dumas' ? 'bg-slate-800 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`} data-testid="case-type-non-dumas">NON-DUMAS</button>
               </div>
             </div>
 
@@ -1621,16 +1686,27 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
             </div>
 
             <div className="border-t pt-3">
-              <Button onClick={submitAndNext} disabled={submitting || !toUnit} className="w-full bg-blue-800 hover:bg-blue-900" data-testid="disposisi-submit">
-                {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ArrowRightLeft className="h-4 w-4 mr-2" />}
-                Disposisi &amp; Lanjut
-              </Button>
+              {editMode ? (
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={cancelEdit} className="flex-1">Batal</Button>
+                  <Button onClick={saveEdit} disabled={submitting || !toUnit} className="flex-1 bg-amber-700 hover:bg-amber-800" data-testid="disposisi-submit">
+                    {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                    Simpan & Sinkronkan
+                  </Button>
+                </div>
+              ) : (
+                <Button onClick={submitAndNext} disabled={submitting || !toUnit} className="w-full bg-blue-800 hover:bg-blue-900" data-testid="disposisi-submit">
+                  {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ArrowRightLeft className="h-4 w-4 mr-2" />}
+                  Disposisi &amp; Lanjut
+                </Button>
+              )}
             </div>
           </div>
         </Card>
       </div>
 
       {/* Navigation bar — below content, above bottom */}
+      {!editMode && (
       <div className="bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]" data-testid="bottom-nav">
         <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
           <Button variant="outline" size="sm" onClick={goPrev} disabled={idx === 0} className="text-xs min-w-[80px]" data-testid="btn-prev">
@@ -1645,6 +1721,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
           </Button>
         </div>
       </div>
+      )}
       </>
       )}
     </div>

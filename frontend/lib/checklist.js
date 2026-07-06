@@ -32,17 +32,15 @@ export const FOLLOWUP_DOC_TYPES = [
 ]
 
 export const NON_DUMAS_DOC_TYPES = [
-  { key: 'surat_pengantar', label: 'Surat Pengantar', stage: 'dokumen_awal', required: true, numbering: true, defaultTemplate: 'B/{seq}/{month_roman}/WAS.2.1./{year}/Bidpropam' },
-  { key: 'nota_dinas_tindak_lanjut', label: 'Nota Dinas Tindak Lanjut', stage: 'tindak_lanjut', required: true, numbering: true, defaultTemplate: 'R/ND-{seq}/{month_roman}/HUK.12.10./{year}/Bidpropam' },
-  { key: 'lhp_non_dumas', label: 'Laporan Hasil (LHP)', stage: 'tindak_lanjut', required: true, numbering: true, defaultTemplate: 'R/LHP-{seq}/{month_roman}/HUK.12.10./{year}/Bidpropam' },
-  { key: 'surat_balasan', label: 'Surat Balasan / Jawaban', stage: 'tindak_lanjut', required: false, numbering: true, defaultTemplate: 'B/{seq}/{month_roman}/WAS.2.1./{year}/Bidpropam' },
-  { key: 'dokumen_pendukung', label: 'Dokumen Pendukung Lainnya', stage: 'tindak_lanjut', required: false, numbering: false },
+  { key: 'tindaklanjuti', label: 'TINDAKLANJUTI', stage: 'tindak_lanjut', required: true, numbering: false },
+  { key: 'catat_data', label: 'CATAT/DATAKAN/FILE', stage: 'tindak_lanjut', required: true, numbering: false },
+  { key: 'udk', label: 'UDK', stage: 'tindak_lanjut', required: true, numbering: false },
+  { key: 'tuntaskan', label: 'TUNTASKAN', stage: 'tindak_lanjut', required: true, numbering: false },
 ]
 
-export const NON_DUMAS_STAGE_ORDER = ['dokumen_awal', 'tindak_lanjut']
+export const NON_DUMAS_STAGE_ORDER = ['tindak_lanjut']
 
 export const NON_DUMAS_STAGE_LABELS = {
-  dokumen_awal: 'Dokumen Awal',
   tindak_lanjut: 'Tindak Lanjut',
 }
 

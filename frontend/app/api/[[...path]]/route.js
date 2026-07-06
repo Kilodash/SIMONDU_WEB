@@ -13,6 +13,7 @@ function loadAstinaAuth() { return require('@/lib/astina-auth') }
 
 // Default disposisi task templates
 const DEFAULT_DISPOSISI_TASKS = ['LIDIK/PULBAKET', 'GELARKAN', 'SP2HP2', 'LAPORKAN HASILNYA']
+const NON_DUMAS_DISPOSISI_TASKS = ['TINDAKLANJUTI', 'CATAT/DATAKAN/FILE', 'UDK', 'TUNTASKAN']
 
 function ok(data, extra = {}) { return NextResponse.json({ ok: true, ...data }, extra) }
 function fail(msg, status = 400) { return NextResponse.json({ ok: false, error: msg }, { status }) }
@@ -42,9 +43,12 @@ function deriveStatus(gajamadaStatus, internal) {
     if (/pencabutan/i.test(settlement)) return 'Pencabutan'
     if (/henti/i.test(settlement)) return 'Henti Lidik'
   }
-  if (isCompleted) return DERIVED_STATUS.SELESAI
-  if (hasTimelineOrDoc) return DERIVED_STATUS.PROSES_LIDIK
-  if (hasDisposisi) return DERIVED_STATUS.DIDISTRIBUSI
+  if (isCompleted) return 'Selesai'
+  if (hasTimelineOrDoc) return 'Proses Lidik'
+  if (hasDisposisi) {
+    if (/laporan diterima/i.test(gajamadaStatus || '')) return 'Laporan Diterima'
+    return DERIVED_STATUS.DIDISTRIBUSI
+  }
   if (/perdamaian/i.test(gajamadaStatus || '')) return 'Perdamaian'
   if (/restorative/i.test(gajamadaStatus || '')) return 'Restorative Justice'
   if (/pencabutan/i.test(gajamadaStatus || '')) return 'Pencabutan'
@@ -123,11 +127,14 @@ async function backgroundSync(pid, actor, reason) {
       disposisi_police_function: original.disposisi_police_function || 'PAMINAL',
       category: original.category,
       atensi: !!latestDisp?.is_atensi,
-      timeline_note: timelines.map((t) => {
-        const dt = new Date(t.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })
-        const actorName = t.by?.name || 'SIMONDU'
-        return `${t.title}\n\n${t.source_name || 'SIMONDU'}\n${actorName} · ${dt}\n\n${t.from_unit || KASUBBID_UNIT} → ${t.to_unit || latestDisp?.to_unit || '-'}\n\n${t.description}`
-      }).join('\n\n---\n\n'),
+      timeline_note: [
+        latestDisp ? `Disposisi: ${KASUBBID_UNIT} → ${latestDisp.to_unit}${latestDisp.is_atensi ? ' (ATENSI)' : ''}\n${latestDisp.note || '-'}` : '',
+        ...timelines.map((t) => {
+          const dt = new Date(t.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })
+          const actorName = t.by?.name || 'SIMONDU'
+          return `${t.title}\n${actorName} · ${dt}\n${t.description || ''}`
+        }),
+      ].filter(Boolean).join('\n\n---\n\n'),
     }
     const syncLog = {
       id: uuidv4(), prepetrator_id: pid, payload: pushBody, status: 'pending',
@@ -143,16 +150,46 @@ async function backgroundSync(pid, actor, reason) {
     syncLog.completed_at = new Date()
     await db.collection('sync_logs').insertOne(syncLog)
 
-    // ASTINA sync (fire-and-forget after Gajamada)
+    // ASTINA sync via HTTP (postDisposisi), not legacy playwright
     try {
       const localCase = await db.collection('local_cases').findOne({ prepetrator_id: pid }).catch(() => null)
-      if (localCase && localCase.source === 'astina') {
+      if (localCase && (localCase.source === 'astina' || localCase.source_alias === 'ASTINA')) {
         const astinaLog = { id: uuidv4(), prepetrator_id: pid, payload: {}, status: 'pending', request_at: new Date(), reason: reason + ' (ASTINA)', by: { username: actor?.username, role: actor?.role } }
         try {
-          const { syncToAstina } = require('@/lib/astina-sync')
-          const result = await syncToAstina({ ...localCase, status: derived, keterangan: timelines.map((t) => t.title + ': ' + t.description).join('; ') })
-          astinaLog.status = result.ok ? 'success' : 'failed'
-          astinaLog.response = result
+          const astinaClient = loadAstinaClient()
+          const tujuanRes = await astinaClient.getTujuanDisposisi(pid, actor?.username).catch(() => null)
+          if (tujuanRes?.ok && tujuanRes.data?.length) {
+            const targetUnit = latestDisp?.to_unit || ''
+            const cleaned = targetUnit.toUpperCase().replace('UNIT ', 'KANIT ').replace('UR ', 'KAUR').replace('SUBBID PAMINAL', 'SUBBIDPAMINAL').replace('POLDA JAWA BARAT', '').trim()
+            const keywords = cleaned.split(' ').filter((w) => w.length > 1)
+            let tujuanUuid = null
+            for (const group of tujuanRes.data) {
+              if (!group.jabatan) continue
+              for (const j of group.jabatan) {
+                if (j.name && keywords.every((kw) => j.name.toUpperCase().includes(kw))) { tujuanUuid = j.id; break }
+              }
+              if (tujuanUuid) break
+            }
+              if (tujuanUuid) {
+                const taskLabels = (latestDisp?.note || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean)
+                const timelineCustom = timelines.slice(0, 3).map((t) => {
+                  const dt = new Date(t.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })
+                  return `${t.title}\n${t.description || ''}`
+                }).join(' | ')
+                const res = await astinaClient.postDisposisi({
+                  suratId: pid,
+                  notes: taskLabels.length ? taskLabels : ['TINDAKLANJUTI'],
+                  tujuan: [tujuanUuid],
+                  custom: timelineCustom ? [timelineCustom] : [],
+                  username: actor?.username,
+                })
+              astinaLog.response = res; astinaLog.status = res.ok ? 'success' : 'failed'
+            } else {
+              astinaLog.status = 'skipped'; astinaLog.error = 'tujuan not found in ASTINA recipient list'
+            }
+          } else {
+            astinaLog.status = 'skipped'; astinaLog.error = 'ASTINA recipient list unavailable'
+          }
         } catch (e) { astinaLog.error = e.message; astinaLog.status = 'failed' }
         astinaLog.completed_at = new Date()
         await db.collection('sync_logs').insertOne(astinaLog).catch(() => {})
@@ -521,7 +558,7 @@ autoLogin();
       const m = route.match(/^\/astina\/surat\/([^/]+)\/disposisi$/)
       if (m && method === 'POST') {
         const id = decodeURIComponent(m[1])
-        const b = await req.json().catch(() => ({}))
+        const b = await request.json().catch(() => ({}))
         try {
           const r = await loadAstinaClient().postDisposisi({
             suratId: id,
@@ -604,6 +641,7 @@ autoLogin();
         statuses: allStatuses,
         categories: CATEGORY_OPTIONS,
         default_disposisi_tasks: DEFAULT_DISPOSISI_TASKS,
+        non_dumas_disposisi_tasks: NON_DUMAS_DISPOSISI_TASKS,
         followup_doc_types: FOLLOWUP_DOC_TYPES,
         non_dumas_doc_types: NON_DUMAS_DOC_TYPES,
         stage_labels: STAGE_LABELS,
@@ -819,10 +857,10 @@ autoLogin();
         source_alias: c.source_alias || 'GAJAMADA',
       }))
 
-      // Local cases (ASTINA/manual) not yet dispositioned
+      // Local cases (manual/non-ASTINA) not yet dispositioned — ASTINA handled by live API below
       const localQueue = []
       try {
-        const localCases = await db.collection('local_cases').find({ status: 'Laporan Diterima' }).sort({ created_at: -1 }).limit(50).toArray()
+        const localCases = await db.collection('local_cases').find({ status: 'Laporan Diterima', source: { $ne: 'astina' } }).sort({ created_at: -1 }).limit(50).toArray()
         const localPids = localCases.map((c) => c.prepator_id)
         const localDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
         const localDispSet = new Set(localDisp.map((d) => d.prepetrator_id))
@@ -927,9 +965,9 @@ autoLogin();
         count += r.data.filter((c) => !dispSet.has(c.prepetrator_id)).length
       } catch (_) {}
 
-      // Local cases undisposed
+      // Local cases undisposed (exclude ASTINA — counted from live API below)
       try {
-        const localCases = await db.collection('local_cases').find({ status: 'Laporan Diterima' }).toArray()
+        const localCases = await db.collection('local_cases').find({ status: 'Laporan Diterima', source: { $ne: 'astina' } }).toArray()
         const localPids = localCases.map((c) => c.prepetrator_id)
         if (localPids.length) {
           const localDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
@@ -955,7 +993,7 @@ autoLogin();
     // Bulk disposisi
     if (route === '/disposisi-bulk' && method === 'POST') {
       if (!(me.role === 'kasubbid' || me.role === 'admin')) return fail('Hanya Kasubbid/Admin', 403)
-      const { items, to_unit, note, is_atensi, case_type } = await request.json()
+      const { items, to_unit, note, is_atensi, case_type, tasks } = await request.json()
       if (!Array.isArray(items) || items.length === 0) return fail('items wajib')
       if (!to_unit || !CHILD_UNITS.includes(to_unit)) return fail('Unit tujuan tidak valid')
       const db = await getDb()
@@ -963,12 +1001,14 @@ autoLogin();
       for (const item of items) {
         const pid = typeof item === 'string' ? item : item.pid
         const itemSource = typeof item === 'string' ? (item.length > 30 ? 'astina' : 'gajamada') : (item.source || 'gajamada')
+        const taskLabels = Array.isArray(tasks) ? tasks.filter((t) => t.checked && t.label).map((t) => t.label) : []
+        const taskNote = taskLabels.length ? `TASKS: ${taskLabels.join(', ')}\n` : ''
         const disp = {
           id: uuidv4(),
           prepetrator_id: pid,
           to_unit,
           from_unit: KASUBBID_UNIT,
-          note: note || '',
+          note: taskNote + (note || ''),
           is_atensi: !!is_atensi,
           by: { username: me.username, name: me.name, role: me.role },
           created_at: new Date(),
@@ -991,7 +1031,7 @@ autoLogin();
         try {
           await db.collection('local_cases').updateOne(
             { prepetrator_id: pid },
-            { $set: { case_type: case_type || 'dumas', status: 'Didistribusi', updated_at: new Date() }, $setOnInsert: { prepetrator_id: pid, source: 'gajamada', created_at: new Date() } },
+            { $set: { case_type: case_type || 'dumas', status: 'Didistribusi', updated_at: new Date() }, $setOnInsert: { prepetrator_id: pid, source: itemSource, created_at: new Date() } },
             { upsert: true }
           )
         } catch (_) {}
@@ -1002,9 +1042,6 @@ autoLogin();
           id: uuidv4(), prepetrator_id: pid,
           title: timelineTitle,
           description: timelineDesc,
-          source_name: 'SIMONDU',
-          from_unit: KASUBBID_UNIT,
-          to_unit: to_unit,
           by: { username: me.username, name: me.name, role: me.role },
           created_at: new Date(),
         })
@@ -1018,19 +1055,21 @@ autoLogin();
             const tujuanRes = await astinaClient.getTujuanDisposisi(pid, me.username).catch(() => null)
             if (tujuanRes?.ok && tujuanRes.data?.length) {
               const targetUnit = to_unit.toUpperCase()
+              const cleaned = targetUnit.replace('UNIT ', 'KANIT ').replace('UR ', 'KAUR').replace('SUBBID PAMINAL', 'SUBBIDPAMINAL').replace('POLDA JAWA BARAT', '').trim()
+              const keywords = cleaned.split(' ').filter((w) => w.length > 1)
               let tujuanUuid = null
               for (const group of tujuanRes.data) {
                 if (!group.jabatan) continue
                 for (const j of group.jabatan) {
-                  if (j.name && j.name.toUpperCase().includes(targetUnit)) { tujuanUuid = j.id; break }
+                  if (j.name && keywords.every((kw) => j.name.toUpperCase().includes(kw))) { tujuanUuid = j.id; break }
                 }
                 if (tujuanUuid) break
               }
               if (tujuanUuid) {
-                const noteLabels = (note || '').split('\n').filter(Boolean).slice(0, 3)
+                const taskLabels = (Array.isArray(tasks) ? tasks.filter((t) => t.checked || t.label).map((t) => t.label) : [])
                 const res = await astinaClient.postDisposisi({
                   suratId: pid,
-                  notes: noteLabels.length ? noteLabels : ['TINDAKLANJUTI'],
+                  notes: taskLabels.length ? taskLabels : ['TINDAKLANJUTI'],
                   tujuan: [tujuanUuid],
                   custom: note ? [note] : [],
                   username: me.username,
@@ -1053,15 +1092,31 @@ autoLogin();
       const db = await getDb()
       const dispositions = await db.collection('dispositions').find({}).sort({ created_at: -1 }).limit(200).toArray()
       const pids = [...new Set(dispositions.map((d) => d.prepetrator_id))]
-      // Get case info from Gajamada in batches
       const caseMap = {}
       if (pids.length > 0) {
-        const r = await gajamada.listCases(me.username, { size: pids.length, units: PAMINAL_SCOPE_UNITS }).catch(() => ({ data: [] }))
-        for (const c of r.data) caseMap[c.prepetrator_id] = c
+        // Gajamada: coba tanpa filter unit dulu (lebih luas)
+        const gData = await gajamada.listCases(me.username, { size: 200 }).catch(() => ({ data: [] }))
+        for (const c of gData.data) caseMap[c.prepetrator_id] = { pengirim: c.pengirim || c.prepetrator_name || '-', perihal: c.perihal || c.summary || '-', nomor_surat: c.nomor_surat || '-' }
+        // Fallback: getCase untuk PID yang belum ketemu (Gajamada)
+        const missingGj = pids.filter((p) => !caseMap[p] && p.length < 30)
+        if (missingGj.length > 0) {
+          const results = await Promise.all(missingGj.slice(0, 10).map(async (p) => {
+            const c = await gajamada.getCase(me.username, p).catch(() => null)
+            if (c) caseMap[p] = { pengirim: c.pengirim || c.prepetrator_name || '-', perihal: c.perihal || c.summary || '-', nomor_surat: c.nomor_surat || '-' }
+          }))
+        }
+        // Local cases: batch per 20 untuk hindari limit PostgREST
+        for (let i = 0; i < pids.length; i += 20) {
+          const batch = pids.slice(i, i + 20)
+          const rows = await db.collection('local_cases').find({ prepetrator_id: { $in: batch } }).toArray().catch(() => [])
+          for (const l of rows) {
+            if (!caseMap[l.prepetrator_id]) caseMap[l.prepetrator_id] = { pengirim: l.pengirim || l.prepetrator_name || '-', perihal: l.perihal || l.summary || '-', nomor_surat: l.nomor_surat || '-' }
+          }
+        }
       }
       const enriched = dispositions.map((d) => ({
         ...d,
-        case_info: caseMap[d.prepetrator_id] || null,
+        case_info: caseMap[d.prepetrator_id] || { pengirim: '-', perihal: '-', nomor_surat: '-' },
       }))
       return ok({ data: enriched.map(({ _id, ...r }) => r) })
     }
@@ -1076,7 +1131,7 @@ autoLogin();
         const db = await getDb()
         const existing = await db.collection('dispositions').findOne({ id })
         if (!existing) return fail('Disposisi tidak ditemukan', 404)
-        await db.collection('dispositions').updateOne({ id }, { $set: { ...patch, updated_at: new Date() } })
+        await db.collection('dispositions').updateOne({ id }, { $set: { ...patch } })
         if (patch.to_unit || patch.note || patch.is_atensi !== undefined) {
           await db.collection('timelines').insertOne({
             id: uuidv4(), prepetrator_id: existing.prepetrator_id,
@@ -1086,6 +1141,36 @@ autoLogin();
             created_at: new Date(),
           })
           scheduleSync(existing.prepetrator_id, me, 'edit_disposisi')
+          // ASTINA re-sync for ASTINA-sourced items
+          try {
+            const localCase = await db.collection('local_cases').findOne({ prepetrator_id: existing.prepetrator_id }).catch(() => null)
+            if (localCase && (localCase.source === 'astina' || localCase.source_alias === 'ASTINA')) {
+              const astinaClient = loadAstinaClient()
+              const tujuanRes = await astinaClient.getTujuanDisposisi(existing.prepetrator_id, me.username).catch(() => null)
+              if (tujuanRes?.ok && tujuanRes.data?.length && patch.to_unit) {
+                const cleaned = patch.to_unit.toUpperCase().replace('UNIT ', 'KANIT ').replace('UR ', 'KAUR').replace('SUBBID PAMINAL', 'SUBBIDPAMINAL').replace('POLDA JAWA BARAT', '').trim()
+                const keywords = cleaned.split(' ').filter((w) => w.length > 1)
+                let tujuanUuid = null
+                for (const group of tujuanRes.data) {
+                  if (!group.jabatan) continue
+                  for (const j of group.jabatan) {
+                    if (j.name && keywords.every((kw) => j.name.toUpperCase().includes(kw))) { tujuanUuid = j.id; break }
+                  }
+                  if (tujuanUuid) break
+                }
+                if (tujuanUuid) {
+                  const notes = (patch.note || existing.note || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean)
+                  await astinaClient.postDisposisi({
+                    suratId: existing.prepetrator_id,
+                    notes: notes.length ? notes : ['TINDAKLANJUTI'],
+                    tujuan: [tujuanUuid],
+                    custom: [],
+                    username: me.username,
+                  }).catch(() => {})
+                }
+              }
+            }
+          } catch (_) {}
         }
         await logAudit(me, 'disposisi_edit', id, patch)
         const row = await db.collection('dispositions').findOne({ id })
@@ -1480,10 +1565,51 @@ autoLogin();
     const caseMatch = route.match(/^\/cases\/([^/]+)$/)
     if (caseMatch && method === 'GET') {
       const pid = decodeURIComponent(caseMatch[1])
-      const c = await gajamada.getCase(me.username, pid)
-      if (!c) return fail('Kasus tidak ditemukan', 404)
-      const enriched = await enrichCase(c)
-      return ok({ data: enriched })
+      const c = await gajamada.getCase(me.username, pid).catch(() => null)
+      if (c) {
+        const enriched = await enrichCase(c)
+        return ok({ data: enriched })
+      }
+      // Fallback: local_cases (ASTINA, manual)
+      const db = await getDb()
+      const lc = await db.collection('local_cases').findOne({ prepetrator_id: pid }).catch(() => null)
+      if (lc) {
+        const dispositions = await db.collection('dispositions').find({ prepetrator_id: pid }).sort({ created_at: -1 }).toArray().catch(() => [])
+        const timelines = await db.collection('timelines').find({ prepetrator_id: pid }).sort({ created_at: -1 }).toArray().catch(() => [])
+        const documents = await db.collection('followup_documents').find({ prepetrator_id: pid }).sort({ uploaded_at: -1 }).toArray().catch(() => [])
+        const syncLogs = await db.collection('sync_logs').find({ prepetrator_id: pid }).sort({ request_at: -1 }).limit(10).toArray().catch(() => [])
+        const completed = await db.collection('completions').findOne({ prepetrator_id: pid }).catch(() => null)
+        const outcome = await db.collection('case_outcomes').findOne({ prepetrator_id: pid }).catch(() => null)
+        const checklistRows = await db.collection('followup_checklist').find({ prepetrator_id: pid }).toArray().catch(() => [])
+        const strip = (arr) => arr.map(({ _id, ...r }) => r)
+        return ok({ data: {
+          id: lc.id, prepetrator_id: pid,
+          prepetrator_name: lc.prepetrator_name || lc.pengirim || '-',
+          pengirim: lc.pengirim || '-',
+          perihal: lc.perihal || '',
+          summary: lc.summary || lc.content || '',
+          category: lc.category || 'NON-DUMAS',
+          case_type: lc.case_type || 'non_pengaduan',
+          nomor_surat: lc.nomor_surat || '',
+          tgl_surat: lc.tgl_surat,
+          jenis_surat: lc.jenis_surat || '',
+          status_label: lc.status || 'Laporan Diterima',
+          source_alias: lc.source_alias || lc.source || 'LOCAL',
+          disposisi_case_position: dispositions[0]?.to_unit || '-',
+          is_atensi: !!dispositions[0]?.is_atensi,
+          derived_status: lc.status,
+          created_date: lc.created_at,
+          updated_at: lc.updated_at || lc.created_at,
+          dispositions: strip(dispositions),
+          timelines: strip(timelines),
+          documents: strip(documents),
+          sync_logs: strip(syncLogs),
+          completed: completed ? { ...completed, _id: undefined } : null,
+          outcome: outcome ? { ...outcome, _id: undefined } : null,
+          checklist: checklistRows.map(({ _id, ...r }) => r),
+        }})
+      }
+      return fail('Kasus tidak ditemukan', 404)
     }
 
     // ---------- DOWNLOAD PROXY ----------
@@ -2137,6 +2263,91 @@ autoLogin();
         return ok(data)
       } catch (e) {
         return fail('Gagal fetch ASTINA: ' + (e.message || 'unknown'))
+      }
+    }
+
+    // ---------- ASTINA AI ENRICH (ekstrak PDF -> local_cases) ----------
+    if (route === '/astina-enrich' && method === 'POST') {
+      if (!(me.role === 'kasubbid' || me.role === 'admin')) return fail('Hanya Kasubbid/Admin', 403)
+      const { surat_id } = await request.json()
+      if (!surat_id) return fail('surat_id wajib')
+      try {
+        const db = await getDb()
+        const existing = await db.collection('local_cases').findOne({ prepetrator_id: surat_id }).catch(() => null)
+        const isEnriched = existing && (existing.prepetrator_name || existing.summary)
+      const astinaClient = loadAstinaClient()
+      // Fetch surat from ASTINA lists
+      const [baruRes, masukRes] = await Promise.all([
+        astinaClient.getSuratBaru({ per_page: 50, page: 1, username: me.username }).catch(() => ({ status: false, data: [] })),
+        astinaClient.getSuratMasuk({ per_page: 50, page: 1, username: me.username }).catch(() => ({ status: false, data: [] })),
+      ])
+      const allSurat = [...(baruRes.data || []), ...(masukRes.data || [])]
+      const suratData = allSurat.find((s) => s.id === surat_id) || {}
+      // Merge with existing local_cases data
+      const textData = [suratData?.perihal, suratData?.pengirim, suratData?.dari_name, existing?.perihal, existing?.pengirim].filter(Boolean).join('\n')
+      let extracted = {}
+      // Coba ekstrak dari PDF
+      const files = suratData?.file || suratData?.lampiran || []
+      if (files.length > 0) {
+        try {
+          const fileId = typeof files[0] === 'string' ? files[0] : (files[0].id || files[0].file_id)
+          if (fileId) {
+            const fileLink = await astinaClient.getFileLink(fileId, me.username)
+            if (fileLink?.ok && fileLink.url) {
+              const pdfRes = await fetch(fileLink.url)
+              const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer())
+              let pdfText = ''
+              try { const pdfParse = require('pdf-parse'); const parsed = await pdfParse(pdfBuffer); pdfText = (parsed.text || '').trim() } catch (_) {}
+              const textForAI = pdfText || [suratData?.perihal, suratData?.pengirim].filter(Boolean).join('\n')
+              if (textForAI.length > 10 && process.env.GEMINI_API_KEY) {
+                const gmRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ contents: [{ parts: [{ text: `Ekstrak data JSON dari teks surat berikut. Format: {"prepator_name":"nama terlapor/terduga","pengirim":"pengirim","perihal":"perihal","nomor_surat":"nomor","tanggal_surat":"YYYY-MM-DD","summary":"ringkasan 1-3 kalimat","category":"kategori"}. Hanya JSON.\n\nTEKS:\n${textForAI.slice(0, 8000)}` }] }], generationConfig: { temperature: 0.1, maxOutputTokens: 500 } }),
+                })
+                const gmData = await gmRes.json()
+                const raw = gmData?.candidates?.[0]?.content?.parts?.[0]?.text || ''
+                try { extracted = JSON.parse(raw.replace(/```json\n?|```/g, '').trim()) } catch { extracted = { summary: raw.slice(0, 300) } }
+              }
+            }
+          }
+        } catch (e2) { console.error('[astina-enrich] PDF:', e2.message) }
+      }
+      // Fallback: Gemini pada data teks yang tersedia
+      if (!extracted.summary && !extracted.prepator_name) {
+        const textData = [suratData?.perihal, suratData?.pengirim, suratData?.dari_name, existing?.perihal, existing?.pengirim].filter(Boolean).join('\n')
+        if (textData.length > 10 && process.env.GEMINI_API_KEY) {
+          try {
+            const gmRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ contents: [{ parts: [{ text: `Ekstrak data JSON dari teks: "${textData.slice(0, 2000)}". Format: {"prepator_name":"","pengirim":"","perihal":"","nomor_surat":"","tanggal_surat":"","summary":"","category":""}. Hanya JSON.` }] }], generationConfig: { temperature: 0.1, maxOutputTokens: 300 } }),
+            })
+            const gmData = await gmRes.json()
+            const raw = gmData?.candidates?.[0]?.content?.parts?.[0]?.text || ''
+            try { extracted = JSON.parse(raw.replace(/```json\n?|```/g, '').trim()) } catch { extracted = { summary: raw.slice(0, 300) } }
+          } catch (_) {}
+        }
+      }
+        const enriched = {
+          prepetrator_id: surat_id, source: 'astina', source_alias: 'ASTINA',
+          status: existing?.status || 'Laporan Diterima',
+          perihal: extracted.perihal || suratData?.perihal || existing?.perihal || '',
+          nomor_surat: extracted.nomor_surat || suratData?.no_surat || existing?.nomor_surat || '',
+          pengirim: extracted.pengirim || suratData?.pengirim || suratData?.dari_name || existing?.pengirim || '',
+          prepetrator_name: extracted.prepator_name || existing?.prepetrator_name || '',
+          summary: extracted.summary || existing?.summary || suratData?.perihal || '',
+          category: extracted.category || existing?.category || 'NON-DUMAS',
+          tgl_surat: extracted.tanggal_surat || suratData?.tanggal_surat || suratData?.tanggal || existing?.tgl_surat || null,
+          updated_at: new Date(),
+        }
+        await db.collection('local_cases').updateOne(
+          { prepetrator_id: surat_id },
+          { $set: enriched, $setOnInsert: { created_at: new Date() } },
+          { upsert: true }
+        )
+        return ok({ message: 'Enrich berhasil', data: enriched })
+      } catch (e) {
+        console.error('[astina-enrich]', e)
+        return fail('AI enrich gagal: ' + e.message)
       }
     }
 

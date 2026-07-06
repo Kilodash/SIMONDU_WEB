@@ -1,66 +1,66 @@
-// AI PDF extraction via OpenCode Vision + Claude Vision fallback
-export async function extractPdfContent(pdfBase64) {
-  const apiKey = process.env.OPENCODE_API_KEY
-  const baseUrl = process.env.OPENCODE_BASE_URL || 'https://api.opencode.ai'
+const GEMINI_KEY = process.env.GEMINI_API_KEY
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
 
-  const prompt = 'Ekstrak data berikut dari surat/dokumen ini dalam format JSON. Hanya kembalikan JSON yang valid, tanpa teks lain, tanpa markdown code block:\n{\n  "perihal": "...",\n  "pengirim": "...",\n  "nomor_surat": "...",\n  "tanggal_surat": "...",\n  "isi_ringkas": "..."\n}\nJika field tidak ditemukan, isi dengan string kosong.'
-
-  // Try OpenCode Vision first
-  if (apiKey) {
-    try {
-      const res = await fetch(`${baseUrl}/v1/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: 'opencode-vision',
-          messages: [{ role: 'user', content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: `data:application/pdf;base64,${pdfBase64}` } },
-          ]}],
-          max_tokens: 1000,
-        }),
-      })
-      const data = await res.json()
-      if (res.ok && data.choices?.[0]?.message?.content) {
-        return parseAiResponse(data.choices[0].message.content)
-      }
-    } catch (_) { /* fallback to Claude */ }
-  }
-
-  // Fallback: Claude Vision via OpenCode proxy
-  try {
-    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'claude-3-5-sonnet',
-        messages: [{ role: 'user', content: [
-          { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: `data:application/pdf;base64,${pdfBase64}` } },
-        ]}],
-        max_tokens: 1000,
-      }),
-    })
-    const data = await res.json()
-    if (res.ok && data.choices?.[0]?.message?.content) {
-      return parseAiResponse(data.choices[0].message.content)
-    }
-  } catch (_) {}
-
-  throw new Error('AI extraction failed - no API key configured')
+const PROMPT = `Ekstrak data berikut dari teks surat/dokumen ini. Hanya kembalikan JSON valid tanpa markdown:
+{
+  "prepator_name": "nama terlapor/terduga",
+  "pengirim": "pengirim/pelapor",
+  "perihal": "perihal surat",
+  "nomor_surat": "nomor surat",
+  "tanggal_surat": "YYYY-MM-DD",
+  "summary": "ringkasan isi 1-3 kalimat",
+  "category": "kategori"
 }
+Jika field tidak ditemukan, isi string kosong.`
 
-function parseAiResponse(text) {
+async function extractWithGemini(text) {
+  if (!GEMINI_KEY) throw new Error('GEMINI_API_KEY not set')
+  const res = await fetch(`${GEMINI_URL}?key=${GEMINI_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: `${PROMPT}\n\nTEKS:\n${text.slice(0, 8000)}` }] }],
+      generationConfig: { temperature: 0.1, maxOutputTokens: 500 },
+    }),
+  })
+  const data = await res.json()
+  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || ''
   try {
-    const cleaned = text.replace(/```json\n?|```/g, '').trim()
-    return JSON.parse(cleaned)
+    return JSON.parse(raw.replace(/```json\n?|```/g, '').trim())
   } catch {
-    return {
-      perihal: text.substring(0, 200),
-      pengirim: '',
-      nomor_surat: '',
-      tanggal_surat: '',
-      isi_ringkas: text.substring(0, 500),
-    }
+    return { prepator_name: '', pengirim: '', perihal: '', nomor_surat: '', tanggal_surat: '', summary: raw.slice(0, 300), category: '' }
   }
 }
+
+async function extractPdfContent(pdfBuffer) {
+  // Try pdf-parse first
+  try {
+    const pdfParse = require('pdf-parse')
+    const parsed = await pdfParse(pdfBuffer)
+    const text = parsed.text || ''
+    if (text.length > 50) return await extractWithGemini(text)
+  } catch (_) { /* fallback to vision */ }
+
+  // Fallback: Gemini Vision on PDF screenshot
+  const pdfBase64 = Buffer.from(pdfBuffer).toString('base64')
+  const res = await fetch(`${GEMINI_URL}?key=${GEMINI_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [
+        { text: PROMPT },
+        { inline_data: { mime_type: 'application/pdf', data: pdfBase64 } },
+      ] }],
+      generationConfig: { temperature: 0.1, maxOutputTokens: 500 },
+    }),
+  })
+  const data = await res.json()
+  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || ''
+  try {
+    return JSON.parse(raw.replace(/```json\n?|```/g, '').trim())
+  } catch {
+    return { prepator_name: '', pengirim: '', perihal: '', nomor_surat: '', tanggal_surat: '', summary: raw.slice(0, 300), category: '' }
+  }
+}
+
+module.exports = { extractPdfContent, extractWithGemini }
