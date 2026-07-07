@@ -1,6 +1,6 @@
 'use client'
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, Fragment } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -219,46 +219,60 @@ function Dashboard({ user, onNavigate }) {
         </div>
       )}
 
-      {/* Per Unit Ranking Table — admin view only */}
-      {isAdmin && anev.perUnit && anev.perUnit.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Kinerja per Unit</CardTitle></CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-slate-50 text-left text-xs uppercase text-slate-500">
-                    <th className="p-3 pl-4 w-8">#</th>
-                    <th className="p-3">Unit</th>
-                    <th className="p-3 text-right">Total</th>
-                    <th className="p-3 text-right">Selesai</th>
-                    <th className="p-3 text-right">Overdue</th>
-                    <th className="p-3 text-right">Avg Waktu</th>
-                    <th className="p-3 text-right pr-4">Skor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {anev.perUnit.slice(0, 15).map((u, i) => (
-                    <tr key={u.name} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => navTo({ unit: u.name })}>
-                      <td className="p-3 pl-4 text-slate-400">{i + 1}</td>
-                      <td className="p-3 font-medium max-w-[300px] truncate">{shortUnit(u.name)}</td>
-                      <td className="p-3 text-right">{u.total}</td>
-                      <td className="p-3 text-right text-green-700">{u.selesai}</td>
-                      <td className="p-3 text-right">{u.overdue > 0 ? <span className="text-red-600 font-medium">{u.overdue}</span> : '0'}</td>
-                      <td className="p-3 text-right">{u.avgWaktu != null ? `${u.avgWaktu}h` : '-'}</td>
-                      <td className="p-3 text-right pr-4">
-                        <span className={`font-semibold ${u.skor >= 80 ? 'text-green-700' : u.skor >= 60 ? 'text-amber-700' : 'text-red-700'}`}>
-                          {u.skor}
-                        </span>
-                      </td>
+      {/* Per Unit Ranking Table — grouped by kategori — admin view only */}
+      {isAdmin && anev.perUnit && anev.perUnit.length > 0 && (() => {
+        const orderKategori = ['Paminal', 'Provos', 'Wabprof', 'Polres', 'Renmin', 'Lainnya']
+        const grouped = {}
+        for (const u of anev.perUnit) { const k = u.kategori || 'Lainnya'; if (!grouped[k]) grouped[k] = []; grouped[k].push(u) }
+        const cats = ['Paminal', 'Provos', 'Wabprof', 'Polres', 'Renmin', 'Lainnya'].filter((k) => grouped[k] && grouped[k].length > 0)
+        return (
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-base">Kinerja per Unit</CardTitle></CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-slate-50 text-left text-xs uppercase text-slate-500">
+                      <th className="p-3 pl-4 w-8">#</th>
+                      <th className="p-3">Unit</th>
+                      <th className="p-3 text-right">Total</th>
+                      <th className="p-3 text-right">Selesai</th>
+                      <th className="p-3 text-right">Overdue</th>
+                      <th className="p-3 text-right">Avg Waktu</th>
+                      <th className="p-3 text-right pr-4">Skor</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                  </thead>
+                  <tbody>
+                    {cats.map((kategori) => (<Fragment key={kategori}>
+                        <tr className="bg-slate-100">
+                          <td colSpan={7} className="px-4 py-1.5 text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                            {kategori}
+                          </td>
+                        </tr>
+                        {grouped[kategori].map((u, i) => (
+                          <tr key={u.name} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => navTo({ unit: u.name })}>
+                            <td className="p-3 pl-4 text-slate-400">{i + 1}</td>
+                            <td className="p-3 font-medium max-w-[300px] truncate">{shortUnit(u.name)}</td>
+                            <td className="p-3 text-right">{u.total}</td>
+                            <td className="p-3 text-right text-green-700">{u.selesai}</td>
+                            <td className="p-3 text-right">{u.overdue > 0 ? <span className="text-red-600 font-medium">{u.overdue}</span> : '0'}</td>
+                            <td className="p-3 text-right">{u.avgWaktu != null ? `${u.avgWaktu}h` : '-'}</td>
+                            <td className="p-3 text-right pr-4">
+                              <span className={`font-semibold ${u.skor >= 80 ? 'text-green-700' : u.skor >= 60 ? 'text-amber-700' : 'text-red-700'}`}>
+                                {u.skor}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
 
       {/* Per Sub-Unit — subbid/polres view */}
       {isSubUnit && anev.perUnit && anev.perUnit.length > 0 && (

@@ -1473,15 +1473,25 @@ autoLogin();
         }
       }
 
-      // Compute per-unit scores
+      // Compute per-unit scores with grouping
+      const isChildOf = (unitName, parentKeyword) => unitName.toUpperCase().includes(parentKeyword) && !unitName.toUpperCase().includes('KASUBBID') && !unitName.toUpperCase().includes('SUBBAG')
+      const isPolres = (unitName) => /POLRES|TABES|T\.A\./i.test(unitName)
+      const detectKategori = (name) => {
+        const u = name.toUpperCase()
+        if (u.includes('KASUBBID') || isChildOf(name, 'PAMINAL')) return 'Paminal'
+        if (u.includes('PROVOS')) return 'Provos'
+        if (u.includes('WABPROF')) return 'Wabprof'
+        if (isPolres(name)) return 'Polres'
+        if (u.includes('SUBBAG') || u.includes('RENMIN')) return 'Renmin'
+        return 'Lainnya'
+      }
       const perUnit = Object.entries(unitStats).map(([name, s]) => {
         const avgWaktu = s.timeCount > 0 ? Math.round(s.timeSum / s.timeCount) : null
         const completionRate = s.total > 0 ? Math.round((s.selesai / s.total) * 100) : 0
-        // Score: completion (50%) + avg waktu bonus (30%) + overdue penalty (20%)
         const timeBonus = avgWaktu ? Math.max(0, 30 - Math.min(30, avgWaktu)) : 0
         const overdueScore = s.total > 0 ? Math.max(0, 20 - Math.round((s.overdue / s.total) * 100)) : 20
         const skor = Math.min(100, Math.round(completionRate * 0.5 + timeBonus + overdueScore))
-        return { name, total: s.total, selesai: s.selesai, overdue: s.overdue, avgWaktu, atensi: s.atensi, skor }
+        return { name, kategori: detectKategori(name), total: s.total, selesai: s.selesai, overdue: s.overdue, avgWaktu, atensi: s.atensi, skor }
       }).sort((a, b) => b.skor - a.skor)
 
       // Overall average waktu
