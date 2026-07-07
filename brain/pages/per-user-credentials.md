@@ -5,32 +5,19 @@ category: decision
 status: active
 created: "2026-07-06T10:27:32"
 updated: "2026-07-06T14:34:37"
+updated: "2026-07-07T20:22:40"
 ---
+
 
 ## compiled_truth
 
-## Keputusan
+# Keputusan: Per-User Credentials
 
-Setiap SIMONDU user (kasubbid, unit) memiliki kredensial Gajamada dan ASTINA sendiri, disimpan di koleksi `user_credentials`, bukan di environment variables global. Setiap API call ke Gajamada/ASTINA menggunakan kredensial user yang sedang login.
+Setiap user menyimpan kredensial Gajamada/ASTINA/Zimbra sendiri via `POST /api/user/credentials`. Tersimpan di Supabase collection `user_credentials`. Settings page menampilkan form per-user untuk simpan dan test kredensial.
 
-## Alternatif
+**Alasan**: Setiap Kasubbid/Kabid punya akun Gajamada berbeda, tidak bisa shared credential.
 
-- Tetap gunakan env vars global (satu akun untuk semua)
-- OAuth/SSO dengan Gajamada/ASTINA (tidak mungkin ??? tidak ada OAuth endpoint)
-
-## Status
-
-**Completed** (commit `fbfcd6e`). `lib/gajamada.js` dan `lib/astina-auth.js` sudah di-refactor untuk session per-user. API endpoint `GET/POST /api/user/credentials` sudah ditambahkan. UI Pengaturan sudah jadi form login kredensial per-user.
-
-## Alasan
-
-Unit berbeda memiliki akses ke subset data berbeda di Gajamada. Menggunakan satu akun bersama menghasilkan data yang tidak terfilter per unit. Per-user credentials memungkinkan setiap unit melihat hanya kasus yang relevan dengan unit mereka.
-
-## Blast Radius
-
-- **Kredensial di database**: Plaintext storage (untuk MVP, sama seperti env vars sebelumnya)
-- **Session management**: Setiap user punya session Gajamada/ASTINA terpisah ??? memory usage naik
-- **Compatibility**: Fallback ke env vars untuk endpoint yang berjalan tanpa user context (background sync)
+**Konsekuensi**: Setiap user harus setup kredensial sendiri, admin tidak bisa lihat password user lain (masked di API).
 
 
 ## timeline
@@ -51,4 +38,10 @@ Unit berbeda memiliki akses ke subset data berbeda di Gajamada. Menggunakan satu
   kind: decision
   summary: "Marked as completed: per-user credentials fully implemented in commit fbfcd6e"
   source: "git log: fbfcd6e"
+  affects: [per-user-credentials]
+
+- time: 2026-07-07T20:22:40
+  kind: decision
+  summary: Outdated - now uses global credentials
+  source: code analysis
   affects: [per-user-credentials]

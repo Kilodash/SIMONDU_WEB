@@ -5,24 +5,21 @@ category: decision
 status: archived
 created: "2026-07-06T10:27:31"
 updated: "2026-07-06T14:33:51"
+updated: "2026-07-07T20:22:57"
 ---
+
 
 ## compiled_truth
 
-## Keputusan
+# Keputusan: MongoDB ke Supabase
 
-Database diganti dari Supabase (PostgreSQL) ke MongoDB native driver. Schema migration file `supabase_migration.sql` (13 tabel) masih ada di repo, tapi tidak digunakan. Kode membaca `process.env.MONGO_URL` untuk koneksi MongoDB.
+Migrasi dari MongoDB ke Supabase PostgreSQL menggunakan adapter `lib/db.js`. Keputusan dibuat untuk mengurangi biaya hosting (Supabase free tier vs MongoDB Atlas).
 
-## Alasan
+**Alternatif**: Tetap MongoDB Atlas, SQLite, PlanetScale.
 
-Dokumen semi-structured (disposisi, checklist, timelines) lebih natural di MongoDB. Tidak perlu migration schema setiap ada field baru. Setup lebih sederhana (tidak perlu Supabase project + API key). Thin wrapper di `lib/db.js` meniru pattern `collection().find().sort().toArray()` yang familiar.
+**Keputusan**: Supabase PostgreSQL dengan adapter MongoDB-compatible.
 
-## Blast Radius
-
-- **No transactions**: Operasi multi-dokumen tidak atomik
-- **No migrations**: Schema evolves organically, tidak ada versioning
-- **Supabase lib masih ter-install**: `@supabase/supabase-js` di dependencies tapi hanya digunakan untuk Storage upload
-- **Dual storage**: Supabase Storage untuk file, MongoDB untuk data ??? dua sistem berbeda
+**Dampak**: [[supabase-postgresql-adapter]] dibuat untuk mencegah rewrite seluruh codebase. Collection mapping: local_cases, dispositions, units_master, sync_logs, audit_logs, astina_sessions, user_credentials.
 
 
 ## timeline
@@ -43,4 +40,10 @@ Dokumen semi-structured (disposisi, checklist, timelines) lebih natural di Mongo
   kind: reversal
   summary: "Migration reversed: MongoDB was replaced back by Supabase PostgreSQL via db.js adapter. Latest commit 'fbfcd6e feat: migrasi MongoDB ke Supabase' confirms the reversal."
   source: brain archive-page
+  affects: [mongodb-over-supabase]
+
+- time: 2026-07-07T20:22:57
+  kind: decision
+  summary: Migration rationale details
+  source: "git log + code"
   affects: [mongodb-over-supabase]
