@@ -22,6 +22,7 @@ function ok(data, extra = {}) { return NextResponse.json({ ok: true, ...data }, 
 function fail(msg, status = 400) { return NextResponse.json({ ok: false, error: msg }, { status }) }
 
 function isAdminRole(role) { return ['superadmin', 'kabid', 'kasubbag', 'kasubbid', 'admin', 'yanduan'].includes(role) }
+function canSync(role) { return ['superadmin', 'admin', 'yanduan'].includes(role) }
 function isSuperadmin(role) { return role === 'superadmin' }
 
 async function requireAuth(request) {
@@ -1034,6 +1035,24 @@ autoLogin();
             }
           } catch (e) { console.error('[ASTINA] disposisi sync error:', e.message) }
         }
+        // Gajamada push: only admin/yanduan sync back to Gajamada
+        if (canSync(me.role) && itemSource !== 'astina') {
+          try {
+            const params = {
+              report_id: pid,
+              status: 'Laporan Diterima',
+              case_position: to_unit,
+              note: note || '',
+              createdBy: me.name,
+            }
+            await gajamada.pushUpdate(me.username, params)
+            await db.collection('dispositions').updateOne(
+              { id: disp.id },
+              { $set: { synced_to_gajamada: true } }
+            )
+            console.log(`[Gajamada] push disposisi ${pid} → ${to_unit}: OK`)
+          } catch (e) { console.error(`[Gajamada] push disposisi ${pid} error:`, e.message) }
+        }
         results.push({ pid, ok: true })
       }
       return ok({ data: results })
@@ -1125,6 +1144,22 @@ autoLogin();
           } catch (_) {}
         }
         await logAudit(me, 'disposisi_edit', id, patch)
+        // Gajamada push: only admin/yanduan for non-ASTINA items
+        if (canSync(me.role)) {
+          try {
+            const localCase = await db.collection('local_cases').findOne({ prepetrator_id: existing.prepetrator_id }).catch(() => null)
+            if (!localCase || (localCase.source !== 'astina' && localCase.source_alias !== 'ASTINA')) {
+              const pushNote = (patch.note || existing.note || '').substring(0, 200)
+              await gajamada.pushUpdate(me.username, {
+                report_id: existing.prepetrator_id,
+                status: 'Laporan Diterima',
+                case_position: patch.to_unit || existing.to_unit,
+                note: pushNote,
+                createdBy: me.name,
+              }).catch(() => {})
+            }
+          } catch (_) {}
+        }
         const row = await db.collection('dispositions').findOne({ id })
         const { _id, ...clean } = row
         return ok({ data: clean })
@@ -1205,6 +1240,18 @@ autoLogin();
         created_at: new Date(),
       })
       await logAudit(me, 'disposisi', pid, { to_unit })
+      // Gajamada push: only admin/yanduan
+      if (canSync(me.role)) {
+        try {
+          await gajamada.pushUpdate(me.username, {
+            report_id: pid,
+            status: 'Laporan Diterima',
+            case_position: to_unit,
+            note: note || '',
+            createdBy: me.name,
+          })
+        } catch (_) {}
+      }
       const { _id, ...clean } = disp
       return ok({ data: clean })
     }
@@ -1342,9 +1389,9 @@ autoLogin();
 
     // ---------- ANEV ----------
     if (route === '/anev' && method === 'GET') {
-      const scope = url.searchParams.get('scope') || 'paminal'
+      const scope = url.searchParams.get('scope') || 'all'
       const opts = { page: 1, size: 500 }
-      if (me.role === 'unit') opts.units = [me.unit]
+      if (me.role === 'unit' || me.role === 'polres') opts.units = [me.unit]
       else opts.units = scope === 'paminal' ? PAMINAL_SCOPE_UNITS : undefined
       const result = await gajamada.listCases(me.username, opts).catch((e) => {
         if (e.code === 'GAJAMADA_DISABLED') return { data: [], total: 0, meta: { disabled: true } }
@@ -1359,10 +1406,14 @@ autoLogin();
         db.collection('timelines').find({ prepetrator_id: { $in: pids } }).limit(2000).toArray(),
         db.collection('completions').find({ prepetrator_id: { $in: pids } }).toArray(),
       ])
-      const dispBy = {}; const tlSet = new Set(); const compSet = new Set()
+      const dispBy = {}; const tlSet = new Set(); const compSet = new Set(); const compByPid = {}
       for (const d of dispRows) if (!dispBy[d.prepetrator_id]) dispBy[d.prepetrator_id] = d
       for (const t of tlRows) tlSet.add(t.prepetrator_id)
-      for (const c of compRows) compSet.add(c.prepetrator_id)
+      for (const c of compRows) { compByPid[c.prepetrator_id] = c; compSet.add(c.prepetrator_id) }
+
+      const now = Date.now()
+      const DAY = 86400000
+
       const effective = cases.map((c) => {
         const d = dispBy[c.prepetrator_id]
         const eff_status = deriveStatus(c.status_label, {
@@ -1370,10 +1421,24 @@ autoLogin();
           hasTimelineOrDoc: tlSet.has(c.prepetrator_id),
           isCompleted: compSet.has(c.prepetrator_id),
         })
-        return { ...c, eff_unit: d?.to_unit || c.disposisi_case_position, eff_status, is_atensi: !!d?.is_atensi }
+        const created = c.created_date ? new Date(c.created_date).getTime() : null
+        const completed = compByPid[c.prepetrator_id]?.completed_at ? new Date(compByPid[c.prepetrator_id].completed_at).getTime() : null
+        const daysOpen = created ? Math.round((now - created) / DAY) : null
+        const daysToComplete = completed && created ? Math.round((completed - created) / DAY) : null
+        return { ...c, eff_unit: d?.to_unit || c.disposisi_case_position || 'Belum didisposisi', eff_status, is_atensi: !!d?.is_atensi, daysOpen, daysToComplete }
       })
+
+      // Distributions
       const byStatus = {}, byCategory = {}, byUnit = {}
-      let totalDiterima = 0, totalDidistribusi = 0, totalLidik = 0, totalSelesai = 0, totalAtensi = 0
+      let totalDiterima = 0, totalDidistribusi = 0, totalLidik = 0, totalSelesai = 0, totalAtensi = 0, totalOverdue = 0
+      const overdueCases = []
+
+      // Per-unit stats
+      const unitStats = {} // unitName -> { total, selesai, overdue, timeSum, timeCount, atensi }
+
+      // Monthly trend
+      const monthly = {} // YYYY-MM -> { received, completed }
+
       for (const c of effective) {
         const s = c.eff_status || 'Tidak diketahui'
         byStatus[s] = (byStatus[s] || 0) + 1
@@ -1382,16 +1447,63 @@ autoLogin();
         else if (s === DERIVED_STATUS.PROSES_LIDIK) totalLidik++
         else if (s === DERIVED_STATUS.SELESAI) totalSelesai++
         if (c.is_atensi) totalAtensi++
+        if (c.daysOpen && c.daysOpen > 30 && !compSet.has(c.prepetrator_id)) {
+          totalOverdue++
+          overdueCases.push({ pid: c.prepetrator_id, prepetrator_name: c.prepetrator_name || c.pengirim || '-', unit: c.eff_unit, days: c.daysOpen, perihal: c.perihal || c.summary || '' })
+        }
         const cat = c.category || 'Tidak dikategorikan'
         byCategory[cat] = (byCategory[cat] || 0) + 1
         const u = c.eff_unit || 'Belum didisposisi'
         byUnit[u] = (byUnit[u] || 0) + 1
+
+        // Per-unit accumulation
+        if (!unitStats[u]) unitStats[u] = { total: 0, selesai: 0, overdue: 0, timeSum: 0, timeCount: 0, atensi: 0 }
+        unitStats[u].total++
+        if (compSet.has(c.prepetrator_id)) unitStats[u].selesai++
+        if (c.daysOpen && c.daysOpen > 30 && !compSet.has(c.prepetrator_id)) unitStats[u].overdue++
+        if (c.daysToComplete) { unitStats[u].timeSum += c.daysToComplete; unitStats[u].timeCount++ }
+        if (c.is_atensi) unitStats[u].atensi++
+
+        // Monthly
+        if (c.created_date && typeof c.created_date === 'string') {
+          const m = c.created_date.substring(0, 7) // YYYY-MM
+          if (!monthly[m]) monthly[m] = { month: m, received: 0, completed: 0 }
+          monthly[m].received++
+          if (compSet.has(c.prepetrator_id)) monthly[m].completed++
+        }
       }
+
+      // Compute per-unit scores
+      const perUnit = Object.entries(unitStats).map(([name, s]) => {
+        const avgWaktu = s.timeCount > 0 ? Math.round(s.timeSum / s.timeCount) : null
+        const completionRate = s.total > 0 ? Math.round((s.selesai / s.total) * 100) : 0
+        // Score: completion (50%) + avg waktu bonus (30%) + overdue penalty (20%)
+        const timeBonus = avgWaktu ? Math.max(0, 30 - Math.min(30, avgWaktu)) : 0
+        const overdueScore = s.total > 0 ? Math.max(0, 20 - Math.round((s.overdue / s.total) * 100)) : 20
+        const skor = Math.min(100, Math.round(completionRate * 0.5 + timeBonus + overdueScore))
+        return { name, total: s.total, selesai: s.selesai, overdue: s.overdue, avgWaktu, atensi: s.atensi, skor }
+      }).sort((a, b) => b.skor - a.skor)
+
+      // Overall average waktu
+      let overallTimeSum = 0, overallTimeCount = 0
+      for (const s of Object.values(unitStats)) { overallTimeSum += s.timeSum; overallTimeCount += s.timeCount }
+      const avgWaktu = overallTimeCount > 0 ? Math.round(overallTimeSum / overallTimeCount) : null
+      const overallSkor = perUnit.length > 0 ? Math.round(perUnit.reduce((a, u) => a + u.skor, 0) / perUnit.length) : null
+
+      // Wassidik count
+      let wassidikCount = 0
+      for (const u of effective) {
+        if (/wassidik/i.test(u.eff_unit || '') || /wassidik/i.test(u.disposisi_case_position || '')) wassidikCount++
+      }
+
       const toArr = (o) => Object.entries(o).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)
+      const monthlyArr = Object.values(monthly).sort((a, b) => a.month.localeCompare(b.month)).slice(-12)
+
       return ok({
         total, sampled: cases.length, scope,
-        kpi: { totalDiterima, totalDidistribusi, totalLidik, totalSelesai, totalAtensi },
+        kpi: { totalDiterima, totalDidistribusi, totalLidik, totalSelesai, totalAtensi, totalOverdue, wassidik: wassidikCount, avgWaktu, skor: overallSkor },
         byStatus: toArr(byStatus), byCategory: toArr(byCategory), byUnit: toArr(byUnit),
+        perUnit, overdueCases: overdueCases.slice(0, 20), monthly: monthlyArr,
       })
     }
 
@@ -1864,7 +1976,7 @@ autoLogin();
 
     // ---------- FORCE SYNC ----------
     if (route === '/force-sync' && method === 'POST') {
-      if (!isAdminRole(me.role)) return fail('Hanya Kasubbid/Admin', 403)
+      if (!canSync(me.role)) return fail('Hanya Admin/Yanduan', 403)
       const { pid, reason } = await request.json()
       if (!pid) return fail('pid wajib')
       try {

@@ -22,7 +22,7 @@ import {
   AlertCircle, ArrowRightLeft, History, Star, QrCode, Mail, Phone, MapPin,
   Hash, Settings, Eye, EyeOff,
 } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RTooltip, PieChart, Pie, Cell, Legend, CartesianGrid } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RTooltip, PieChart, Pie, Cell, Legend, CartesianGrid, LineChart, Line } from 'recharts'
 import { parseAstinaSurat } from '@/lib/parse-astina'
 
 const APP_NAME = 'SIMONDU WEB'
@@ -140,10 +140,10 @@ function LoginPage({ onSuccess }) {
 }
 
 // ---------------- Dashboard ----------------
-function Dashboard({ user }) {
+function Dashboard({ user, onNavigate }) {
   const [anev, setAnev] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [scope, setScope] = useState('paminal')
+  const [scope, setScope] = useState('all')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -153,17 +153,25 @@ function Dashboard({ user }) {
   }, [scope])
   useEffect(() => { load() }, [load])
 
+  const isAdmin = ['superadmin', 'kabid', 'kasubbag', 'kasubbid', 'admin'].includes(user.role)
+  const isSubUnit = user.role === 'unit' || user.role === 'polres'
+
   const COLORS = useMemo(() => ['#1e40af', '#7c3aed', '#0891b2', '#059669', '#ea580c', '#dc2626', '#4338ca', '#9333ea'], [])
   if (loading || !anev) return <div className="flex items-center justify-center h-96"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div>
+
+  const navTo = (filter) => onNavigate && onNavigate('cases', filter)
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Dashboard ANEV</h2>
+          <p className="text-sm text-slate-500">
+            {isSubUnit ? `Unit: ${user.unit || '-'}` : scope === 'paminal' ? 'Cakupan: Paminal & Unit' : 'Cakupan: Seluruh Polda Jabar'}
+          </p>
         </div>
         <div className="flex items-center gap-3">
-          {user.role !== 'unit' && (
+          {!isSubUnit && (
             <div className="flex items-center gap-2 text-sm">
               <span className="text-slate-500">Cakupan:</span>
               <Select value={scope} onValueChange={setScope}>
@@ -179,32 +187,141 @@ function Dashboard({ user }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <KpiCard color="blue" icon={<FolderKanban />} label="Total Kasus" value={anev.total} subtitle={`Sampel ${anev.sampled}`} />
-        <KpiCard color="amber" icon={<Clock />} label="Diterima" value={anev.kpi.totalDiterima} />
-        <KpiCard color="blue" icon={<ArrowRightLeft />} label="Didistribusi" value={anev.kpi.totalDidistribusi} />
-        <KpiCard color="purple" icon={<AlertCircle />} label="Proses Lidik" value={anev.kpi.totalLidik} />
-        <KpiCard color="green" icon={<CheckCircle2 />} label="Selesai" value={anev.kpi.totalSelesai} />
+      {/* KPI Cards — clickable */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <KpiCard color="blue" icon={<FolderKanban />} label="Total Kasus" value={anev.total} subtitle={`${anev.sampled} sampel`} onClick={() => navTo({})} />
+        {!isSubUnit && <KpiCard color="amber" icon={<Clock />} label="Diterima" value={anev.kpi.totalDiterima} onClick={() => navTo({ status: 'Diterima' })} />}
+        <KpiCard color="blue" icon={<ArrowRightLeft />} label="Didistribusi" value={anev.kpi.totalDidistribusi} onClick={() => navTo({ status: 'Didistribusi' })} />
+        <KpiCard color="purple" icon={<AlertCircle />} label="Proses Lidik" value={anev.kpi.totalLidik} onClick={() => navTo({ status: 'Proses Lidik' })} />
+        <KpiCard color="green" icon={<CheckCircle2 />} label="Selesai" value={anev.kpi.totalSelesai} onClick={() => navTo({ status: 'Selesai' })} />
+        {anev.kpi.totalOverdue > 0 && (
+          <KpiCard color="amber" icon={<Clock />} label="Overdue >30hr" value={anev.kpi.totalOverdue} subtitle="⏰ Perlu tindakan" onClick={() => navTo({})} />
+        )}
+        {!isSubUnit && anev.kpi.wassidik > 0 && (
+          <KpiCard color="blue" icon={<Send />} label="Wassidik" value={anev.kpi.wassidik} subtitle="Dilimpah" />
+        )}
       </div>
 
-      {anev.kpi.totalAtensi > 0 && (
-        <div className="rounded-lg border-2 border-amber-300 bg-amber-50 p-4 flex items-center gap-3">
-          <Star className="h-6 w-6 text-amber-600 fill-amber-500" />
-          <div>
-            <p className="font-semibold text-amber-900">{anev.kpi.totalAtensi} kasus ATENSI</p>
-
-          </div>
-      </div>
+      {/* Summary strip */}
+      {anev.kpi.skor != null && (
+        <div className="flex items-center gap-4 flex-wrap text-sm">
+          <Badge variant="outline" className={`text-xs ${anev.kpi.skor >= 70 ? 'bg-green-50 text-green-800' : 'bg-amber-50 text-amber-800'}`}>
+            Skor Rata-rata: {anev.kpi.skor}/100
+          </Badge>
+          {anev.kpi.avgWaktu != null && (
+            <Badge variant="outline" className="text-xs bg-slate-50">{anev.kpi.avgWaktu} hari rata-rata penyelesaian</Badge>
+          )}
+          {anev.kpi.totalAtensi > 0 && (
+            <Badge className="bg-amber-100 text-amber-800 text-xs border border-amber-300">
+              <Star className="h-3 w-3 mr-1 inline" /> {anev.kpi.totalAtensi} ATENSI
+            </Badge>
+          )}
+        </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Per Unit Ranking Table — admin view only */}
+      {isAdmin && anev.perUnit && anev.perUnit.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Kinerja per Unit</CardTitle></CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left text-xs uppercase text-slate-500">
+                    <th className="p-3 pl-4 w-8">#</th>
+                    <th className="p-3">Unit</th>
+                    <th className="p-3 text-right">Total</th>
+                    <th className="p-3 text-right">Selesai</th>
+                    <th className="p-3 text-right">Overdue</th>
+                    <th className="p-3 text-right">Avg Waktu</th>
+                    <th className="p-3 text-right pr-4">Skor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {anev.perUnit.slice(0, 15).map((u, i) => (
+                    <tr key={u.name} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => navTo({ unit: u.name })}>
+                      <td className="p-3 pl-4 text-slate-400">{i + 1}</td>
+                      <td className="p-3 font-medium max-w-[300px] truncate">{shortUnit(u.name)}</td>
+                      <td className="p-3 text-right">{u.total}</td>
+                      <td className="p-3 text-right text-green-700">{u.selesai}</td>
+                      <td className="p-3 text-right">{u.overdue > 0 ? <span className="text-red-600 font-medium">{u.overdue}</span> : '0'}</td>
+                      <td className="p-3 text-right">{u.avgWaktu != null ? `${u.avgWaktu}h` : '-'}</td>
+                      <td className="p-3 text-right pr-4">
+                        <span className={`font-semibold ${u.skor >= 80 ? 'text-green-700' : u.skor >= 60 ? 'text-amber-700' : 'text-red-700'}`}>
+                          {u.skor}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Per Sub-Unit — subbid/polres view */}
+      {isSubUnit && anev.perUnit && anev.perUnit.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Per Anak Unit</CardTitle></CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left text-xs uppercase text-slate-500">
+                    <th className="p-3 pl-4">Anak Unit</th>
+                    <th className="p-3 text-right">Total</th>
+                    <th className="p-3 text-right">Selesai</th>
+                    <th className="p-3 text-right">Overdue</th>
+                    <th className="p-3 text-right pr-4">Avg Waktu</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {anev.perUnit.map((u) => (
+                    <tr key={u.name} className="border-b hover:bg-slate-50 cursor-pointer" onClick={() => navTo({ unit: u.name })}>
+                      <td className="p-3 pl-4 font-medium max-w-[300px] truncate">{shortUnit(u.name)}</td>
+                      <td className="p-3 text-right">{u.total}</td>
+                      <td className="p-3 text-right text-green-700">{u.selesai}</td>
+                      <td className="p-3 text-right">{u.overdue > 0 ? <span className="text-red-600 font-medium">{u.overdue}</span> : '0'}</td>
+                      <td className="p-3 text-right pr-4">{u.avgWaktu != null ? `${u.avgWaktu}h` : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Monthly trend */}
+      {anev.monthly && anev.monthly.length > 1 && (
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-base">Tren Bulanan</CardTitle></CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={250}>
+              <LineChart data={anev.monthly}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <YAxis />
+                <RTooltip />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Line type="monotone" dataKey="received" stroke="#1e40af" strokeWidth={2} name="Diterima" dot={false} />
+                <Line type="monotone" dataKey="completed" stroke="#059669" strokeWidth={2} name="Selesai" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Compact charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
           <CardHeader className="pb-3"><CardTitle className="text-base">Distribusi per Status</CardTitle></CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={280}>
+            <ResponsiveContainer width="100%" height={260}>
               <BarChart data={anev.byStatus.slice(0, 8)}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-15} textAnchor="end" height={70} />
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-15} textAnchor="end" height={60} />
                 <YAxis />
                 <RTooltip />
                 <Bar dataKey="value" fill="#1e40af" radius={[4, 4, 0, 0]} />
@@ -213,11 +330,11 @@ function Dashboard({ user }) {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-3"><CardTitle className="text-base">Distribusi per Kategori (Top 8)</CardTitle></CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-base">Distribusi per Kategori</CardTitle></CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={280}>
+            <ResponsiveContainer width="100%" height={260}>
               <PieChart>
-                <Pie data={anev.byCategory.slice(0, 8)} dataKey="value" nameKey="name" outerRadius={90}>
+                <Pie data={anev.byCategory.slice(0, 8)} dataKey="value" nameKey="name" outerRadius={85}>
                   {anev.byCategory.slice(0, 8).map((_, i) => (<Cell key={i} fill={COLORS[i % COLORS.length]} />))}
                 </Pie>
                 <RTooltip />
@@ -228,31 +345,33 @@ function Dashboard({ user }) {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader className="pb-3"><CardTitle className="text-base">Distribusi per Unit Penanganan</CardTitle></CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={320}>
-            <BarChart data={anev.byUnit.slice(0, 12).map(x => ({ ...x, name: shortUnit(x.name) }))} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis type="number" />
-              <YAxis dataKey="name" type="category" width={220} tick={{ fontSize: 11 }} />
-              <RTooltip />
-              <Bar dataKey="value" fill="#7c3aed" radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
+      {anev.byUnit && anev.byUnit.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-base">Distribusi per Unit</CardTitle></CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={anev.byUnit.slice(0, 12).map(x => ({ ...x, name: shortUnit(x.name) }))} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis type="number" />
+                <YAxis dataKey="name" type="category" width={200} tick={{ fontSize: 11 }} />
+                <RTooltip />
+                <Bar dataKey="value" fill="#7c3aed" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
 
-const KpiCard = memo(function KpiCard({ color, icon, label, value, subtitle }) {
+const KpiCard = memo(function KpiCard({ color, icon, label, value, subtitle, onClick }) {
   const bg = { blue: 'border-l-blue-800 bg-blue-50/40 text-blue-800',
               amber: 'border-l-amber-500 bg-amber-50/40 text-amber-700',
               purple: 'border-l-purple-600 bg-purple-50/40 text-purple-700',
               green: 'border-l-green-600 bg-green-50/40 text-green-700' }[color] || 'border-l-slate-500'
   return (
-    <Card className={`border-l-4 ${bg.split(' ')[0]}`}>
+    <Card className={`border-l-4 ${bg.split(' ')[0]} ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`} onClick={onClick}>
       <CardContent className="p-4">
         <div className="flex items-center justify-between">
           <div>
@@ -506,7 +625,7 @@ const InfoRow = memo(function InfoRow({ icon, label, value }) {
 })
 
 // ---------------- Cases List (Gajamada-style columns) ----------------
-function CasesList({ user, onOpenCase }) {
+function CasesList({ user, onOpenCase, initialFilter }) {
   const [cases, setCases] = useState([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -515,13 +634,23 @@ function CasesList({ user, onOpenCase }) {
   const [status, setStatus] = useState('')
   const [category, setCategory] = useState('')
   const [unit, setUnit] = useState('')
-  const [scope, setScope] = useState('paminal')
+  const [scope, setScope] = useState('all')
   const [sourceFilter, setSourceFilter] = useState('')
   const [astinaToken, setAstinaToken] = useState('')
   const [astinaTokenSet, setAstinaTokenSet] = useState(!!(process.env.NEXT_PUBLIC_ASTINA_COOKIE || ''))
   const [astinaCookie, setAstinaCookie] = useState('')
   const [loading, setLoading] = useState(true)
   const [reference, setReference] = useState({ units: [], statuses: [], categories: [] })
+
+  // Apply filter from dashboard navigation
+  useEffect(() => {
+    if (initialFilter) {
+      if (initialFilter.status) setStatus(initialFilter.status)
+      if (initialFilter.unit) setUnit(initialFilter.unit)
+      setPage(1)
+    }
+  }, [initialFilter])
+
   const [editOpen, setEditOpen] = useState(false)
   const [editSaving, setEditSaving] = useState(false)
   const [editForm, setEditForm] = useState({})
@@ -624,7 +753,7 @@ function CasesList({ user, onOpenCase }) {
   useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
 
   const onSearch = useCallback((e) => { e.preventDefault(); setPage(1); load() }, [load])
-  const clearFilter = useCallback(() => { setStatus(''); setCategory(''); setUnit(''); setSearch(''); setScope('paminal'); setPage(1) }, [])
+  const clearFilter = useCallback(() => { setStatus(''); setCategory(''); setUnit(''); setSearch(''); setScope('all'); setPage(1) }, [])
   const maxPage = useMemo(() => Math.ceil(total / size) || 1, [total, size])
   const handleStatusChange = useCallback((v) => { setStatus(v === '__all' ? '' : v); setPage(1) }, [])
   const handleCategoryChange = useCallback((v) => { setCategory(v === '__all' ? '' : v); setPage(1) }, [])
@@ -1534,11 +1663,21 @@ function MasterUnitPage({ user }) {
     catch (e) { toast.error(e.message) }
   }
 
+  // Group units by parent
+  const grouped = useMemo(() => {
+    const parents = units.filter((u) => u.is_kasubbid).sort((a, b) => (a.order || 99) - (b.order || 99))
+    return parents.map((p) => ({
+      ...p,
+      children: units.filter((u) => !u.is_kasubbid && u.parent === (p.parent || p.name)).sort((a, b) => (a.order || 99) - (b.order || 99)),
+    }))
+  }, [units])
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Master Unit</h2>
+          <p className="text-sm text-slate-500">{units.length} unit — {grouped.length} induk</p>
         </div>
         {isKasubbid && (
           <div className="flex gap-2">
@@ -1551,40 +1690,9 @@ function MasterUnitPage({ user }) {
       </div>
 
       {loading ? <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div> :
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {units.map((u) => (
-            <Card key={u.id} className={`${u.is_kasubbid ? 'border-2 border-blue-500 bg-blue-50/40' : ''} ${!u.active ? 'opacity-50' : ''}`}>
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <CardTitle className="text-sm leading-snug">{u.name}</CardTitle>
-                    <p className="text-[11px] text-slate-500 mt-1">
-                      {u.is_kasubbid ? 'Unit induk (Kasubbid)' : `Bawahan dari: ${shortUnit(u.parent) || '-'}`}
-                    </p>
-                  </div>
-                  {u.is_kasubbid ? (
-                    <Badge className="bg-blue-800 text-white text-[10px]">INDUK</Badge>
-                  ) : (
-                    <Badge variant="outline" className="text-[10px]">Urutan {u.order}</Badge>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent className="flex items-center justify-between pt-0">
-                <div className="flex items-center gap-2">
-                  <Badge className={u.active ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'}>
-                    {u.active ? 'Aktif' : 'Nonaktif'}
-                  </Badge>
-                  {u.source === 'gajamada' && <Badge variant="outline" className="text-[10px]">Gajamada</Badge>}
-                </div>
-                {isKasubbid && !u.is_kasubbid && (
-                  <div className="flex gap-1">
-                    <Button size="sm" variant="ghost" onClick={() => toggleActive(u)}>{u.active ? 'Nonaktifkan' : 'Aktifkan'}</Button>
-                    <Button size="sm" variant="ghost" onClick={() => openEdit(u)}>Edit</Button>
-                    <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700" onClick={() => remove(u)}>Hapus</Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+        <div className="space-y-2">
+          {grouped.map((parent) => (
+            <UnitGroup key={parent.id} parent={parent} isKasubbid={isKasubbid} onEdit={openEdit} onToggle={toggleActive} onDelete={remove} />
           ))}
         </div>
       }
@@ -1614,6 +1722,59 @@ function MasterUnitPage({ user }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+function UnitGroup({ parent, isKasubbid, onEdit, onToggle, onDelete }) {
+  const [open, setOpen] = useState(true)
+  const childCount = parent.children?.length || 0
+
+  return (
+    <div className="border rounded-lg overflow-hidden">
+      {/* Parent header */}
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-3 px-4 py-3 bg-blue-50 hover:bg-blue-100 transition-colors text-left"
+      >
+        {open ? <ChevronDown className="h-4 w-4 text-blue-600 shrink-0" /> : <ChevronRight className="h-4 w-4 text-blue-600 shrink-0" />}
+        <Building2 className="h-4 w-4 text-blue-800 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold text-blue-900 truncate">{parent.name}</div>
+          <div className="text-[11px] text-blue-600">{childCount} sub-unit</div>
+        </div>
+        <Badge className="bg-blue-800 text-white text-[10px] shrink-0">INDUK</Badge>
+      </button>
+
+      {/* Children list */}
+      {open && (
+        <div className="divide-y divide-slate-100">
+          {childCount === 0 ? (
+            <div className="px-4 py-6 text-center text-sm text-slate-400">Belum ada sub-unit</div>
+          ) : (
+            parent.children.map((child) => (
+              <div key={child.id} className={`flex items-center gap-3 px-4 py-2.5 pl-10 hover:bg-slate-50 transition-colors ${!child.active ? 'opacity-50' : ''}`}>
+                <div className="flex-1 min-w-0 flex items-center gap-2">
+                  <span className="text-sm truncate">{child.name}</span>
+                  <Badge className={`text-[10px] shrink-0 ${child.active ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'}`}>
+                    {child.active ? 'Aktif' : 'Nonaktif'}
+                  </Badge>
+                  {child.source === 'gajamada' && <Badge variant="outline" className="text-[10px] shrink-0">Gajamada</Badge>}
+                </div>
+                {isKasubbid && (
+                  <div className="flex gap-1 shrink-0">
+                    <Button size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={() => onToggle(child)}>
+                      {child.active ? 'Nonaktifkan' : 'Aktifkan'}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={() => onEdit(child)}>Edit</Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs px-2 text-red-600 hover:text-red-700" onClick={() => onDelete(child)}>Hapus</Button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -2050,10 +2211,11 @@ function SettingsPage({ connStatus }) {
 
   const toggleShow = (k) => setShowPass((p) => ({ ...p, [k]: !p[k] }))
   const PassInput = ({ value, onChange, placeholder, field }) => (
-    <div className="relative">
-      <Input type={showPass[field] ? 'text' : 'password'} value={value} onChange={onChange} placeholder={placeholder} className="h-9 text-sm pr-8" />
-      <button type="button" onClick={() => toggleShow(field)} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-        {showPass[field] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+    <div className="flex items-center gap-1">
+      <Input type={showPass[field] ? 'text' : 'password'} value={value} onChange={onChange} placeholder={placeholder} className="h-9 text-sm flex-1" />
+      <button type="button" onMouseDown={(e) => { e.preventDefault(); toggleShow(field) }}
+        className="shrink-0 p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600">
+        {showPass[field] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
       </button>
     </div>
   )
@@ -2166,7 +2328,7 @@ function SettingsPage({ connStatus }) {
             </div>
             <div>
               <Label className="text-xs">Password ASTINA</Label>
-              <Input type="password" value={asPass} onChange={(e) => setAsPass(e.target.value)} placeholder="••••••••" className="h-9 text-sm" />
+              <PassInput value={asPass} onChange={(e) => setAsPass(e.target.value)} placeholder="••••••••" field="as" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -2176,7 +2338,7 @@ function SettingsPage({ connStatus }) {
             </div>
             <div>
               <Label className="text-xs">Password Zimbra</Label>
-              <Input type="password" value={zimPass} onChange={(e) => setZimPass(e.target.value)} placeholder="••••••••" className="h-9 text-sm" />
+              <PassInput value={zimPass} onChange={(e) => setZimPass(e.target.value)} placeholder="••••••••" field="zim" />
             </div>
           </div>
           <div className="flex gap-2">
@@ -2197,12 +2359,18 @@ function SettingsPage({ connStatus }) {
 function AppShell({ user, onLogout }) {
   const [tab, setTab] = useState('dashboard')
   const [selectedCase, setSelectedCase] = useState(null)
+  const [caseFilter, setCaseFilter] = useState(null)
   const isKasubbid = ['superadmin', 'kabid', 'kasubbag', 'kasubbid', 'admin'].includes(user.role)
   const isSuperadmin = user.role === 'superadmin'
   const isYanduan = user.role === 'yanduan'
   const [disposisiCount, setDisposisiCount] = useState(0)
   const notifiedRef = useRef(false)
   const [connStatus, setConnStatus] = useState({ astina: false, gajamada: false, ai: false })
+
+  const handleNavigate = (targetTab, filter) => {
+    setCaseFilter(filter || null)
+    setTab(targetTab || 'cases')
+  }
 
   const refreshDisposisiCount = async () => {
     if (!isKasubbid && !isYanduan) return
@@ -2310,8 +2478,8 @@ function AppShell({ user, onLogout }) {
 
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-[1600px] mx-auto p-6">
-          {tab === 'dashboard' && <Dashboard user={user} />}
-          {tab === 'cases' && <CasesList user={user} onOpenCase={setSelectedCase} />}
+          {tab === 'dashboard' && <Dashboard user={user} onNavigate={handleNavigate} />}
+          {tab === 'cases' && <CasesList user={user} onOpenCase={setSelectedCase} initialFilter={caseFilter} />}
           {tab === 'disposisi' && (isKasubbid || isYanduan) && <DisposisiPage user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
           {tab === 'units' && isKasubbid && <MasterUnitPage user={user} />}
           {tab === 'satker' && isKasubbid && <SatkerSatwilPage user={user} />}
