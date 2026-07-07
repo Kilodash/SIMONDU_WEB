@@ -226,6 +226,8 @@ CREATE TABLE IF NOT EXISTS local_cases (
 );
 CREATE INDEX IF NOT EXISTS idx_lc_source ON local_cases(source, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_lc_status ON local_cases(status);
+CREATE INDEX IF NOT EXISTS idx_lc_case_type ON local_cases(case_type);
+CREATE INDEX IF NOT EXISTS idx_lc_source_type ON local_cases(source, case_type);
 ALTER TABLE local_cases ENABLE ROW LEVEL SECURITY;
 
 -- Unit mapping (ASTINA/Surat-menyurat -> SIMONDU)

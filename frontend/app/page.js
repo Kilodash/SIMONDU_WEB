@@ -24,6 +24,7 @@ import {
   Bell, Hash, Ban, Scale, Settings, Brain, Eye, EyeOff,
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RTooltip, PieChart, Pie, Cell, Legend, CartesianGrid } from 'recharts'
+import { parseAstinaSurat } from '@/lib/parse-astina'
 
 const APP_NAME = 'SIMONDU WEB'
 const APP_SUBTITLE = 'Sistem Monitoring Pengaduan — Polda Jabar'
@@ -854,8 +855,8 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                   </Button>
                 </DialogFooter>
               </DialogContent>
-            </Dialog>
-          </div>
+      </Dialog>
+    </div>
         )}
       </SheetContent>
     </Sheet>
@@ -892,39 +893,46 @@ function CasesList({ user, onOpenCase }) {
   const [loading, setLoading] = useState(true)
   const [reference, setReference] = useState({ units: [], statuses: [], categories: [] })
   const [editOpen, setEditOpen] = useState(false)
+  const [editSaving, setEditSaving] = useState(false)
   const [editForm, setEditForm] = useState({})
-  const [aiLoading, setAiLoading] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createSaving, setCreateSaving] = useState(false)
+  const [createForm, setCreateForm] = useState({})
+
+  const resetCreateForm = () => {
+    setCreateForm({
+      perihal: '', pengirim: '', nomor_surat: '', tgl_surat: '',
+      prepetrator_name: '', summary: '', category: '',
+      case_type: user.role === 'unit' ? 'laporan_informasi' : 'pengaduan',
+    })
+  }
+
+  const openCreateLocal = () => { resetCreateForm(); setCreateOpen(true) }
+  const saveCreateLocal = async () => {
+    const { perihal, pengirim } = createForm
+    if (!perihal && !pengirim) { toast.error('Perihal atau Pengirim wajib diisi'); return }
+    setCreateSaving(true)
+    try {
+      await api('/local-cases', { method: 'POST', body: JSON.stringify(createForm) })
+      toast.success('Data tersimpan')
+      setCreateOpen(false)
+      load()
+    } catch (e) { toast.error('Gagal menyimpan: ' + e.message) }
+    finally { setCreateSaving(false) }
+  }
 
   const openEditLocal = (c) => { setEditForm({ ...c }); setEditOpen(true) }
   const saveEditLocal = async () => {
     const { prepator_name, pengirim, perihal, nomor_surat, tgl_surat, category, summary, case_type } = editForm
     const patch = { prepetrator_name: prepator_name, pengirim, perihal, nomor_surat, tgl_surat, category, summary, case_type }
+    setEditSaving(true)
     try {
       await api(`/local-cases/${encodeURIComponent(editForm.id)}`, { method: 'PUT', body: JSON.stringify(patch) })
       toast.success('Data diperbarui')
       setEditOpen(false)
       load()
     } catch (e) { toast.error(e.message) }
-  }
-  const runAiEnrich = async () => {
-    const pid = editForm.prepator_id || editForm.prepetrator_id || editForm.id
-    if (!pid) return toast.error('ID surat tidak ditemukan')
-    setAiLoading(true)
-    try {
-      const r = await api('/astina-enrich', { method: 'POST', body: JSON.stringify({ surat_id: pid }) })
-      if (r.ok) {
-        const d = r.data
-        if (!d.prepetrator_name && !d.summary && !d.pengirim && !d.perihal) {
-          toast.warning('AI tidak menemukan data. Surat mungkin tidak punya teks/cukup informasi.')
-        } else {
-          setEditForm((prev) => ({ ...prev, prepator_name: d.prepetrator_name || d.prepator_name || prev.prepetrator_name || prev.prepator_name, pengirim: d.pengirim || prev.pengirim, perihal: d.perihal || prev.perihal, nomor_surat: d.nomor_surat || prev.nomor_surat, tgl_surat: d.tgl_surat || prev.tgl_surat, summary: d.summary || prev.summary, category: d.category || prev.category }))
-          toast.success('AI enrich selesai')
-        }
-      } else {
-        toast.error(r.message || 'AI enrich gagal')
-      }
-    } catch (e) { toast.error('AI enrich gagal: ' + e.message) }
-    finally { setAiLoading(false) }
+    finally { setEditSaving(false) }
   }
 
   const load = useCallback(async () => {
@@ -935,14 +943,16 @@ function CasesList({ user, onOpenCase }) {
         if (sourceFilter === 'non_dumas') qs.set('case_type', 'non_dumas')
         else qs.set('source', sourceFilter)
         if (search) qs.set('search', search)
+        qs.set('page', String(page))
+        qs.set('size', String(size))
         const r = await api(`/local-cases?${qs}`)
         const formatted = (r.data || []).map(c => ({
-          ...c, id: c.id, prepetrator_id: c.prepator_id, created_date: c.created_at, updated_at: c.updated_at,
+          ...c, id: c.id, prepetrator_id: c.prepator_id || c.prepetrator_id, created_date: c.created_at, updated_at: c.updated_at,
           status_label: c.status, category: c.category || 'NON-DUMAS', pengirim: c.pengirim, reporter_nik: c.reporter_nik,
-          phone_no: c.phone_no, email: c.email, prepetrator_name: c.prepator_name, summary: c.perihal, content: c.content,
+          phone_no: c.phone_no, email: c.email, prepetrator_name: c.prepator_name || c.prepetrator_name, summary: c.perihal, content: c.content,
           source_alias: c.source_alias, disposisi_case_position: '-', '5w1h_where': '', '5w1h_when': c.tgl_surat, derived_status: c.status,
         }))
-        setCases(formatted); setTotal(formatted.length)
+        setCases(formatted); setTotal(r.total || formatted.length)
       } catch(e) { toast.error(e.message) }
       finally { setLoading(false) }
       return
@@ -984,12 +994,12 @@ function CasesList({ user, onOpenCase }) {
   useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
 
   const onSearch = useCallback((e) => { e.preventDefault(); setPage(1); load() }, [load])
-  const clearFilter = useCallback(() => { setStatus(''); setCategory(''); setUnit(''); setSearch(''); setPage(1) }, [])
+  const clearFilter = useCallback(() => { setStatus(''); setCategory(''); setUnit(''); setSearch(''); setScope('paminal'); setPage(1) }, [])
   const maxPage = useMemo(() => Math.ceil(total / size) || 1, [total, size])
   const handleStatusChange = useCallback((v) => { setStatus(v === '__all' ? '' : v); setPage(1) }, [])
   const handleCategoryChange = useCallback((v) => { setCategory(v === '__all' ? '' : v); setPage(1) }, [])
   const handleUnitChange = useCallback((v) => { setUnit(v === '__all' ? '' : v); setPage(1) }, [])
-  const handleScopeChange = useCallback((v) => { setScope(v ? 'all' : 'paminal'); setPage(1) }, [])
+  const handleScopeChange = useCallback((v) => { setScope(v); setPage(1) }, [])
 
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 96px)' }}>
@@ -1009,6 +1019,11 @@ function CasesList({ user, onOpenCase }) {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="outline" className="bg-blue-50 text-blue-900 border-blue-200">Total: {total.toLocaleString('id-ID')}</Badge>
+          {(sourceFilter === 'manual' || sourceFilter === 'laporan_informasi') && (
+            <Button size="sm" onClick={openCreateLocal} className="bg-blue-800 hover:bg-blue-900">
+              <FileText className="h-4 w-4 mr-2" /> Tambah
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={load}><RefreshCw className="h-4 w-4 mr-2" /> Refresh</Button>
         </div>
       </div>
@@ -1087,7 +1102,11 @@ function CasesList({ user, onOpenCase }) {
                 <TableBody>
                   {sourceFilter && sourceFilter !== 'astina' ? (
                     cases.length === 0 ? (
-                      <TableRow><TableCell colSpan={6} className="text-center py-12 text-slate-500">Tidak ada data.</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={6} className="text-center py-12 text-slate-500">
+                        {sourceFilter === 'manual' ? 'Belum ada data. Klik "Tambah" untuk input surat manual.' :
+                         sourceFilter === 'laporan_informasi' ? 'Belum ada laporan informasi. Klik "Tambah" untuk input.' :
+                         sourceFilter === 'non_dumas' ? 'Belum ada surat non-dumas.' : 'Tidak ada data.'}
+                      </TableCell></TableRow>
                     ) : (
                       cases.map((c, idx) => (
                         <TableRow key={`${c._source || c.source || 'other'}-${c.prepator_id || c.prepetrator_id || idx}`} className="cursor-pointer hover:bg-blue-50/40 align-top" onClick={() => onOpenCase(c.prepator_id || c.prepetrator_id)}>
@@ -1198,7 +1217,48 @@ function CasesList({ user, onOpenCase }) {
             </Select></div>
             <div><Label>Rangkuman</Label><Textarea value={editForm.summary || ''} onChange={(e) => setEditForm({ ...editForm, summary: e.target.value })} className="min-h-[80px]" /></div>
           </div>
-          <DialogFooter><Button variant="ghost" onClick={() => setEditOpen(false)}>Batal</Button><Button variant="outline" size="sm" onClick={runAiEnrich} disabled={aiLoading}>{aiLoading ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> AI...</> : 'AI Isi'}</Button><Button onClick={saveEditLocal}>Simpan</Button></DialogFooter>
+          <DialogFooter><Button variant="ghost" onClick={() => setEditOpen(false)}>Batal</Button><Button onClick={saveEditLocal} disabled={editSaving}>{editSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Simpan</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Tambah Data Surat</DialogTitle><DialogDescription>{
+            user.role === 'unit' ? 'Unit hanya bisa input Laporan Informasi.' : 'Isi data surat manual.'
+          }</DialogDescription></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Jenis</Label>
+              <div className="grid grid-cols-3 gap-2 mt-1">
+                {user.role !== 'unit' && (
+                  <button type="button" onClick={() => setCreateForm({ ...createForm, case_type: 'pengaduan' })}
+                    className={`px-3 py-1.5 rounded-md border text-xs font-medium ${createForm.case_type === 'pengaduan' ? 'bg-blue-800 text-white border-blue-900' : 'bg-white text-slate-700 border-slate-300'}`}>Pengaduan</button>
+                )}
+                <button type="button" onClick={() => setCreateForm({ ...createForm, case_type: 'laporan_informasi' })}
+                  className={`px-3 py-1.5 rounded-md border text-xs font-medium ${createForm.case_type === 'laporan_informasi' ? 'bg-sky-800 text-white border-sky-900' : 'bg-white text-slate-700 border-slate-300'}`}>Laporan Informasi</button>
+                {user.role !== 'unit' && (
+                  <button type="button" onClick={() => setCreateForm({ ...createForm, case_type: 'non_dumas' })}
+                    className={`px-3 py-1.5 rounded-md border text-xs font-medium ${createForm.case_type === 'non_dumas' ? 'bg-slate-800 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300'}`}>Non-Dumas</button>
+                )}
+              </div>
+            </div>
+            <div><Label>Perihal *</Label><Input value={createForm.perihal || ''} onChange={(e) => setCreateForm({ ...createForm, perihal: e.target.value })} placeholder="Perihal surat" /></div>
+            <div><Label>Pelapor/Pengirim *</Label><Input value={createForm.pengirim || ''} onChange={(e) => setCreateForm({ ...createForm, pengirim: e.target.value })} placeholder="Nama pengirim" /></div>
+            <div><Label>Terlapor</Label><Input value={createForm.prepator_name || createForm.prepetrator_name || ''} onChange={(e) => setCreateForm({ ...createForm, prepetrator_name: e.target.value })} placeholder="Nama terduga" /></div>
+            <div><Label>Nomor Surat</Label><Input value={createForm.nomor_surat || ''} onChange={(e) => setCreateForm({ ...createForm, nomor_surat: e.target.value })} /></div>
+            <div><Label>Tgl Surat</Label><Input value={createForm.tgl_surat || ''} onChange={(e) => setCreateForm({ ...createForm, tgl_surat: e.target.value })} placeholder="YYYY-MM-DD" /></div>
+            <div><Label>Kategori</Label><Select value={createForm.category || ''} onValueChange={(v) => setCreateForm({ ...createForm, category: v })}>
+              <SelectTrigger><SelectValue placeholder="Pilih kategori" /></SelectTrigger>
+              <SelectContent>{reference.categories?.map((cat) => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}</SelectContent>
+            </Select></div>
+            <div><Label>Rangkuman</Label><Textarea value={createForm.summary || ''} onChange={(e) => setCreateForm({ ...createForm, summary: e.target.value })} className="min-h-[80px]" /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCreateOpen(false)}>Batal</Button>
+            <Button onClick={saveCreateLocal} disabled={createSaving}>
+              {createSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Simpan
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -1225,6 +1285,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   const [tasks, setTasks] = useState([]) // {label, checked}
   const [caseType, setCaseType] = useState('dumas')
   const [submitting, setSubmitting] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
   // Extra details for the current case
   const [atts, setAtts] = useState([])
   const [detail, setDetail] = useState(null)
@@ -1233,6 +1294,8 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   const [activeTab, setActiveTab] = useState('info')
   const [pdfIdx, setPdfIdx] = useState(0)
   const [kronologiMode, setKronologiMode] = useState('singkat')
+  const [detailEdit, setDetailEdit] = useState(false)
+  const [detailForm, setDetailForm] = useState({})
 
   const resetForm = (ref, item) => {
     setToUnit(''); setNote(''); setIsAtensi(false)
@@ -1312,7 +1375,11 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
       const taskPrefix = checkedTasks.length ? `TASKS: ${checkedTasks.join(', ')}\n` : ''
       await api(`/dispositions/${encodeURIComponent(editMode.id)}`, { method: 'PUT', body: JSON.stringify({ to_unit: toUnit, note: taskPrefix + note, is_atensi: isAtensi }) })
       // Update case_type di local_cases
-      if (editQueueItem?.localCaseId) api(`/local-cases/${encodeURIComponent(editQueueItem.localCaseId)}`, { method: 'PUT', body: JSON.stringify({ case_type: caseType }) }).catch(() => {})
+      if (editQueueItem?.localCaseId) {
+        try {
+          await api(`/local-cases/${encodeURIComponent(editQueueItem.localCaseId)}`, { method: 'PUT', body: JSON.stringify({ case_type: caseType }) })
+        } catch (e) { console.error('Gagal update case_type:', e.message) }
+      }
       toast.success('Disposisi diperbarui')
       setEditMode(null); setEditQueueItem(null); setTab('riwayat'); loadRiwayat(); onQueueChange?.()
     } catch (e) { toast.error(e.message) }
@@ -1334,8 +1401,6 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
         if (isAstina) {
           const r = await api(`/astina/surat/${encodeURIComponent(pid)}/riwayat`).catch(() => ({ riwayat_disposisi: [] }))
           if (!cancelled) setTimeline((r.riwayat_disposisi || current._riwayat_disposisi || []).map((e) => ({ ...e, _source: 'astina' })))
-          // AI enrich: ekstrak PDF untuk isi data surat
-          api(`/astina-enrich`, { method: 'POST', body: JSON.stringify({ surat_id: pid }) }).catch(() => {})
         } else {
           const [d, a, t] = await Promise.all([
             api(`/cases/${encodeURIComponent(pid)}`).catch(() => ({ data: null })),
@@ -1394,6 +1459,10 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   const submitAndNext = async () => {
     if (!current) return
     if (!toUnit) return toast.error('Pilih unit tujuan')
+    setConfirmOpen(true)
+  }
+  const confirmedSubmit = async () => {
+    setConfirmOpen(false)
     setSubmitting(true)
     try {
       await api('/disposisi-bulk', { method: 'POST', body: JSON.stringify({
@@ -1401,7 +1470,6 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
         tasks: tasks.filter((t) => t.checked && t.label),
       }) })
       toast.success(`Disposisi ke ${shortUnit(toUnit)} berhasil`)
-      // Remove from local queue, advance
       const newQueue = queue.filter((_, i) => i !== idx)
       setQueue(newQueue)
       setIdx(Math.min(idx, newQueue.length - 1))
@@ -1458,13 +1526,23 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-2xl font-bold text-slate-900">Antrian Disposisi</h2>
+          <h2 className="text-2xl font-bold text-slate-900">Disposisi</h2>
           <Tabs value={tab} onValueChange={(v) => { setTab(v); if (v === 'riwayat') loadRiwayat() }}>
             <TabsList><TabsTrigger value="antrian">Antrian</TabsTrigger><TabsTrigger value="riwayat">Riwayat</TabsTrigger></TabsList>
           </Tabs>
         </div>
         <Button variant="outline" size="sm" onClick={loadQueue}><RefreshCw className="h-4 w-4 mr-2" /> Refresh</Button>
       </div>
+
+      {astinaError && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
+          <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-amber-800">ASTINA tidak tersedia</p>
+            <p className="text-xs text-amber-700 mt-0.5">{astinaError === 'OTP_REQUIRED' ? 'Memerlukan OTP. Silakan login ulang di halaman ASTINA.' : astinaError}</p>
+          </div>
+        </div>
+      )}
 
       {(!editMode && queue.length === 0 && tab === 'antrian') ? (
         <Card><CardContent className="py-16 text-center" data-testid="disposisi-empty">
@@ -1502,7 +1580,47 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
               <div className="flex items-center gap-2 mb-2 pb-1 border-b border-slate-200">
                 <FileText className="h-4 w-4 text-blue-800" />
                 <h3 className="text-sm font-semibold text-slate-800">Info Surat</h3>
+                {current?._source === 'astina' && !detailEdit && (
+                  <Button variant="ghost" size="sm" className="ml-auto h-6 text-xs" onClick={() => {
+                    const parsed = parseAstinaSurat(current._astina_raw)
+                    setDetailForm({
+                      prepetrator_name: parsed.prepetrator_name || (current.prepetrator_name && current.prepetrator_name !== '-' ? current.prepetrator_name : ''),
+                      pengirim: parsed.pengirim || current.pengirim || '',
+                      perihal: parsed.perihal || current.perihal || '',
+                      nomor_surat: parsed.nomor_surat || current.nomor_surat || '',
+                      summary: parsed.summary || '',
+                      category: current.category !== 'NON-DUMAS' ? current.category : (parsed.category || 'NON-DUMAS'),
+                    })
+                    setDetailEdit(true)
+                  }}>Edit Data</Button>
+                )}
               </div>
+              {detailEdit ? (
+                <div className="space-y-3">
+                  <div><Label className="text-xs">Terlapor</Label><Input value={detailForm.prepetrator_name || ''} onChange={(e) => setDetailForm({ ...detailForm, prepetrator_name: e.target.value })} className="h-8 text-sm" /></div>
+                  <div><Label className="text-xs">Pengirim</Label><Input value={detailForm.pengirim || ''} onChange={(e) => setDetailForm({ ...detailForm, pengirim: e.target.value })} className="h-8 text-sm" /></div>
+                  <div><Label className="text-xs">Perihal</Label><Input value={detailForm.perihal || ''} onChange={(e) => setDetailForm({ ...detailForm, perihal: e.target.value })} className="h-8 text-sm" /></div>
+                  <div><Label className="text-xs">Nomor Surat</Label><Input value={detailForm.nomor_surat || ''} onChange={(e) => setDetailForm({ ...detailForm, nomor_surat: e.target.value })} className="h-8 text-sm" /></div>
+                  <div><Label className="text-xs">Rangkuman</Label><Textarea value={detailForm.summary || ''} onChange={(e) => setDetailForm({ ...detailForm, summary: e.target.value })} rows={3} className="text-sm" /></div>
+                  <div><Label className="text-xs">Kategori</Label><Select value={detailForm.category || 'NON-DUMAS'} onValueChange={(v) => setDetailForm({ ...detailForm, category: v })}>
+                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectContent>{reference?.categories?.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                  </Select></div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setDetailEdit(false)} className="flex-1">Batal</Button>
+                    <Button size="sm" onClick={async () => {
+                      const pid = current.prepetrator_id
+                      if (!pid) return
+                      try {
+                        await api('/local-cases', { method: 'POST', body: JSON.stringify({ source: 'astina', prepetrator_id: pid, prepetrator_name: detailForm.prepetrator_name, pengirim: detailForm.pengirim, perihal: detailForm.perihal, nomor_surat: detailForm.nomor_surat, summary: detailForm.summary, category: detailForm.category }) })
+                        toast.success('Data tersimpan')
+                        setDetailEdit(false)
+                      } catch (e) { toast.error('Gagal menyimpan: ' + e.message) }
+                    }} className="flex-1">Simpan</Button>
+                  </div>
+                </div>
+              ) : (
+              <>
               <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                 <InfoRow icon={<Tag className="h-3.5 w-3.5" />} label="Kategori" value={current?.category} />
                 <InfoRow icon={<Calendar className="h-3.5 w-3.5" />} label="Diterima" value={fmtDate(current?.created_date || current?.tgl_surat)} />
@@ -1525,6 +1643,8 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
                 <div className="mt-2 rounded bg-amber-50 border border-amber-200 px-2 py-1.5 text-xs text-amber-900 italic">
                   Catatan sumber: {Array.isArray(current.note) ? current.note.join(' · ') : current.note}
                 </div>
+              )}
+              </>
               )}
             </section>
 
@@ -1724,6 +1844,19 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
       )}
       </>
       )}
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Konfirmasi Disposisi</DialogTitle><DialogDescription>
+            Disposisi ke unit <strong>{shortUnit(toUnit)}</strong>{isAtensi ? ' (ATENSI)' : ''}?
+          </DialogDescription></DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setConfirmOpen(false)}>Batal</Button>
+            <Button onClick={confirmedSubmit} className="bg-blue-800 hover:bg-blue-900">
+              Ya, Disposisi
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -2539,7 +2672,7 @@ function AppShell({ user, onLogout }) {
   const menu = [
     { id: 'dashboard', label: 'Dashboard ANEV', icon: LayoutDashboard },
     { id: 'cases', label: 'Daftar Surat', icon: FolderKanban },
-    ...(isKasubbid ? [{ id: 'disposisi', label: 'Antrian Disposisi', icon: ArrowRightLeft, badge: disposisiCount }] : []),
+    ...(isKasubbid ? [{ id: 'disposisi', label: 'Disposisi', icon: ArrowRightLeft, badge: disposisiCount }] : []),
     ...(isKasubbid ? [{ id: 'units', label: 'Master Unit', icon: Building2 }] : []),
     ...(isKasubbid ? [{ id: 'satker', label: 'Satker/Satwil', icon: MapPin }] : []),
     ...(isKasubbid ? [{ id: 'register', label: 'Register Dokumen', icon: FileText }] : []),

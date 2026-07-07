@@ -6,7 +6,7 @@ const BASE_URL = process.env.GAJAMADA_BASE_URL || 'https://gajamada-propam.polri
 const APP_ID = process.env.GAJAMADA_APP_ID || '1769155096865'
 const CONNECTION_ID = process.env.GAJAMADA_CONNECTION_ID || '245b8fd7c4a763019d5172fad5ec0086'
 const DATABASE = process.env.GAJAMADA_DATABASE || 'divpropam'
-const UPDATE_GATEWAY_ID = process.env.GAJAMADA_UPDATE_GATEWAY_ID || '20270a4ffc0bc262b68aa142418d9b42'
+const WIDGET_AKSI_GATEWAY_ID = process.env.GAJAMADA_UPDATE_GATEWAY_ID || 'aa6159ec4d7847e8282943f7dfe87c29'
 
 // Per-user sessions: Map<username, {cookieString, user, loggedInAt}>
 const _sessions = new Map()
@@ -478,12 +478,12 @@ export async function getTimeline(username = null, prepetratorId) {
   return rows.map((row) => Object.fromEntries(header.map((k, i) => [k, row[i]])))
 }
 
-export async function pushUpdate(username = null, caseBody) {
+export async function pushUpdate(username = null, params) {
   const payload = {
     client: 'Propam Polri',
-    gatewayId: UPDATE_GATEWAY_ID,
-    params: {},
-    body: caseBody,
+    gatewayId: WIDGET_AKSI_GATEWAY_ID,
+    params,
+    body: {},
   }
   const { status, body } = await apiCall(username, '/api/v1/apps/api/gateway/execute', {
     method: 'POST',
