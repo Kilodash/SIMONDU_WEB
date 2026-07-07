@@ -492,64 +492,6 @@ export async function pushUpdate(username = null, params) {
   return { status, body }
 }
 
-export async function uploadFile(username = null, buffer, filename, mimeType) {
-  await ensureSession(username)
-  const sess = _getSession(username)
-  const qs = new URLSearchParams({
-    folder: 'agent',
-    workspaceId: '',
-    dashboardId: APP_ID,
-    createdBy: sess?.user?.id || '',
-    extractFile: 'false',
-  })
-  const form = new FormData()
-  const blob = new Blob([buffer], { type: mimeType || 'application/octet-stream' })
-  form.append('file', blob, filename)
-  form.append('tags', 'assets')
-  const res = await fetch(`${BASE_URL}/api/v1/apps/upload/upload-file?${qs.toString()}`, {
-    method: 'POST',
-    headers: { Cookie: sess?.cookieString || '' },
-    body: form,
-  })
-  if (res.status === 401 || res.status === 403) {
-    await doLogin(username)
-    return uploadFile(username, buffer, filename, mimeType)
-  }
-  const body = await res.json().catch(() => null)
-  if (!res.ok || !body?.data?.path) {
-    throw new Error('Gajamada upload gagal: ' + (body?.message || res.status))
-  }
-  return body.data
-}
-
-const ATTACH_GATEWAY_ID = process.env.GAJAMADA_ATTACH_GATEWAY_ID || '314b80f7ce408ee9911ac3d4723ba0f9'
-export async function attachToReport(username = null, reportId, attachments) {
-  const sess = _getSession(username)
-  const payload = {
-    client: 'Propam Polri',
-    gatewayId: ATTACH_GATEWAY_ID,
-    params: {},
-    body: { report_id: reportId, attachment: attachments },
-    headers: {},
-    additionalPath: '',
-    additionalParams: {},
-    additionalFileParams: {},
-    tags: ['Propam Polri'],
-    createdBy: sess?.user?.id || '',
-    startDate: '',
-    endDate: '',
-    dashboardId: APP_ID,
-    sessionId: '',
-    logging: false,
-    appendedLog: false,
-  }
-  const { status, body } = await apiCall(username, '/api/v1/apps/api/gateway/execute', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-  return { status, body }
-}
-
 export async function downloadAttachment(username = null, url) {
   await ensureSession(username)
   const sess = _getSession(username)

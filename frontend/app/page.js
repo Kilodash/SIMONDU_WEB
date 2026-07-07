@@ -18,7 +18,7 @@ import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import {
   Shield, LayoutDashboard, FolderKanban, Send, ClipboardList, LogOut, Search,
-  Loader2, FileText, Upload, RefreshCw, Users, ChevronLeft, ChevronRight, Download, Paperclip,
+  Loader2, FileText, RefreshCw, ChevronLeft, ChevronRight, Download, Paperclip,
   Building2, User, Calendar, Tag, CheckCircle2, XCircle, Clock,
   AlertCircle, ArrowRightLeft, History, Star, QrCode, Mail, Phone, MapPin,
   Bell, Hash, Ban, Scale, Settings, Brain, Eye, EyeOff,
@@ -40,13 +40,6 @@ async function api(path, options = {}) {
   if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`)
   return data
 }
-async function apiUpload(path, formData) {
-  const res = await fetch(`/api${path}`, { method: 'POST', body: formData, credentials: 'include' })
-  const data = await res.json().catch(() => ({ ok: false, error: 'Bad response' }))
-  if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`)
-  return data
-}
-
 // ---------------- Helpers ----------------
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
 const monthRoman = (d) => ROMAN[(d || new Date()).getMonth()]
@@ -271,14 +264,12 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const [data, setData] = useState(null)
   const [atts, setAtts] = useState([])
   const [loading, setLoading] = useState(true)
-  const [uploading, setUploading] = useState(null) // holds document_type currently uploading
   const [completing, setCompleting] = useState(false)
   const [showFullChronology, setShowFullChronology] = useState(false)
   const [mergedTimeline, setMergedTimeline] = useState([])
-  const [reference, setReference] = useState({ followup_doc_types: [], stage_labels: {}, hasil_lidik_options: [], settlement_options: [], satker_satwil: [] })
-  const [notingItem, setNotingItem] = useState(null) // document_type currently editing "tidak berlaku" note
+  const [reference, setReference] = useState({ hasil_lidik_options: [], settlement_options: [], satker_satwil: [] })
+  const [notingItem, setNotingItem] = useState(null)
   const [noteDraft, setNoteDraft] = useState('')
-  const [generatingNum, setGeneratingNum] = useState(null)
   const [perdamaianOpen, setPerdamaianOpen] = useState(false)
   const [perdamaianChecks, setPerdamaianChecks] = useState({
     material1: false, material2: false, material3: false, material4: false,
@@ -287,7 +278,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const [perdamaianTab, setPerdamaianTab] = useState('sebelum')
   const [perdamaianSebelum, setPerdamaianSebelum] = useState({ pencabutan: false, klarifikasi: false, ba_introgasi: false })
   const [perdamaianSetelah, setPerdamaianSetelah] = useState({ permohonan_gelar: false, rekomendasi_gelar: false, surat_henti: false, buku_register: false, surat_ankum: false })
-  const [perdamaianUploading, setPerdamaianUploading] = useState(false)
   const allPerdamaianChecked = Object.values(perdamaianChecks).every(Boolean) && (perdamaianTab === 'sebelum' ? Object.values(perdamaianSebelum).every(Boolean) : Object.values(perdamaianSetelah).every(Boolean))
 
   const load = async () => {
@@ -305,19 +295,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   useEffect(() => { if (pid) load() }, [pid])
   useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
 
-  const doUpload = async (e, documentType = 'lainnya') => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploading(documentType)
-    try {
-      const fd = new FormData(); fd.append('file', file); fd.append('description', file.name); fd.append('document_type', documentType)
-      await apiUpload(`/cases/${encodeURIComponent(pid)}/documents`, fd)
-      toast.success('Dokumen diunggah ke SIMONDU & Gajamada')
-      e.target.value = ''
-      await load(); onChanged?.()
-    } catch (e) { toast.error(e.message) }
-    finally { setUploading(null) }
-  }
   const doSetChecklistStatus = async (documentType, status, note) => {
     try {
       await api(`/cases/${encodeURIComponent(pid)}/checklist/${encodeURIComponent(documentType)}`, { method: 'POST', body: JSON.stringify({ status, note: note || '' }) })
@@ -325,15 +302,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
       setNotingItem(null); setNoteDraft('')
       await load(); onChanged?.()
     } catch (e) { toast.error(e.message) }
-  }
-  const doGenerateNumber = async (documentType) => {
-    setGeneratingNum(documentType)
-    try {
-      const r = await api(`/cases/${encodeURIComponent(pid)}/checklist/${encodeURIComponent(documentType)}/generate-number`, { method: 'POST' })
-      toast.success(`Nomor dibuat: ${r.data.document_number}`)
-      await load()
-    } catch (e) { toast.error(e.message) }
-    finally { setGeneratingNum(null) }
   }
   const doSetOutcome = async (patch) => {
     try {
@@ -343,7 +311,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   }
   const doPerdamaian = async () => {
     if (!allPerdamaianChecked) return toast.error('Semua syarat harus diceklist terlebih dahulu')
-    setPerdamaianUploading(true)
     try {
       await api(`/cases/${encodeURIComponent(pid)}/perdamaian`, { method: 'POST', body: JSON.stringify({ checks: perdamaianChecks, tab: perdamaianTab, sebelum: perdamaianTab === 'sebelum' ? perdamaianSebelum : null, setelah: perdamaianTab === 'setelah' ? perdamaianSetelah : null }) })
       toast.success('Perdamaian dicatat · status & timeline diperbarui')
@@ -356,7 +323,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
       setPerdamaianSetelah({ permohonan_gelar: false, rekomendasi_gelar: false, surat_henti: false, buku_register: false, surat_ankum: false })
       await load(); onChanged?.()
     } catch (e) { toast.error(e.message) }
-    finally { setPerdamaianUploading(false) }
   }
   const togglePerdamaianCheck = (key) => {
     if (perdamaianTab === 'sebelum' && key in perdamaianSebelum) {
@@ -570,33 +536,12 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                                     <p className="text-sm font-medium">{item.label}</p>
                                     {!item.required && <Badge variant="outline" className="text-[10px]">Opsional</Badge>}
                                   </div>
-                                  {item.document_number && (
-                                    <p className="text-xs font-mono text-blue-800 mt-1 flex items-center gap-1"><Hash className="h-3 w-3" /> {item.document_number}</p>
-                                  )}
                                   {item.note && <p className="text-xs text-slate-500 mt-1 italic">Catatan: {item.note}</p>}
                                 </div>
                                 <Badge className={`text-[10px] ${item.status === 'completed' ? 'bg-green-100 text-green-800 border-green-300' : item.status === 'not_applicable' ? 'bg-slate-100 text-slate-500 border-slate-300' : 'bg-amber-100 text-amber-800 border-amber-300'}`}>
                                   {item.status === 'completed' ? 'Lengkap' : item.status === 'not_applicable' ? 'Tidak Berlaku' : 'Belum Lengkap'}
                                 </Badge>
                               </div>
-
-                              {item.documents.length > 0 && (
-                                <div className="mt-2 space-y-1">
-                                  {item.documents.map((d) => (
-                                    <div key={d.id} className="flex items-center gap-2 text-xs bg-slate-50 rounded px-2 py-1.5">
-                                      <FileText className="h-3.5 w-3.5 text-green-700 flex-shrink-0" />
-                                      <span className="truncate flex-1">{d.filename}</span>
-                                      <span className="text-slate-400 flex-shrink-0">{d.uploaded_by?.name} · {fmtDateShort(d.uploaded_at)}</span>
-                                      {d.gajamada_attach_status === 'success' ? (
-                                        <Badge className="bg-blue-100 text-blue-700 text-[9px] flex-shrink-0">Tersinkron Gajamada</Badge>
-                                      ) : (
-                                        <Badge variant="outline" className="text-[9px] flex-shrink-0">Belum sinkron Gajamada</Badge>
-                                      )}
-                                      <a href={d.public_url} target="_blank" rel="noreferrer" className="text-blue-800 flex-shrink-0"><Download className="h-3.5 w-3.5" /></a>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
 
                               {notingItem === item.key ? (
                                 <div className="mt-2 flex items-center gap-2">
@@ -605,34 +550,12 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                                   <Button size="sm" variant="ghost" className="h-8" onClick={() => { setNotingItem(null); setNoteDraft('') }}>Batal</Button>
                                 </div>
                               ) : (
-                                <div className="mt-2 space-y-2">
-                                  {item.numbering && (
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex-1">
-                                        <Label className="text-[10px] text-slate-500">Tanggal</Label>
-                                        <Input type="date" className="h-7 text-xs" />
-                                      </div>
-                                      <div className="flex-1">
-                                        <Label className="text-[10px] text-slate-500">Nomor</Label>
-                                        <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => doGenerateNumber(item.key)} disabled={generatingNum === item.key}>
-                                          {generatingNum === item.key ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Hash className="h-3 w-3 mr-1" />} {item.document_number || 'Buat Nomor'}
-                                        </Button>
-                                       </div>
-      </div>
-      )}
-                                   <div className="flex items-center gap-2 flex-wrap">
-                                    <label>
-                                      <input type="file" className="hidden" onChange={(e) => doUpload(e, item.key)} disabled={uploading === item.key} />
-                                      <Button asChild size="sm" variant="outline" className="h-7 text-xs" disabled={uploading === item.key}>
-                                        <span className="cursor-pointer">{uploading === item.key ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Upload className="h-3 w-3 mr-1" />} Upload</span>
-                                      </Button>
-                                    </label>
-                                    {item.status !== 'not_applicable' ? (
-                                      <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500" onClick={() => setNotingItem(item.key)}><Ban className="h-3 w-3 mr-1" /> Tidak Berlaku</Button>
-                                    ) : (
-                                      <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500" onClick={() => doSetChecklistStatus(item.key, 'pending', '')}>Aktifkan Lagi</Button>
-                                    )}
-                                  </div>
+                                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                  {item.status !== 'not_applicable' ? (
+                                    <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500" onClick={() => setNotingItem(item.key)}><Ban className="h-3 w-3 mr-1" /> Tidak Berlaku</Button>
+                                  ) : (
+                                    <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500" onClick={() => doSetChecklistStatus(item.key, 'pending', '')}>Aktifkan Lagi</Button>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -641,35 +564,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                       </Card>
                     )
                   })}
-
-                  <Card>
-                    <CardHeader className="pb-2"><CardTitle className="text-sm">Dokumen Lainnya</CardTitle>
-  </CardHeader>
-                    <CardContent className="space-y-2">
-                      <label>
-                        <input type="file" className="hidden" onChange={(e) => doUpload(e, 'lainnya')} disabled={uploading === 'lainnya'} />
-                        <Button asChild size="sm" variant="outline" disabled={uploading === 'lainnya'}><span className="cursor-pointer">
-                          {uploading === 'lainnya' ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Upload Dokumen Lain
-                        </span></Button>
-                      </label>
-                      {(data._internal?.documents || []).filter((d) => !d.document_type || d.document_type === 'lainnya').length === 0 ? (
-                        <p className="text-sm text-slate-500">Belum ada dokumen lainnya.</p>
-                      ) : (
-                        <div className="space-y-2 pt-2">
-                          {data._internal.documents.filter((d) => !d.document_type || d.document_type === 'lainnya').map((d) => (
-                            <div key={d.id} className="flex items-center gap-3 p-3 border rounded-lg">
-                              <div className="h-10 w-10 rounded bg-green-100 text-green-700 flex items-center justify-center flex-shrink-0"><FileText className="h-5 w-5" /></div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium truncate">{d.filename}</p>
-                                <p className="text-xs text-slate-500">{d.uploaded_by?.name} · {fmtDate(d.uploaded_at)}</p>
-                              </div>
-                              <a href={d.public_url} target="_blank" rel="noreferrer" className="text-blue-800 hover:text-blue-900"><Download className="h-4 w-4" /></a>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
                 </TabsContent>
 
                 <TabsContent value="timeline" className="mt-4">
@@ -835,23 +729,14 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                       </div>
                     </TabsContent>
                   </Tabs>
-                  <div>
-                    <Label>Upload Dokumen Perdamaian</Label>
-                    <label className="mt-1 block">
-                      <input type="file" className="hidden" onChange={(e) => doUpload(e, 'perdamaian')} disabled={perdamaianUploading} />
-                      <Button asChild size="sm" variant="outline" disabled={perdamaianUploading}>
-                        <span className="cursor-pointer">{perdamaianUploading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Upload className="h-3 w-3 mr-1" />} Upload</span>
-                      </Button>
-                    </label>
-                  </div>
                   {!allPerdamaianChecked && (
                     <p className="text-xs text-red-600">Semua syarat harus diceklist sebelum menyimpan perdamaian.</p>
                   )}
                 </div>
                 <DialogFooter>
                   <Button variant="ghost" onClick={resetPerdamaian}>Reset</Button>
-                  <Button onClick={doPerdamaian} disabled={!allPerdamaianChecked || perdamaianUploading}>
-                    {perdamaianUploading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Simpan
+                  <Button onClick={doPerdamaian} disabled={!allPerdamaianChecked}>
+                    Simpan
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -2315,144 +2200,6 @@ function AuditView() {
   )
 }
 
-// ---------------- Personel ----------------
-function PersonelPage() {
-  const [rows, setRows] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ nama: '', nip: '', pangkat: '', jabatan: '', kesatuan: '', unit: '', tim: '', wa: '', ketua_tim: false })
-  const [search, setSearch] = useState('')
-  const [reference, setReference] = useState({ units: [] })
-  const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(null)
-
-  const load = async () => {
-    setLoading(true)
-    try { const r = await api(`/personel${search ? `?search=${encodeURIComponent(search)}` : ''}`); setRows(r.data) }
-    catch (e) { toast.error(e.message) }
-    finally { setLoading(false) }
-  }
-  useEffect(() => { load() }, []) // eslint-disable-line
-  useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
-
-  const openCreate = () => { setEditing(null); setForm({ nama: '', nip: '', pangkat: '', jabatan: '', kesatuan: '', unit: '', tim: '', wa: '', ketua_tim: false }); setDialogOpen(true) }
-  const openEdit = (r) => {
-    setEditing(r)
-    setForm({ nama: r.nama || '', nip: r.nip || '', pangkat: r.pangkat || '', jabatan: r.jabatan || '', kesatuan: r.kesatuan || '', unit: r.unit || '', tim: r.tim || '', wa: r.wa || '', ketua_tim: !!r.ketua_tim })
-    setDialogOpen(true)
-  }
-  const save = async () => {
-    if (!form.nama) return toast.error('Nama wajib')
-    setSaving(true)
-    try {
-      if (editing) {
-        await api(`/personel/${encodeURIComponent(editing.id)}`, { method: 'PUT', body: JSON.stringify(form) })
-        toast.success('Personel diperbarui')
-      } else {
-        await api('/personel', { method: 'POST', body: JSON.stringify(form) })
-        toast.success('Personel ditambahkan')
-      }
-      setDialogOpen(false); await load()
-    } catch (e) { toast.error(e.message) }
-    finally { setSaving(false) }
-  }
-  const remove = async (r) => {
-    if (!confirm(`Hapus personel "${r.nama}"?`)) return
-    setDeleting(r.id)
-    try { await api(`/personel/${encodeURIComponent(r.id)}`, { method: 'DELETE' }); toast.success('Dihapus'); await load() }
-    catch (e) { toast.error(e.message) }
-    finally { setDeleting(null) }
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h2 className="text-2xl font-bold text-slate-900">Personel</h2>
-        <div className="flex items-center gap-2">
-          <div className="relative w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama / NIP..." className="pl-9" onKeyDown={(e) => e.key === 'Enter' && load()} />
-          </div>
-          <Button variant="outline" size="sm" onClick={load}><Search className="h-4 w-4 mr-2" /> Cari</Button>
-          <Button onClick={openCreate}><Users className="h-4 w-4 mr-2" /> Tambah</Button>
-        </div>
-      </div>
-      {loading ? <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div> :
-        <Card><CardContent className="p-0">
-          <div className="overflow-x-auto"><Table>
-            <TableHeader className="bg-slate-50"><TableRow>
-              <TableHead className="w-12 text-sm">No</TableHead>
-              <TableHead className="text-sm">Jabatan</TableHead>
-              <TableHead className="text-sm">Pangkat</TableHead>
-              <TableHead className="text-sm">NRP</TableHead>
-              <TableHead className="text-sm">Nama</TableHead>
-              <TableHead className="text-sm">Unit</TableHead>
-              <TableHead className="w-[80px] text-sm">Aksi</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {rows.map((r, i) => (
-                <TableRow key={r.id}>
-                  <TableCell className="text-sm">{i + 1}</TableCell>
-                  <TableCell className="text-sm">{r.jabatan || '-'}</TableCell>
-                  <TableCell className="text-sm">{r.pangkat || '-'}</TableCell>
-                  <TableCell className="text-sm font-mono">{r.nip || '-'}</TableCell>
-                  <TableCell className="text-sm">
-                    <div className="flex items-center gap-1">
-                      {r.nama_lengkap || '-'}
-                      {r.ketua_tim && <Badge className="bg-amber-100 text-amber-800 text-xs">Ketua Tim</Badge>}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm">{shortUnit(r.unit) || '-'}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => openEdit(r)}>Edit</Button>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={() => remove(r)} disabled={deleting === r.id}>
-                        {deleting === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Hapus'}
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {rows.length === 0 && <TableRow><TableCell colSpan={7} className="text-center py-12 text-slate-500">Belum ada data personel.</TableCell></TableRow>}
-            </TableBody>
-          </Table></div>
-        </CardContent></Card>
-      }
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{editing ? 'Edit' : 'Tambah'} Personel</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div><Label>Nama Lengkap</Label><Input value={form.nama} onChange={(e) => setForm({ ...form, nama: e.target.value })} placeholder="Nama lengkap" /></div>
-            <div><Label>NIP / NRP</Label><Input value={form.nip} onChange={(e) => setForm({ ...form, nip: e.target.value })} placeholder="Nomor NIP / NRP" /></div>
-            <div><Label>Pangkat</Label><Input value={form.pangkat} onChange={(e) => setForm({ ...form, pangkat: e.target.value })} placeholder="Pangkat / Golongan" /></div>
-            <div><Label>Jabatan</Label><Input value={form.jabatan} onChange={(e) => setForm({ ...form, jabatan: e.target.value })} placeholder="Jabatan" /></div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><Label>Kesatuan</Label><Input value={form.kesatuan} onChange={(e) => setForm({ ...form, kesatuan: e.target.value })} placeholder="Kesatuan" /></div>
-              <div><Label>Tim</Label><Input value={form.tim} onChange={(e) => setForm({ ...form, tim: e.target.value })} placeholder="Nama tim" /></div>
-            </div>
-            <div><Label>Unit</Label>
-              <Select value={form.unit} onValueChange={(v) => setForm({ ...form, unit: v })}>
-                <SelectTrigger><SelectValue placeholder="Pilih unit" /></SelectTrigger>
-                <SelectContent>
-                  {reference.units?.map((u) => <SelectItem key={u} value={u}>{shortUnit(u)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div><Label>Nomor WA</Label><Input value={form.wa} onChange={(e) => setForm({ ...form, wa: e.target.value })} placeholder="Nomor WhatsApp" /></div>
-            <div className="flex items-center gap-2"><Checkbox id="p-ketua" checked={form.ketua_tim} onCheckedChange={(v) => setForm({ ...form, ketua_tim: !!v })} /><Label htmlFor="p-ketua">Ketua Tim</Label></div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setDialogOpen(false)}>Batal</Button>
-            <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Simpan</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
-
 // ---------------- Settings Page ----------------
 const PassInput = memo(({ value, onChange, placeholder }) => {
   const [show, setShow] = useState(false)
@@ -2676,7 +2423,6 @@ function AppShell({ user, onLogout }) {
     ...(isKasubbid ? [{ id: 'units', label: 'Master Unit', icon: Building2 }] : []),
     ...(isKasubbid ? [{ id: 'satker', label: 'Satker/Satwil', icon: MapPin }] : []),
     ...(isKasubbid ? [{ id: 'register', label: 'Register Dokumen', icon: FileText }] : []),
-    ...(isKasubbid ? [{ id: 'personel', label: 'Personel', icon: Users }] : []),
     { id: 'sync', label: 'Log Sync', icon: Send },
     { id: 'audit', label: 'Audit Log', icon: History },
     { id: 'settings', label: 'Pengaturan', icon: Settings },
@@ -2744,7 +2490,7 @@ function AppShell({ user, onLogout }) {
           {tab === 'units' && isKasubbid && <MasterUnitPage user={user} />}
           {tab === 'satker' && isKasubbid && <SatkerSatwilPage user={user} />}
           {tab === 'register' && isKasubbid && <DocumentRegisterPage />}
-          {tab === 'personel' && isKasubbid && <PersonelPage />}
+
           {tab === 'sync' && <SyncLogsView />}
           {tab === 'audit' && <AuditView />}
           {tab === 'settings' && <SettingsPage connStatus={connStatus} />}

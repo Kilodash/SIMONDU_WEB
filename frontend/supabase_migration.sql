@@ -34,25 +34,6 @@ CREATE TABLE IF NOT EXISTS timelines (
 );
 CREATE INDEX IF NOT EXISTS idx_tl_pid ON timelines(prepetrator_id, created_at DESC);
 
--- Followup documents (dokumen tindak lanjut)
-CREATE TABLE IF NOT EXISTS followup_documents (
-  id UUID PRIMARY KEY,
-  prepetrator_id TEXT NOT NULL,
-  filename TEXT,
-  storage_path TEXT,
-  public_url TEXT,
-  content_type TEXT,
-  size BIGINT DEFAULT 0,
-  description TEXT DEFAULT '',
-  document_type TEXT,
-  gajamada_path TEXT,
-  gajamada_attach_status TEXT DEFAULT 'skipped',
-  gajamada_error TEXT,
-  uploaded_by JSONB DEFAULT '{}',
-  uploaded_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_fdoc_pid ON followup_documents(prepetrator_id, uploaded_at DESC);
-
 -- Sync logs (log sinkronisasi ke Gajamada)
 CREATE TABLE IF NOT EXISTS sync_logs (
   id UUID PRIMARY KEY,
@@ -152,31 +133,11 @@ ALTER TABLE satker_satwil ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dispositions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE status_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE timelines ENABLE ROW LEVEL SECURITY;
-ALTER TABLE followup_documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sync_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE units_master ENABLE ROW LEVEL SECURITY;
 ALTER TABLE completions ENABLE ROW LEVEL SECURITY;
 
--- Personel master (data personel untuk penomoran dokumen)
-CREATE TABLE IF NOT EXISTS personel (
-  id UUID PRIMARY KEY,
-  tenant_id UUID,
-  organization_id UUID,
-  role TEXT,
-  nip TEXT,
-  nama_lengkap TEXT,
-  pangkat TEXT,
-  jabatan TEXT,
-  kesatuan TEXT,
-  tim TEXT,
-  unit TEXT,
-  nomor_wa TEXT,
-  ketua_tim BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ
-);
-ALTER TABLE personel ENABLE ROW LEVEL SECURITY;
 ALTER TABLE followup_checklist ENABLE ROW LEVEL SECURITY;
 ALTER TABLE case_outcomes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE numbering_settings ENABLE ROW LEVEL SECURITY;

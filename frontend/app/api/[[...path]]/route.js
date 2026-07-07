@@ -4,8 +4,7 @@ import * as gajamada from '@/lib/gajamada'
 import { getDb, getActiveUnits } from '@/lib/db'
 import { authenticate, signSession, getCookieHeader, clearCookieHeader, getUserFromRequest } from '@/lib/auth'
 import { CHILD_UNITS, KASUBBID_UNIT, KASUBBID_UNIT_ALIASES, PAMINAL_SCOPE_UNITS, CATEGORY_OPTIONS, DERIVED_STATUS } from '@/lib/units'
-import { getSupabaseAdmin, STORAGE_BUCKET, ensureBucket } from '@/lib/supabase-admin'
-import { FOLLOWUP_DOC_TYPES, NON_DUMAS_DOC_TYPES, STAGE_LABELS, NON_DUMAS_STAGE_LABELS, HASIL_LIDIK_OPTIONS, SETTLEMENT_OPTIONS, renderNumberTemplate, computeChecklist, getDocTypes, getStageOrder, getStageLabels } from '@/lib/checklist'
+import { STAGE_LABELS, NON_DUMAS_STAGE_LABELS, HASIL_LIDIK_OPTIONS, SETTLEMENT_OPTIONS, computeChecklist, getStageOrder, getStageLabels, MINI_CHECKLIST } from '@/lib/checklist'
 
 // Lazy-load astina modules (avoid loading imap/native modules at import time)
 function loadAstinaClient() { return require('@/lib/astina-client') }
@@ -36,7 +35,7 @@ async function logAudit(actor, action, resource, meta = {}) {
 
 // Derive effective status from internal state and Gajamada status_label
 function deriveStatus(gajamadaStatus, internal) {
-  const { hasDisposisi, hasTimelineOrDoc, isCompleted, settlement } = internal
+  const { hasDisposisi, hasTimeline, isCompleted, settlement } = internal
   if (settlement) {
     if (/perdamaian/i.test(settlement)) return 'Perdamaian'
     if (/restorative/i.test(settlement)) return 'Restorative Justice'
@@ -44,7 +43,7 @@ function deriveStatus(gajamadaStatus, internal) {
     if (/henti/i.test(settlement)) return 'Henti Lidik'
   }
   if (isCompleted) return 'Selesai'
-  if (hasTimelineOrDoc) return 'Proses Lidik'
+  if (hasTimeline) return 'Proses Lidik'
   if (hasDisposisi) {
     if (/laporan diterima/i.test(gajamadaStatus || '')) return 'Laporan Diterima'
     return DERIVED_STATUS.DIDISTRIBUSI
@@ -61,11 +60,10 @@ async function enrichCase(caseObj) {
   if (!caseObj) return null
   const db = await getDb()
   const pid = caseObj.prepetrator_id
-  const [dispositions, timelines, statusHistory, documents, syncLogs, completed, checklistRows, outcome] = await Promise.all([
+  const [dispositions, timelines, statusHistory, syncLogs, completed, checklistRows, outcome] = await Promise.all([
     db.collection('dispositions').find({ prepetrator_id: pid }).sort({ created_at: -1 }).toArray(),
     db.collection('timelines').find({ prepetrator_id: pid }).sort({ created_at: -1 }).toArray(),
     db.collection('status_history').find({ prepetrator_id: pid }).sort({ created_at: -1 }).toArray(),
-    db.collection('followup_documents').find({ prepetrator_id: pid }).sort({ uploaded_at: -1 }).toArray(),
     db.collection('sync_logs').find({ prepetrator_id: pid }).sort({ request_at: -1 }).limit(10).toArray(),
     db.collection('completions').findOne({ prepetrator_id: pid }),
     db.collection('followup_checklist').find({ prepetrator_id: pid }).toArray(),
@@ -75,12 +73,12 @@ async function enrichCase(caseObj) {
   const latestDisp = dispositions[0]
   const derived = deriveStatus(caseObj.status_label, {
     hasDisposisi: !!latestDisp,
-    hasTimelineOrDoc: timelines.length + documents.length > 0,
+    hasTimeline: timelines.length > 0,
     isCompleted: !!completed,
     settlement: outcome?.settlement || null,
   })
   const cleanOutcome = outcome ? { ...outcome, _id: undefined } : null
-  const checklist = computeChecklist(cleanOutcome, strip(checklistRows), strip(documents))
+  const checklist = computeChecklist(cleanOutcome, strip(checklistRows))
   return {
     ...caseObj,
     summary: caseObj.perihal || caseObj.summary || (caseObj.content ? String(caseObj.content).slice(0, 200) : ''),
@@ -91,7 +89,6 @@ async function enrichCase(caseObj) {
       dispositions: strip(dispositions),
       timelines: strip(timelines),
       status_history: strip(statusHistory),
-      documents: strip(documents),
       sync_logs: strip(syncLogs),
       completed: completed ? { ...completed, _id: undefined } : null,
       outcome: cleanOutcome,
@@ -117,7 +114,7 @@ async function backgroundSync(pid, actor, reason) {
     const timelines = await db.collection('timelines').find({ prepetrator_id: pid }).sort({ created_at: -1 }).limit(5).toArray()
     const derived = deriveStatus(original.status_label, {
       hasDisposisi: !!latestDisp,
-      hasTimelineOrDoc: timelines.length > 0 || (await db.collection('followup_documents').countDocuments({ prepetrator_id: pid })) > 0,
+      hasTimeline: timelines.length > 0,
       isCompleted: !!completed,
       settlement: outcome?.settlement || null,
     })
@@ -639,8 +636,6 @@ autoLogin();
         categories: CATEGORY_OPTIONS,
         default_disposisi_tasks: DEFAULT_DISPOSISI_TASKS,
         non_dumas_disposisi_tasks: NON_DUMAS_DISPOSISI_TASKS,
-        followup_doc_types: FOLLOWUP_DOC_TYPES,
-        non_dumas_doc_types: NON_DUMAS_DOC_TYPES,
         stage_labels: STAGE_LABELS,
         non_dumas_stage_labels: NON_DUMAS_STAGE_LABELS,
         hasil_lidik_options: HASIL_LIDIK_OPTIONS,
@@ -787,17 +782,15 @@ autoLogin();
       // Enrich each with derived info
       const db = await getDb()
       const pids = r.data.map((c) => c.prepetrator_id)
-      const [dispRows, timelineRows, docRows, completedRows, localCaseRows] = await Promise.all([
+      const [dispRows, timelineRows, completedRows, localCaseRows] = await Promise.all([
         db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).sort({ created_at: -1 }).toArray(),
         db.collection('timelines').find({ prepetrator_id: { $in: pids } }).limit(2000).toArray(),
-        db.collection('followup_documents').find({ prepetrator_id: { $in: pids } }).limit(2000).toArray(),
         db.collection('completions').find({ prepetrator_id: { $in: pids } }).toArray(),
         opts.case_type ? db.collection('local_cases').find({ prepetrator_id: { $in: pids } }).toArray().catch(() => []) : Promise.resolve([]),
       ])
-      const dispBy = {}; const tlByPid = new Set(); const docByPid = new Set(); const compBy = new Set()
+      const dispBy = {}; const tlByPid = new Set(); const compBy = new Set()
       for (const d of dispRows) if (!dispBy[d.prepetrator_id]) dispBy[d.prepetrator_id] = d
       for (const t of timelineRows) tlByPid.add(t.prepetrator_id)
-      for (const d of docRows) docByPid.add(d.prepetrator_id)
       for (const c of completedRows) compBy.add(c.prepetrator_id)
       // Build case_type map from local_cases for filtering
       let lcByPid = {}
@@ -810,9 +803,9 @@ autoLogin();
       })
       const enriched = source.map((c) => {
         const d = dispBy[c.prepetrator_id]
-        const hasTLorDoc = tlByPid.has(c.prepetrator_id) || docByPid.has(c.prepetrator_id)
+        const hasTLorDoc = tlByPid.has(c.prepetrator_id)
         const isCompleted = compBy.has(c.prepetrator_id)
-        const derived = deriveStatus(c.status_label, { hasDisposisi: !!d, hasTimelineOrDoc: hasTLorDoc, isCompleted })
+        const derived = deriveStatus(c.status_label, { hasDisposisi: !!d, hasTimeline: hasTLorDoc, isCompleted })
         return {
           ...c,
           disposisi_case_position: d?.to_unit || c.disposisi_case_position,
@@ -1018,7 +1011,7 @@ autoLogin();
         // Seed checklist items based on case_type
         try {
           const ctype = case_type || 'dumas'
-          const docTypes = getDocTypes(ctype)
+          const docTypes = MINI_CHECKLIST
           for (const dt of docTypes) {
             await db.collection('followup_checklist').updateOne(
               { prepetrator_id: pid, document_type: dt.key },
@@ -1230,76 +1223,6 @@ autoLogin();
       return ok({ data: merged, gajamada_count: gjNorm.length, internal_count: intNorm.length })
     }
 
-    const upMatch = route.match(/^\/cases\/([^/]+)\/documents$/)
-    if (upMatch && method === 'POST') {
-      const pid = decodeURIComponent(upMatch[1])
-      const form = await request.formData()
-      const file = form.get('file')
-      const description = form.get('description') || ''
-      const documentType = form.get('document_type') || 'lainnya'
-      if (!file || typeof file === 'string') return fail('File tidak valid')
-      await ensureBucket()
-      const sb = getSupabaseAdmin()
-      const filename = `${pid}/${Date.now()}_${(file.name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_')}`
-      const arrayBuffer = await file.arrayBuffer()
-      const { data: upData, error: upErr } = await sb.storage.from(STORAGE_BUCKET).upload(filename, arrayBuffer, {
-        contentType: file.type || 'application/octet-stream', upsert: false,
-      })
-      if (upErr) return fail('Upload gagal: ' + upErr.message, 500)
-      const { data: pub } = sb.storage.from(STORAGE_BUCKET).getPublicUrl(filename)
-
-      // Upload asli ke storage Gajamada juga (bukan hanya Supabase), lalu lampirkan
-      // ke report via gateway attach-only (tidak mengubah status/case_position).
-      let gajamadaPath = null, gajamadaAttachStatus = 'skipped', gajamadaError = null
-      try {
-        const gjUpload = await gajamada.uploadFile(me.username, Buffer.from(arrayBuffer), file.name || 'dokumen', file.type)
-        gajamadaPath = gjUpload.path
-        const { status, body } = await gajamada.attachToReport(me.username, pid, [{ url: gajamadaPath, name: file.name }])
-        gajamadaAttachStatus = (status >= 200 && status < 300 && body?.metaData?.status !== false) ? 'success' : 'failed'
-      } catch (e) {
-        gajamadaAttachStatus = 'failed'; gajamadaError = e.message
-        console.error('gajamada upload/attach error', e)
-      }
-
-      const docDef = FOLLOWUP_DOC_TYPES.find((d) => d.key === documentType)
-      const doc = {
-        id: uuidv4(), prepetrator_id: pid,
-        filename: file.name, storage_path: upData.path, public_url: pub.publicUrl,
-        content_type: file.type, size: file.size, description,
-        document_type: documentType,
-        gajamada_path: gajamadaPath, gajamada_attach_status: gajamadaAttachStatus, gajamada_error: gajamadaError,
-        uploaded_by: { username: me.username, name: me.name, role: me.role, unit: me.unit },
-        uploaded_at: new Date(),
-      }
-      const db = await getDb()
-      await db.collection('followup_documents').insertOne(doc)
-      // Auto-mark checklist item as completed when it matches a known SOP document type
-      if (docDef) {
-        await db.collection('followup_checklist').updateOne(
-          { prepetrator_id: pid, document_type: documentType },
-          { $set: { status: 'completed', updated_by: { username: me.username, name: me.name, role: me.role }, updated_at: new Date() } },
-          { upsert: true }
-        )
-      }
-      await db.collection('timelines').insertOne({
-        id: uuidv4(), prepetrator_id: pid,
-        title: `Upload dokumen: ${docDef?.label || file.name}`,
-        description: gajamadaAttachStatus === 'success' ? 'Tersimpan di SIMONDU & Gajamada' : 'Tersimpan di SIMONDU (sinkron ke Gajamada gagal/pending)',
-        by: { username: me.username, name: me.name, role: me.role },
-        created_at: new Date(),
-      })
-      const { _id, ...clean } = doc
-      scheduleSync(pid, me, 'document_upload')
-      await logAudit(me, 'upload_document', pid, { filename: file.name, document_type: documentType, gajamadaAttachStatus })
-      return ok({ data: clean })
-    }
-    if (upMatch && method === 'GET') {
-      const pid = decodeURIComponent(upMatch[1])
-      const db = await getDb()
-      const docs = await db.collection('followup_documents').find({ prepetrator_id: pid }).sort({ uploaded_at: -1 }).toArray()
-      return ok({ data: docs.map(({ _id, ...r }) => r) })
-    }
-
     // ---------- FOLLOWUP CHECKLIST (Pusat Tindak Lanjut) ----------
     // Set hasil Lidik (terbukti/tidak_terbukti) and/or jalur penutupan dini (settlement)
     const outcomeMatch = route.match(/^\/cases\/([^/]+)\/outcome$/)
@@ -1336,7 +1259,6 @@ autoLogin();
     if (clMatch && (method === 'POST' || method === 'PATCH')) {
       const pid = decodeURIComponent(clMatch[1])
       const docType = decodeURIComponent(clMatch[2])
-      if (!FOLLOWUP_DOC_TYPES.some((d) => d.key === docType)) return fail('Jenis dokumen tidak dikenal')
       if (me.role === 'unit') {
         const db0 = await getDb()
         const latestDisp = await db0.collection('dispositions').findOne({ prepetrator_id: pid }, { sort: { created_at: -1 } })
@@ -1350,7 +1272,7 @@ autoLogin();
         { $set: { status, note: note || '', updated_by: { username: me.username, name: me.name, role: me.role }, updated_at: new Date() } },
         { upsert: true }
       )
-      const label = FOLLOWUP_DOC_TYPES.find((d) => d.key === docType)?.label || docType
+      const label = docType
       await db.collection('timelines').insertOne({
         id: uuidv4(), prepetrator_id: pid,
         title: `Checklist "${label}" → ${status === 'not_applicable' ? 'Tidak Berlaku' : status === 'completed' ? 'Lengkap' : 'Belum Lengkap'}`,
@@ -1361,71 +1283,20 @@ autoLogin();
       return ok({})
     }
 
-    // Generate the next auto-number for a document type (Sprin/ND/Surat) for this case
-    const genNumMatch = route.match(/^\/cases\/([^/]+)\/checklist\/([^/]+)\/generate-number$/)
-    if (genNumMatch && method === 'POST') {
-      const pid = decodeURIComponent(genNumMatch[1])
-      const docType = decodeURIComponent(genNumMatch[2])
-      const docDef = FOLLOWUP_DOC_TYPES.find((d) => d.key === docType)
-      if (!docDef || !docDef.numbering) return fail('Jenis dokumen ini tidak menggunakan penomoran otomatis')
-      const db = await getDb()
-      const now = new Date(); const year = now.getFullYear()
-      let setting = await db.collection('numbering_settings').findOne({ document_type: docType })
-      if (!setting) {
-        setting = { id: uuidv4(), document_type: docType, template: docDef.defaultTemplate, next_seq: 1, reset_yearly: true, last_year: year }
-        await db.collection('numbering_settings').insertOne(setting)
-      }
-      let seq = setting.next_seq || 1
-      if (setting.reset_yearly && setting.last_year !== year) seq = 1
-      const documentNumber = renderNumberTemplate(setting.template, { seq, date: now })
-      await db.collection('numbering_settings').updateOne(
-        { document_type: docType },
-        { $set: { next_seq: seq + 1, last_year: year }, $setOnInsert: { id: setting.id || uuidv4(), template: setting.template, reset_yearly: setting.reset_yearly !== false } },
-        { upsert: true }
-      )
-      await db.collection('followup_checklist').updateOne(
-        { prepetrator_id: pid, document_type: docType },
-        { $set: { document_number: documentNumber, document_date: now, updated_by: { username: me.username, name: me.name, role: me.role }, updated_at: now } },
-        { upsert: true }
-      )
-      // Also record in document_register
-      try {
-        await db.collection('document_register').insertOne({
-          id: uuidv4(),
-          document_type: docType,
-          number: documentNumber,
-          date: now,
-          perihal: `Penomoran otomatis kasus ${pid}`,
-          requesting_unit: '',
-          keterangan: '',
-          is_manual: false,
-          prepetrator_id: pid,
-          created_at: now,
-          updated_at: now,
-        })
-      } catch (_) { /* document_register table may not exist yet */ }
-      await logAudit(me, 'checklist_generate_number', pid, { docType, documentNumber })
-      return ok({ data: { document_number: documentNumber } })
-    }
-
-    // ---------- NUMBERING SETTINGS (Pengaturan Nomor Otomatis) ----------
+    // ---------- NUMBERING SETTINGS (Pengaturan Nomor Otomatis) — KOSONG — ----------
+    // ponytail: numbering removed with document upload; add back when doc tracking re-enabled.
     if (route === '/numbering-settings' && method === 'GET') {
       const db = await getDb()
       const rows = await db.collection('numbering_settings').find({}).toArray()
-      const byKey = {}
-      for (const r of rows) byKey[r.document_type] = r
       const year = new Date().getFullYear()
-      const data = FOLLOWUP_DOC_TYPES.filter((d) => d.numbering).map((d) => {
-        const existing = byKey[d.key]
-        return {
-          document_type: d.key,
-          label: d.label,
-          template: existing?.template || d.defaultTemplate,
-          next_seq: existing?.reset_yearly !== false && existing?.last_year && existing.last_year !== year ? 1 : (existing?.next_seq || 1),
-          reset_yearly: existing?.reset_yearly !== false,
-          preview: renderNumberTemplate(existing?.template || d.defaultTemplate, { seq: existing?.reset_yearly !== false && existing?.last_year && existing.last_year !== year ? 1 : (existing?.next_seq || 1) }),
-        }
-      })
+      const data = (rows || []).map((r) => ({
+        document_type: r.document_type,
+        label: r.document_type,
+        template: r.template,
+        next_seq: r.reset_yearly !== false && r.last_year && r.last_year !== year ? 1 : (r.next_seq || 1),
+        reset_yearly: r.reset_yearly !== false,
+        preview: renderNumberTemplate(r.template, { seq: r.reset_yearly !== false && r.last_year && r.last_year !== year ? 1 : (r.next_seq || 1) }),
+      }))
       return ok({ data })
     }
     {
@@ -1433,7 +1304,7 @@ autoLogin();
       if (m && (method === 'PUT' || method === 'PATCH')) {
         if (me.role !== 'admin') return fail('Hanya Admin', 403)
         const docType = decodeURIComponent(m[1])
-        if (!FOLLOWUP_DOC_TYPES.some((d) => d.key === docType)) return fail('Jenis dokumen tidak dikenal')
+        if (!docType) return fail('Jenis dokumen tidak dikenal')
         const { template, next_seq, reset_yearly } = await request.json()
         const db = await getDb()
         const patch = { updated_at: new Date() }
@@ -1514,15 +1385,14 @@ autoLogin();
       }
       // Gating: dokumen tindak lanjut wajib (sesuai SOP & cabang hasil Lidik) harus
       // Lengkap/Tidak Berlaku dahulu, kecuali sudah memilih jalur penyelesaian dini.
-      const [outcomeRow, checklistRows, documents] = await Promise.all([
+      const [outcomeRow, checklistRows] = await Promise.all([
         db.collection('case_outcomes').findOne({ prepetrator_id: pid }),
         db.collection('followup_checklist').find({ prepetrator_id: pid }).toArray(),
-        db.collection('followup_documents').find({ prepetrator_id: pid }).toArray(),
       ])
-      const checklist = computeChecklist(outcomeRow, checklistRows, documents)
+      const checklist = computeChecklist(outcomeRow, checklistRows)
       if (!checklist.canComplete) {
         const missing = checklist.items.filter((i) => i.required && i.status === 'pending').map((i) => i.label)
-        return fail(`Lengkapi dokumen tindak lanjut wajib dahulu: ${missing.join(', ')}`, 400)
+        return fail(`Lengkapi checklist tindak lanjut dahulu: ${missing.join(', ')}`, 400)
       }
       await db.collection('completions').updateOne(
         { prepetrator_id: pid },
@@ -1576,7 +1446,6 @@ autoLogin();
       if (lc) {
         const dispositions = await db.collection('dispositions').find({ prepetrator_id: pid }).sort({ created_at: -1 }).toArray().catch(() => [])
         const timelines = await db.collection('timelines').find({ prepetrator_id: pid }).sort({ created_at: -1 }).toArray().catch(() => [])
-        const documents = await db.collection('followup_documents').find({ prepetrator_id: pid }).sort({ uploaded_at: -1 }).toArray().catch(() => [])
         const syncLogs = await db.collection('sync_logs').find({ prepetrator_id: pid }).sort({ request_at: -1 }).limit(10).toArray().catch(() => [])
         const completed = await db.collection('completions').findOne({ prepetrator_id: pid }).catch(() => null)
         const outcome = await db.collection('case_outcomes').findOne({ prepetrator_id: pid }).catch(() => null)
@@ -1602,7 +1471,6 @@ autoLogin();
           updated_at: lc.updated_at || lc.created_at,
           dispositions: strip(dispositions),
           timelines: strip(timelines),
-          documents: strip(documents),
           sync_logs: strip(syncLogs),
           completed: completed ? { ...completed, _id: undefined } : null,
           outcome: outcome ? { ...outcome, _id: undefined } : null,
@@ -1644,22 +1512,20 @@ autoLogin();
       const total = result.total
       const db = await getDb()
       const pids = cases.map((c) => c.prepetrator_id)
-      const [dispRows, tlRows, docRows, compRows] = await Promise.all([
+      const [dispRows, tlRows, compRows] = await Promise.all([
         db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).sort({ created_at: -1 }).toArray(),
         db.collection('timelines').find({ prepetrator_id: { $in: pids } }).limit(2000).toArray(),
-        db.collection('followup_documents').find({ prepetrator_id: { $in: pids } }).limit(2000).toArray(),
         db.collection('completions').find({ prepetrator_id: { $in: pids } }).toArray(),
       ])
-      const dispBy = {}; const tlSet = new Set(); const docSet = new Set(); const compSet = new Set()
+      const dispBy = {}; const tlSet = new Set(); const compSet = new Set()
       for (const d of dispRows) if (!dispBy[d.prepetrator_id]) dispBy[d.prepetrator_id] = d
       for (const t of tlRows) tlSet.add(t.prepetrator_id)
-      for (const d of docRows) docSet.add(d.prepetrator_id)
       for (const c of compRows) compSet.add(c.prepetrator_id)
       const effective = cases.map((c) => {
         const d = dispBy[c.prepetrator_id]
         const eff_status = deriveStatus(c.status_label, {
           hasDisposisi: !!d,
-          hasTimelineOrDoc: tlSet.has(c.prepetrator_id) || docSet.has(c.prepetrator_id),
+          hasTimeline: tlSet.has(c.prepetrator_id),
           isCompleted: compSet.has(c.prepetrator_id),
         })
         return { ...c, eff_unit: d?.to_unit || c.disposisi_case_position, eff_status, is_atensi: !!d?.is_atensi }
@@ -1952,99 +1818,6 @@ autoLogin();
         const db = await getDb()
         await db.collection('document_register').deleteOne({ id })
         await logAudit(me, 'docreg_delete', id)
-        return ok({})
-      }
-    }
-
-    // ---------- PERSONEL ----------
-    if (route === '/personel' && method === 'GET') {
-      try {
-        const db = await getDb()
-        const search = url.searchParams.get('search') || ''
-        let rows = await db.collection('personel').find({}).toArray()
-        if (search) {
-          const s = search.toLowerCase()
-          rows = rows.filter((r) => (r.nama_lengkap || '').toLowerCase().includes(s) || (r.nip || '').toLowerCase().includes(s) || (r.jabatan || '').toLowerCase().includes(s))
-        }
-        const rank = (j) => {
-          const u = (j || '').toUpperCase()
-          if (u.startsWith('KASUBBID')) return 1
-          if (u.startsWith('KAUR')) return 2
-          if (u.startsWith('KANIT')) return 3
-          if (u.startsWith('PAMIN')) return 4
-          if (u.startsWith('PANIT')) return 5
-          if (u.startsWith('PAMA')) return 6
-          if (u.includes('ANGGOTA')) return 7
-          if (u.startsWith('PNS')) return 8
-          return 9
-        }
-        const rankPangkat = (p) => {
-          const u = (p || '').toUpperCase()
-          const PANGKAT_ORDER = [
-            'KOMBES', 'AKBP', 'KOMPOL', 'AKP',
-            'AIPTU', 'IPTU', 'AIPDA', 'IPDA',
-            'BRIPKA', 'BRIGADIR', 'BRIPTU', 'BRIPDA',
-            'ABRIP', 'BHARATU', 'BHARADA',
-            'PNS',
-          ]
-          const found = PANGKAT_ORDER.findIndex((r) => u === r || u.startsWith(r + ' '))
-          return found >= 0 ? found : 99
-        }
-        rows.sort((a, b) => rank(a.jabatan) - rank(b.jabatan) || rankPangkat(a.pangkat) - rankPangkat(b.pangkat) || (a.nip || '').localeCompare(b.nip || ''))
-        return ok({ data: rows.map(({ _id, ...r }) => r) })
-      } catch (e) {
-        if (e.message && e.message.includes('does not exist')) return ok({ data: [] })
-        throw e
-      }
-    }
-    if (route === '/personel' && method === 'POST') {
-      if (!(me.role === 'kasubbid' || me.role === 'admin')) return fail('Hanya Kasubbid/Admin', 403)
-      const body = await request.json()
-      if (!body.nama_lengkap) return fail('Nama lengkap wajib')
-      const db = await getDb()
-      const doc = {
-        id: body.id || uuidv4(),
-        tenant_id: body.tenant_id || null,
-        organization_id: body.organization_id || null,
-        role: body.role || '',
-        nip: body.nip || '',
-        nama_lengkap: body.nama_lengkap,
-        pangkat: body.pangkat || '',
-        jabatan: body.jabatan || '',
-        kesatuan: body.kesatuan || '',
-        tim: body.tim || '',
-        unit: body.unit || '',
-        nomor_wa: body.nomor_wa || '',
-        ketua_tim: !!body.ketua_tim,
-        created_at: new Date(),
-        updated_at: new Date(),
-      }
-      await db.collection('personel').insertOne(doc)
-      await logAudit(me, 'personel_create', doc.id, { nama: doc.nama_lengkap })
-      const { _id, ...clean } = doc
-      return ok({ data: clean })
-    }
-    {
-      const m = route.match(/^\/personel\/([^/]+)$/)
-      if (m && method === 'PUT') {
-        if (!(me.role === 'kasubbid' || me.role === 'admin')) return fail('Hanya Kasubbid/Admin', 403)
-        const id = m[1]
-        const patch = await request.json()
-        if (patch.ketua_tim !== undefined) patch.ketua_tim = !!patch.ketua_tim
-        const db = await getDb()
-        await db.collection('personel').updateOne({ id }, { $set: { ...patch, updated_at: new Date() } })
-        const row = await db.collection('personel').findOne({ id })
-        if (!row) return fail('Personel tidak ditemukan', 404)
-        await logAudit(me, 'personel_update', id, patch)
-        const { _id, ...clean } = row
-        return ok({ data: clean })
-      }
-      if (m && method === 'DELETE') {
-        if (!(me.role === 'kasubbid' || me.role === 'admin')) return fail('Hanya Kasubbid/Admin', 403)
-        const id = m[1]
-        const db = await getDb()
-        await db.collection('personel').deleteOne({ id })
-        await logAudit(me, 'personel_delete', id)
         return ok({})
       }
     }
