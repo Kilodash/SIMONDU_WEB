@@ -34,25 +34,6 @@ CREATE TABLE IF NOT EXISTS timelines (
 );
 CREATE INDEX IF NOT EXISTS idx_tl_pid ON timelines(prepetrator_id, created_at DESC);
 
--- Followup documents (dokumen tindak lanjut)
-CREATE TABLE IF NOT EXISTS followup_documents (
-  id UUID PRIMARY KEY,
-  prepetrator_id TEXT NOT NULL,
-  filename TEXT,
-  storage_path TEXT,
-  public_url TEXT,
-  content_type TEXT,
-  size BIGINT DEFAULT 0,
-  description TEXT DEFAULT '',
-  document_type TEXT,
-  gajamada_path TEXT,
-  gajamada_attach_status TEXT DEFAULT 'skipped',
-  gajamada_error TEXT,
-  uploaded_by JSONB DEFAULT '{}',
-  uploaded_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_fdoc_pid ON followup_documents(prepetrator_id, uploaded_at DESC);
-
 -- Sync logs (log sinkronisasi ke Gajamada)
 CREATE TABLE IF NOT EXISTS sync_logs (
   id UUID PRIMARY KEY,
@@ -103,30 +84,6 @@ CREATE TABLE IF NOT EXISTS completions (
   completed_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Followup checklist (checklist dokumen per kasus)
-CREATE TABLE IF NOT EXISTS followup_checklist (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  prepetrator_id TEXT NOT NULL,
-  document_type TEXT NOT NULL,
-  status TEXT DEFAULT 'pending',
-  note TEXT DEFAULT '',
-  document_number TEXT,
-  document_date TIMESTAMPTZ,
-  updated_by JSONB DEFAULT '{}',
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(prepetrator_id, document_type)
-);
-
--- Case outcomes (hasil lidik & settlement)
-CREATE TABLE IF NOT EXISTS case_outcomes (
-  prepetrator_id TEXT PRIMARY KEY,
-  hasil_lidik TEXT,
-  settlement TEXT,
-  pelimpahan TEXT,
-  updated_by JSONB DEFAULT '{}',
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
 -- Satker/Satwil master data (tujuan pelimpahan)
 CREATE TABLE IF NOT EXISTS satker_satwil (
   id UUID PRIMARY KEY,
@@ -136,68 +93,16 @@ CREATE TABLE IF NOT EXISTS satker_satwil (
   updated_at TIMESTAMPTZ
 );
 
--- Numbering settings (penomoran otomatis)
-CREATE TABLE IF NOT EXISTS numbering_settings (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  document_type TEXT UNIQUE NOT NULL,
-  template TEXT NOT NULL,
-  next_seq INTEGER DEFAULT 1,
-  reset_yearly BOOLEAN DEFAULT TRUE,
-  last_year INTEGER,
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
 -- Enable RLS (service_role bypassed, but good practice)
 ALTER TABLE satker_satwil ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dispositions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE status_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE timelines ENABLE ROW LEVEL SECURITY;
-ALTER TABLE followup_documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sync_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE units_master ENABLE ROW LEVEL SECURITY;
 ALTER TABLE completions ENABLE ROW LEVEL SECURITY;
 
 -- Personel master (data personel untuk penomoran dokumen)
-CREATE TABLE IF NOT EXISTS personel (
-  id UUID PRIMARY KEY,
-  tenant_id UUID,
-  organization_id UUID,
-  role TEXT,
-  nip TEXT,
-  nama_lengkap TEXT,
-  pangkat TEXT,
-  jabatan TEXT,
-  kesatuan TEXT,
-  tim TEXT,
-  unit TEXT,
-  nomor_wa TEXT,
-  ketua_tim BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ
-);
-ALTER TABLE personel ENABLE ROW LEVEL SECURITY;
-ALTER TABLE followup_checklist ENABLE ROW LEVEL SECURITY;
-ALTER TABLE case_outcomes ENABLE ROW LEVEL SECURITY;
-ALTER TABLE numbering_settings ENABLE ROW LEVEL SECURITY;
-
 -- Document register (buku register dokumen)
-CREATE TABLE IF NOT EXISTS document_register (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  document_type TEXT NOT NULL,
-  number TEXT NOT NULL,
-  date TIMESTAMPTZ,
-  perihal TEXT DEFAULT '',
-  requesting_unit TEXT DEFAULT '',
-  keterangan TEXT DEFAULT '',
-  is_manual BOOLEAN DEFAULT FALSE,
-  prepetrator_id TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS idx_docreg_type ON document_register(document_type, created_at DESC);
-ALTER TABLE document_register ENABLE ROW LEVEL SECURITY;
-
 -- Local cases (pengaduan non-Gajamada: ASTINA, manual)
 CREATE TABLE IF NOT EXISTS local_cases (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -288,3 +193,16 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
+
+-- App users (managed by super admin via /admin/users API)
+CREATE TABLE IF NOT EXISTS app_users (
+  username TEXT PRIMARY KEY,
+  password TEXT NOT NULL,
+  name TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'unit',
+  unit TEXT,
+  email TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE app_users ENABLE ROW LEVEL SECURITY;

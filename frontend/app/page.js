@@ -14,14 +14,13 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import {
-  Shield, LayoutDashboard, FolderKanban, Send, ClipboardList, LogOut, Search,
-  Loader2, FileText, Upload, RefreshCw, Users, ChevronLeft, ChevronRight, Download, Paperclip,
+  Shield, LayoutDashboard, FolderKanban, Send, LogOut, Search,
+  Loader2, FileText, RefreshCw, Users, ChevronLeft, ChevronRight, Download, Paperclip,
   Building2, User, Calendar, Tag, CheckCircle2, XCircle, Clock,
   AlertCircle, ArrowRightLeft, History, Star, QrCode, Mail, Phone, MapPin,
-  Bell, Hash, Ban, Scale, Settings, Brain, Eye, EyeOff,
+  Hash, Settings, Eye, EyeOff,
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RTooltip, PieChart, Pie, Cell, Legend, CartesianGrid } from 'recharts'
 import { parseAstinaSurat } from '@/lib/parse-astina'
@@ -40,13 +39,6 @@ async function api(path, options = {}) {
   if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`)
   return data
 }
-async function apiUpload(path, formData) {
-  const res = await fetch(`/api${path}`, { method: 'POST', body: formData, credentials: 'include' })
-  const data = await res.json().catch(() => ({ ok: false, error: 'Bad response' }))
-  if (!data.ok) throw new Error(data.error || `HTTP ${res.status}`)
-  return data
-}
-
 // ---------------- Helpers ----------------
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
 const monthRoman = (d) => ROMAN[(d || new Date()).getMonth()]
@@ -62,7 +54,18 @@ const fmtDateShort = (d) => {
   if (!n) return '-'
   return new Date(n).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })
 }
-const shortUnit = (u) => (u || '').replace(' SUBBID PAMINAL POLDA JAWA BARAT', ' PAMINAL').replace(' POLDA JAWA BARAT', '')
+const shortUnit = (u) => {
+  if (!u) return '-'
+  return u
+    .replace(' SUBBID PAMINAL POLDA JAWA BARAT', ' PAMINAL')
+    .replace(' SUBBID PAMINAL BID PROPAM POLDA JABAR', ' PAMINAL')
+    .replace(' SUBBID PROVOS BID PROPAM POLDA JABAR', ' PROVOS')
+    .replace(' SUBBID WABPROF BID PROPAM POLDA JABAR', ' WABPROF')
+    .replace(' SUBBAG RENMIN BID PROPAM POLDA JABAR', ' RENMIN')
+    .replace(' BID PROPAM POLDA JABAR', ' PROPAM')
+    .replace(' POLDA JAWA BARAT', '')
+    .replace(' BID PROPAM', '')
+}
 
 const statusColor = (s) => {
   if (!s) return 'bg-slate-100 text-slate-700 border-slate-300'
@@ -271,24 +274,10 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const [data, setData] = useState(null)
   const [atts, setAtts] = useState([])
   const [loading, setLoading] = useState(true)
-  const [uploading, setUploading] = useState(null) // holds document_type currently uploading
-  const [completing, setCompleting] = useState(false)
   const [showFullChronology, setShowFullChronology] = useState(false)
   const [mergedTimeline, setMergedTimeline] = useState([])
-  const [reference, setReference] = useState({ followup_doc_types: [], stage_labels: {}, hasil_lidik_options: [], settlement_options: [], satker_satwil: [] })
-  const [notingItem, setNotingItem] = useState(null) // document_type currently editing "tidak berlaku" note
-  const [noteDraft, setNoteDraft] = useState('')
-  const [generatingNum, setGeneratingNum] = useState(null)
-  const [perdamaianOpen, setPerdamaianOpen] = useState(false)
-  const [perdamaianChecks, setPerdamaianChecks] = useState({
-    material1: false, material2: false, material3: false, material4: false,
-    prinsip1: false, prinsip2: false,
-  })
-  const [perdamaianTab, setPerdamaianTab] = useState('sebelum')
-  const [perdamaianSebelum, setPerdamaianSebelum] = useState({ pencabutan: false, klarifikasi: false, ba_introgasi: false })
-  const [perdamaianSetelah, setPerdamaianSetelah] = useState({ permohonan_gelar: false, rekomendasi_gelar: false, surat_henti: false, buku_register: false, surat_ankum: false })
-  const [perdamaianUploading, setPerdamaianUploading] = useState(false)
-  const allPerdamaianChecked = Object.values(perdamaianChecks).every(Boolean) && (perdamaianTab === 'sebelum' ? Object.values(perdamaianSebelum).every(Boolean) : Object.values(perdamaianSetelah).every(Boolean))
+  const [saranText, setSaranText] = useState('')
+  const [saranSubmitting, setSaranSubmitting] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -303,94 +292,21 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
     finally { setLoading(false) }
   }
   useEffect(() => { if (pid) load() }, [pid])
-  useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
 
-  const doUpload = async (e, documentType = 'lainnya') => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploading(documentType)
+  const submitSaran = async () => {
+    if (!saranText.trim()) return toast.error('Saran tidak boleh kosong')
+    setSaranSubmitting(true)
     try {
-      const fd = new FormData(); fd.append('file', file); fd.append('description', file.name); fd.append('document_type', documentType)
-      await apiUpload(`/cases/${encodeURIComponent(pid)}/documents`, fd)
-      toast.success('Dokumen diunggah ke SIMONDU & Gajamada')
-      e.target.value = ''
+      await api(`/cases/${encodeURIComponent(pid)}/saran`, { method: 'POST', body: JSON.stringify({ title: 'Saran Yanduan', description: saranText }) })
+      toast.success('Saran berhasil dikirim')
+      setSaranText('')
       await load(); onChanged?.()
     } catch (e) { toast.error(e.message) }
-    finally { setUploading(null) }
-  }
-  const doSetChecklistStatus = async (documentType, status, note) => {
-    try {
-      await api(`/cases/${encodeURIComponent(pid)}/checklist/${encodeURIComponent(documentType)}`, { method: 'POST', body: JSON.stringify({ status, note: note || '' }) })
-      toast.success('Status checklist diperbarui')
-      setNotingItem(null); setNoteDraft('')
-      await load(); onChanged?.()
-    } catch (e) { toast.error(e.message) }
-  }
-  const doGenerateNumber = async (documentType) => {
-    setGeneratingNum(documentType)
-    try {
-      const r = await api(`/cases/${encodeURIComponent(pid)}/checklist/${encodeURIComponent(documentType)}/generate-number`, { method: 'POST' })
-      toast.success(`Nomor dibuat: ${r.data.document_number}`)
-      await load()
-    } catch (e) { toast.error(e.message) }
-    finally { setGeneratingNum(null) }
-  }
-  const doSetOutcome = async (patch) => {
-    try {
-      await api(`/cases/${encodeURIComponent(pid)}/outcome`, { method: 'POST', body: JSON.stringify(patch) })
-      await load(); onChanged?.()
-    } catch (e) { toast.error(e.message) }
-  }
-  const doPerdamaian = async () => {
-    if (!allPerdamaianChecked) return toast.error('Semua syarat harus diceklist terlebih dahulu')
-    setPerdamaianUploading(true)
-    try {
-      await api(`/cases/${encodeURIComponent(pid)}/perdamaian`, { method: 'POST', body: JSON.stringify({ checks: perdamaianChecks, tab: perdamaianTab, sebelum: perdamaianTab === 'sebelum' ? perdamaianSebelum : null, setelah: perdamaianTab === 'setelah' ? perdamaianSetelah : null }) })
-      toast.success('Perdamaian dicatat · status & timeline diperbarui')
-      setPerdamaianOpen(false)
-      setPerdamaianChecks({
-        material1: false, material2: false, material3: false, material4: false,
-        prinsip1: false, prinsip2: false,
-      })
-      setPerdamaianSebelum({ pencabutan: false, klarifikasi: false, ba_introgasi: false })
-      setPerdamaianSetelah({ permohonan_gelar: false, rekomendasi_gelar: false, surat_henti: false, buku_register: false, surat_ankum: false })
-      await load(); onChanged?.()
-    } catch (e) { toast.error(e.message) }
-    finally { setPerdamaianUploading(false) }
-  }
-  const togglePerdamaianCheck = (key) => {
-    if (perdamaianTab === 'sebelum' && key in perdamaianSebelum) {
-      setPerdamaianSebelum((p) => ({ ...p, [key]: !p[key] }))
-    } else if (perdamaianTab === 'setelah' && key in perdamaianSetelah) {
-      setPerdamaianSetelah((p) => ({ ...p, [key]: !p[key] }))
-    } else {
-      setPerdamaianChecks((p) => ({ ...p, [key]: !p[key] }))
-    }
-  }
-  const resetPerdamaian = () => {
-    setPerdamaianChecks({
-      material1: false, material2: false, material3: false, material4: false,
-      prinsip1: false, prinsip2: false,
-    })
-    setPerdamaianSebelum({ pencabutan: false, klarifikasi: false, ba_introgasi: false })
-    setPerdamaianSetelah({ permohonan_gelar: false, rekomendasi_gelar: false, surat_henti: false, buku_register: false, surat_ankum: false })
-  }
-  const doComplete = async () => {
-    if (!confirm('Tandai kasus ini SELESAI?')) return
-    setCompleting(true)
-    try {
-      await api(`/cases/${encodeURIComponent(pid)}/complete`, { method: 'POST', body: JSON.stringify({ note: 'Ditandai selesai' }) })
-      toast.success('Kasus ditandai Selesai · disinkronisasi otomatis')
-      await load(); onChanged?.()
-    } catch (e) { toast.error(e.message) }
-    finally { setCompleting(false) }
+    finally { setSaranSubmitting(false) }
   }
 
   if (!pid) return null
   const derivedStatus = data?.derived_status
-  const checklist = data?._internal?.checklist
-  const outcome = data?._internal?.outcome
-  const canComplete = data && (user.role === 'unit' ? data.disposisi_case_position === user.unit : true) && derivedStatus !== 'Selesai' && (checklist ? checklist.canComplete : true)
 
   return (
     <Sheet open={!!pid} onOpenChange={(v) => !v && onClose()}>
@@ -410,6 +326,9 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                     <p className="text-xs uppercase tracking-wide text-blue-200">ID Kasus</p>
                     {data.is_atensi && <Badge className="bg-amber-400 text-amber-950 text-[10px]"><Star className="h-3 w-3 mr-0.5 fill-amber-800" />ATENSI</Badge>}
                   </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    {data.source_alias && <Badge className={`${sourceColor(data.source_alias)} text-[10px]`}>{data.source_alias}</Badge>}
+                  </div>
                   <p className="text-lg font-bold font-mono">{data.prepetrator_id}</p>
                   <p className="text-sm mt-2 text-blue-100 line-clamp-2">{data.prepetrator_name || '(Tanpa nama terlapor)'}</p>
                 </div>
@@ -418,24 +337,13 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                   <p className="text-xs text-blue-200">{fmtDate(data.created_date)}</p>
                 </div>
               </div>
-              <div className="mt-3 flex gap-2 flex-wrap">
-                <Button size="sm" variant="secondary" onClick={() => setPerdamaianOpen(true)}><ClipboardList className="h-4 w-4 mr-1" /> Perdamaian</Button>
-                {canComplete && (
-                  <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={doComplete} disabled={completing}>
-                    {completing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />} Tandai Selesai
-                  </Button>
-                )}
-              </div>
-
             </div>
 
             <div className="p-6">
               <Tabs defaultValue="info">
-                <TabsList className="grid grid-cols-5 w-full">
+                <TabsList className="grid grid-cols-3 w-full">
                   <TabsTrigger value="info">Info</TabsTrigger>
-                  <TabsTrigger value="attach">Sumber ({atts.length})</TabsTrigger>
-                  <TabsTrigger value="docs">Tindak Lanjut {checklist ? `(${checklist.requiredProgress.completed}/${checklist.requiredProgress.total})` : ''}</TabsTrigger>
-                  <TabsTrigger value="timeline">Timeline ({mergedTimeline.length})</TabsTrigger>
+                  <TabsTrigger value="catatan">Catatan ({mergedTimeline.length})</TabsTrigger>
                   <TabsTrigger value="sync">Sync ({data._internal?.sync_logs?.length || 0})</TabsTrigger>
                 </TabsList>
 
@@ -454,6 +362,25 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                       <InfoRow icon={<Calendar className="h-4 w-4" />} label="Diterima" value={fmtDate(data.created_date)} />
                     </CardContent>
                   </Card>
+                  {atts.length > 0 && (
+                    <Card><CardHeader className="pb-2"><CardTitle className="text-sm">Lampiran ({atts.length})</CardTitle></CardHeader>
+                      <CardContent>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {atts.map((a, i) => (
+                            <a key={i} href={`/api/download?url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.file_name + '.' + a.file_type)}`} target="_blank" rel="noreferrer"
+                              className="flex items-center gap-3 p-3 border rounded-lg hover:bg-slate-50 transition-colors group">
+                              <div className="h-10 w-10 rounded bg-blue-100 text-blue-800 flex items-center justify-center flex-shrink-0"><Paperclip className="h-5 w-5" /></div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium truncate">{a.file_name}</p>
+                                <p className="text-xs text-slate-500">{(a.file_type || '').toUpperCase()} · {fmtDateShort(a.created_at)}</p>
+                              </div>
+                              <Download className="h-4 w-4 text-slate-400 group-hover:text-blue-800" />
+                            </a>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
                   {(data.summary || data.content) && (
                     <Card>
                       <CardHeader className="pb-2 flex flex-row items-center justify-between">
@@ -490,202 +417,33 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                   </Card>
                 </TabsContent>
 
-                <TabsContent value="attach" className="mt-4">
-                  <Card><CardHeader className="pb-2">
-                    <CardTitle className="text-sm">Dokumen Sumber Pengaduan (Gajamada)</CardTitle>
-</CardHeader>
-                    <CardContent>
-                      {atts.length === 0 ? <p className="text-sm text-slate-500">Tidak ada lampiran.</p> :
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          {atts.map((a, i) => (
-                            <a key={i} href={`/api/download?url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.file_name + '.' + a.file_type)}`} target="_blank" rel="noreferrer"
-                              className="flex items-center gap-3 p-3 border rounded-lg hover:bg-slate-50 transition-colors group">
-                              <div className="h-10 w-10 rounded bg-blue-100 text-blue-800 flex items-center justify-center flex-shrink-0"><Paperclip className="h-5 w-5" /></div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium truncate">{a.file_name}</p>
-                                <p className="text-xs text-slate-500">{(a.file_type || '').toUpperCase()} · {fmtDateShort(a.created_at)}</p>
-                              </div>
-                              <Download className="h-4 w-4 text-slate-400 group-hover:text-blue-800" />
-                            </a>
-                          ))}
-                        </div>}
-                    </CardContent>
-                  </Card>
-                </TabsContent>
-
-                <TabsContent value="docs" className="mt-4 space-y-4">
-                  <Card className="border-blue-200 bg-blue-50/30">
-                    <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Scale className="h-4 w-4 text-blue-800" /> Hasil Lidik & Pelimpahan</CardTitle></CardHeader>
-                    <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <Label className="text-xs">Hasil Lidik</Label>
-                        <Select value={outcome?.hasil_lidik || '__none'} onValueChange={(v) => doSetOutcome({ hasil_lidik: v === '__none' ? null : v, settlement: outcome?.settlement })}>
-                          <SelectTrigger className="mt-1"><SelectValue placeholder="Belum ditentukan" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none">Belum ditentukan</SelectItem>
-                            {reference.hasil_lidik_options?.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label className="text-xs">Pelimpahan ke Satker/Satwil</Label>
-                        <Select value={outcome?.pelimpahan || '__none'} onValueChange={(v) => doSetOutcome({ ...outcome, pelimpahan: v === '__none' ? null : v })}>
-                          <SelectTrigger className="mt-1"><SelectValue placeholder="Tidak ada" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none">Tidak ada</SelectItem>
-                            {reference.satker_satwil?.map((o) => <SelectItem key={o.id} value={o.name}>{o.name}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {checklist && (
-                    <Card>
-                      <CardContent className="p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <p className="text-sm font-medium text-slate-700">Kelengkapan Dokumen Wajib</p>
-                          <p className="text-sm font-bold text-blue-800">{checklist.requiredProgress.completed} / {checklist.requiredProgress.total}</p>
+                <TabsContent value="catatan" className="mt-4 space-y-4">
+                  {user.role === 'yanduan' && (
+                    <Card className="border-blue-300 bg-blue-50/30">
+                      <CardHeader className="pb-2"><CardTitle className="text-sm">Beri Saran</CardTitle></CardHeader>
+                      <CardContent>
+                        <div className="space-y-2">
+                          <Textarea value={saranText} onChange={(e) => setSaranText(e.target.value)} placeholder="Tulis saran yanduan..." className="min-h-[80px] text-sm" />
+                          <Button onClick={submitSaran} disabled={saranSubmitting || !saranText.trim()} size="sm">
+                            {saranSubmitting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Kirim Saran
+                          </Button>
                         </div>
-                        <div className="w-full h-2.5 rounded-full bg-slate-100 overflow-hidden">
-                          <div className="h-full bg-blue-800 rounded-full transition-all" style={{ width: `${checklist.requiredProgress.total ? (checklist.requiredProgress.completed / checklist.requiredProgress.total) * 100 : 100}%` }} />
-                        </div>
-
                       </CardContent>
                     </Card>
                   )}
-
-                  {['perencanaan', 'pelaksanaan', 'tindak_lanjut', 'cabang_terbukti', 'cabang_tidak_terbukti'].map((stage) => {
-                    const items = (checklist?.items || []).filter((i) => i.stage === stage)
-                    if (items.length === 0) return null
-                    return (
-                      <Card key={stage}>
-                        <CardHeader className="pb-2"><CardTitle className="text-sm">{reference.stage_labels?.[stage] || stage}</CardTitle></CardHeader>
-                        <CardContent className="space-y-3">
-                          {items.map((item) => (
-                            <div key={item.key} className="border rounded-lg p-3">
-                              <div className="flex items-start justify-between gap-3 flex-wrap">
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <p className="text-sm font-medium">{item.label}</p>
-                                    {!item.required && <Badge variant="outline" className="text-[10px]">Opsional</Badge>}
-                                  </div>
-                                  {item.document_number && (
-                                    <p className="text-xs font-mono text-blue-800 mt-1 flex items-center gap-1"><Hash className="h-3 w-3" /> {item.document_number}</p>
-                                  )}
-                                  {item.note && <p className="text-xs text-slate-500 mt-1 italic">Catatan: {item.note}</p>}
-                                </div>
-                                <Badge className={`text-[10px] ${item.status === 'completed' ? 'bg-green-100 text-green-800 border-green-300' : item.status === 'not_applicable' ? 'bg-slate-100 text-slate-500 border-slate-300' : 'bg-amber-100 text-amber-800 border-amber-300'}`}>
-                                  {item.status === 'completed' ? 'Lengkap' : item.status === 'not_applicable' ? 'Tidak Berlaku' : 'Belum Lengkap'}
-                                </Badge>
-                              </div>
-
-                              {item.documents.length > 0 && (
-                                <div className="mt-2 space-y-1">
-                                  {item.documents.map((d) => (
-                                    <div key={d.id} className="flex items-center gap-2 text-xs bg-slate-50 rounded px-2 py-1.5">
-                                      <FileText className="h-3.5 w-3.5 text-green-700 flex-shrink-0" />
-                                      <span className="truncate flex-1">{d.filename}</span>
-                                      <span className="text-slate-400 flex-shrink-0">{d.uploaded_by?.name} · {fmtDateShort(d.uploaded_at)}</span>
-                                      {d.gajamada_attach_status === 'success' ? (
-                                        <Badge className="bg-blue-100 text-blue-700 text-[9px] flex-shrink-0">Tersinkron Gajamada</Badge>
-                                      ) : (
-                                        <Badge variant="outline" className="text-[9px] flex-shrink-0">Belum sinkron Gajamada</Badge>
-                                      )}
-                                      <a href={d.public_url} target="_blank" rel="noreferrer" className="text-blue-800 flex-shrink-0"><Download className="h-3.5 w-3.5" /></a>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-
-                              {notingItem === item.key ? (
-                                <div className="mt-2 flex items-center gap-2">
-                                  <Input value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} placeholder="Catatan (opsional)..." className="h-8 text-xs" />
-                                  <Button size="sm" className="h-8" onClick={() => doSetChecklistStatus(item.key, 'not_applicable', noteDraft)}>Simpan</Button>
-                                  <Button size="sm" variant="ghost" className="h-8" onClick={() => { setNotingItem(null); setNoteDraft('') }}>Batal</Button>
-                                </div>
-                              ) : (
-                                <div className="mt-2 space-y-2">
-                                  {item.numbering && (
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex-1">
-                                        <Label className="text-[10px] text-slate-500">Tanggal</Label>
-                                        <Input type="date" className="h-7 text-xs" />
-                                      </div>
-                                      <div className="flex-1">
-                                        <Label className="text-[10px] text-slate-500">Nomor</Label>
-                                        <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => doGenerateNumber(item.key)} disabled={generatingNum === item.key}>
-                                          {generatingNum === item.key ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Hash className="h-3 w-3 mr-1" />} {item.document_number || 'Buat Nomor'}
-                                        </Button>
-                                       </div>
-      </div>
-      )}
-                                   <div className="flex items-center gap-2 flex-wrap">
-                                    <label>
-                                      <input type="file" className="hidden" onChange={(e) => doUpload(e, item.key)} disabled={uploading === item.key} />
-                                      <Button asChild size="sm" variant="outline" className="h-7 text-xs" disabled={uploading === item.key}>
-                                        <span className="cursor-pointer">{uploading === item.key ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Upload className="h-3 w-3 mr-1" />} Upload</span>
-                                      </Button>
-                                    </label>
-                                    {item.status !== 'not_applicable' ? (
-                                      <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500" onClick={() => setNotingItem(item.key)}><Ban className="h-3 w-3 mr-1" /> Tidak Berlaku</Button>
-                                    ) : (
-                                      <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500" onClick={() => doSetChecklistStatus(item.key, 'pending', '')}>Aktifkan Lagi</Button>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </CardContent>
-                      </Card>
-                    )
-                  })}
-
-                  <Card>
-                    <CardHeader className="pb-2"><CardTitle className="text-sm">Dokumen Lainnya</CardTitle>
-  </CardHeader>
-                    <CardContent className="space-y-2">
-                      <label>
-                        <input type="file" className="hidden" onChange={(e) => doUpload(e, 'lainnya')} disabled={uploading === 'lainnya'} />
-                        <Button asChild size="sm" variant="outline" disabled={uploading === 'lainnya'}><span className="cursor-pointer">
-                          {uploading === 'lainnya' ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Upload Dokumen Lain
-                        </span></Button>
-                      </label>
-                      {(data._internal?.documents || []).filter((d) => !d.document_type || d.document_type === 'lainnya').length === 0 ? (
-                        <p className="text-sm text-slate-500">Belum ada dokumen lainnya.</p>
-                      ) : (
-                        <div className="space-y-2 pt-2">
-                          {data._internal.documents.filter((d) => !d.document_type || d.document_type === 'lainnya').map((d) => (
-                            <div key={d.id} className="flex items-center gap-3 p-3 border rounded-lg">
-                              <div className="h-10 w-10 rounded bg-green-100 text-green-700 flex items-center justify-center flex-shrink-0"><FileText className="h-5 w-5" /></div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium truncate">{d.filename}</p>
-                                <p className="text-xs text-slate-500">{d.uploaded_by?.name} · {fmtDate(d.uploaded_at)}</p>
-                              </div>
-                              <a href={d.public_url} target="_blank" rel="noreferrer" className="text-blue-800 hover:text-blue-900"><Download className="h-4 w-4" /></a>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </TabsContent>
-
-                <TabsContent value="timeline" className="mt-4">
                   <Card><CardHeader className="pb-2">
-                    <CardTitle className="text-sm">Timeline Tindak Lanjut</CardTitle>
+                    <CardTitle className="text-sm">Catatan</CardTitle>
                   </CardHeader>
                     <CardContent>
-                      {mergedTimeline.length === 0 ? <p className="text-sm text-slate-500">Timeline masih kosong.</p> :
+                      {mergedTimeline.length === 0 ? <p className="text-sm text-slate-500">Catatan masih kosong.</p> :
                         <ol className="relative border-l-2 border-blue-200 ml-3 space-y-4">
                           {mergedTimeline.map((t) => (
                             <li key={t.id} className="ml-4 relative">
-                              <div className={`absolute -left-[24px] w-4 h-4 rounded-full border-2 border-white ${t.source === 'gajamada' ? 'bg-slate-600' : 'bg-blue-800'}`} />
+                              <div className={`absolute -left-[24px] w-4 h-4 rounded-full border-2 border-white ${t.source === 'gajamada' ? 'bg-slate-600' : t.by?.role === 'yanduan' ? 'bg-amber-500' : 'bg-blue-800'}`} />
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className="text-sm font-medium">{t.title || t.status}</p>
-                                <Badge variant="outline" className={`text-[10px] ${t.source === 'gajamada' ? 'bg-slate-100 text-slate-700' : 'bg-blue-50 text-blue-800'}`}>
-                                  {t.source === 'gajamada' ? 'Gajamada' : 'Internal'}
+                                <Badge variant="outline" className={`text-[10px] ${t.source === 'gajamada' ? 'bg-slate-100 text-slate-700' : t.by?.role === 'yanduan' ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-blue-50 text-blue-800'}`}>
+                                  {t.source === 'gajamada' ? 'Gajamada' : t.by?.role === 'yanduan' ? 'Saran Yanduan' : 'Internal'}
                                 </Badge>
                               </div>
                               <p className="text-xs text-slate-500 mt-0.5">
@@ -704,7 +462,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                 </TabsContent>
 
                 <TabsContent value="sync" className="mt-4">
-                  <Card><CardHeader className="pb-2"><CardTitle className="text-sm">Log Sinkronisasi Otomatis ke Gajamada</CardTitle>
+                  <Card><CardHeader className="pb-2"><CardTitle className="text-sm">Log Sinkronisasi ke Gajamada</CardTitle>
 </CardHeader>
                     <CardContent>
                       {(data._internal?.sync_logs?.length || 0) === 0 ? <p className="text-sm text-slate-500">Belum ada aktivitas sinkronisasi.</p> :
@@ -728,135 +486,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                 </TabsContent>
               </Tabs>
             </div>
-
-            <Dialog open={perdamaianOpen} onOpenChange={setPerdamaianOpen}>
-              <DialogContent className="max-w-lg">
-                <DialogHeader><DialogTitle>Perdamaian</DialogTitle></DialogHeader>
-                <div className="space-y-4 max-h-[60vh] overflow-y-auto">
-                  <Tabs value={perdamaianTab} onValueChange={setPerdamaianTab}>
-                    <TabsList className="grid grid-cols-2 w-full">
-                      <TabsTrigger value="sebelum">Sebelum Lidik</TabsTrigger>
-                      <TabsTrigger value="setelah">Setelah Lidik</TabsTrigger>
-                    </TabsList>
-                    <TabsContent value="sebelum" className="space-y-4 mt-4">
-                      <div>
-                        <p className="text-sm font-semibold mb-2">1. Syarat Material</p>
-                        <div className="space-y-2">
-                          {[
-                            { key: 'material1', label: 'Tidak menimbulkan keresahan dan penolakan dari masyarakat' },
-                            { key: 'material2', label: 'Tidak berdampak konflik sosial' },
-                            { key: 'material3', label: 'Adanya pernyataan dari semua pihak yang terlibat untuk tidak keberatan' },
-                            { key: 'material4', label: 'Memenuhi kriteria Prinsip pembatas' },
-                          ].map((item) => (
-                            <div key={item.key} className="flex items-start gap-2">
-                              <Checkbox id={`p-${item.key}`} checked={perdamaianChecks[item.key]} onCheckedChange={() => togglePerdamaianCheck(item.key)} />
-                              <Label htmlFor={`p-${item.key}`} className="text-xs cursor-pointer">{item.label}</Label>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold mb-2">2. Prinsip Pembatas</p>
-                        <div className="space-y-2">
-                          {[
-                            { key: 'prinsip1', label: 'Tingkat kesalahan pelaku tidak berat dengan mempertimbangkan niat dan tujuan pelaku (Mensrea)' },
-                            { key: 'prinsip2', label: 'Pelaku bukan anggota yang sering melakukan pelanggaran Disiplin dan/atau KEPP dan pertimbangan ankum layak untuk perdamaian' },
-                          ].map((item) => (
-                            <div key={item.key} className="flex items-start gap-2">
-                              <Checkbox id={`p-${item.key}`} checked={perdamaianChecks[item.key]} onCheckedChange={() => togglePerdamaianCheck(item.key)} />
-                              <Label htmlFor={`p-${item.key}`} className="text-xs cursor-pointer">{item.label}</Label>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold mb-2">3. Mekanisme</p>
-                        <div className="space-y-2">
-                          {[
-                            { key: 'pencabutan', label: 'Surat Pencabutan Laporan oleh pelapor di atas meterai' },
-                            { key: 'klarifikasi', label: 'Surat Permohonan Perdamaian / Klarifikasi dari kedua belah pihak' },
-                            { key: 'ba_introgasi', label: 'Berita acara introgasi / pemeriksaan tambahan terhadap kedua belah pihak' },
-                          ].map((item) => (
-                            <div key={item.key} className="flex items-start gap-2">
-                              <Checkbox id={`p-${item.key}`} checked={perdamaianSebelum[item.key]} onCheckedChange={() => togglePerdamaianCheck(item.key)} />
-                              <Label htmlFor={`p-${item.key}`} className="text-xs cursor-pointer">{item.label}</Label>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </TabsContent>
-                    <TabsContent value="setelah" className="space-y-4 mt-4">
-                      <div>
-                        <p className="text-sm font-semibold mb-2">1. Syarat Material</p>
-                        <div className="space-y-2">
-                          {[
-                            { key: 'material1', label: 'Tidak menimbulkan keresahan dan penolakan dari masyarakat' },
-                            { key: 'material2', label: 'Tidak berdampak konflik sosial' },
-                            { key: 'material3', label: 'Adanya pernyataan dari semua pihak yang terlibat untuk tidak keberatan' },
-                            { key: 'material4', label: 'Memenuhi kriteria Prinsip pembatas' },
-                          ].map((item) => (
-                            <div key={item.key} className="flex items-start gap-2">
-                              <Checkbox id={`p-${item.key}`} checked={perdamaianChecks[item.key]} onCheckedChange={() => togglePerdamaianCheck(item.key)} />
-                              <Label htmlFor={`p-${item.key}`} className="text-xs cursor-pointer">{item.label}</Label>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold mb-2">2. Prinsip Pembatas</p>
-                        <div className="space-y-2">
-                          {[
-                            { key: 'prinsip1', label: 'Tingkat kesalahan pelaku tidak berat dengan mempertimbangkan niat dan tujuan pelaku (Mensrea)' },
-                            { key: 'prinsip2', label: 'Pelaku bukan anggota yang sering melakukan pelanggaran Disiplin dan/atau KEPP dan pertimbangan ankum layak untuk perdamaian' },
-                          ].map((item) => (
-                            <div key={item.key} className="flex items-start gap-2">
-                              <Checkbox id={`p-${item.key}`} checked={perdamaianChecks[item.key]} onCheckedChange={() => togglePerdamaianCheck(item.key)} />
-                              <Label htmlFor={`p-${item.key}`} className="text-xs cursor-pointer">{item.label}</Label>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold mb-2">3. Mekanisme</p>
-                        <div className="space-y-2">
-                          {[
-                            { key: 'permohonan_gelar', label: 'Surat Permohonan Gelar Perkara' },
-                            { key: 'rekomendasi_gelar', label: 'Surat Rekomendasi Hasil Gelar Perkara' },
-                            { key: 'surat_henti', label: 'Surat Perintah Penghentian Penyidikan / Lidik' },
-                            { key: 'buku_register', label: 'Buku Register Perkara' },
-                            { key: 'surat_ankum', label: 'Surat Jawaban Ankum / Kesatuan' },
-                          ].map((item) => (
-                            <div key={item.key} className="flex items-start gap-2">
-                              <Checkbox id={`p-${item.key}`} checked={perdamaianSetelah[item.key]} onCheckedChange={() => togglePerdamaianCheck(item.key)} />
-                              <Label htmlFor={`p-${item.key}`} className="text-xs cursor-pointer">{item.label}</Label>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </TabsContent>
-                  </Tabs>
-                  <div>
-                    <Label>Upload Dokumen Perdamaian</Label>
-                    <label className="mt-1 block">
-                      <input type="file" className="hidden" onChange={(e) => doUpload(e, 'perdamaian')} disabled={perdamaianUploading} />
-                      <Button asChild size="sm" variant="outline" disabled={perdamaianUploading}>
-                        <span className="cursor-pointer">{perdamaianUploading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Upload className="h-3 w-3 mr-1" />} Upload</span>
-                      </Button>
-                    </label>
-                  </div>
-                  {!allPerdamaianChecked && (
-                    <p className="text-xs text-red-600">Semua syarat harus diceklist sebelum menyimpan perdamaian.</p>
-                  )}
-                </div>
-                <DialogFooter>
-                  <Button variant="ghost" onClick={resetPerdamaian}>Reset</Button>
-                  <Button onClick={doPerdamaian} disabled={!allPerdamaianChecked || perdamaianUploading}>
-                    {perdamaianUploading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Simpan
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-      </Dialog>
-    </div>
+          </div>
         )}
       </SheetContent>
     </Sheet>
@@ -903,7 +533,7 @@ function CasesList({ user, onOpenCase }) {
     setCreateForm({
       perihal: '', pengirim: '', nomor_surat: '', tgl_surat: '',
       prepetrator_name: '', summary: '', category: '',
-      case_type: user.role === 'unit' ? 'laporan_informasi' : 'pengaduan',
+      case_type: 'pengaduan',
     })
   }
 
@@ -1222,24 +852,18 @@ function CasesList({ user, onOpenCase }) {
       </Dialog>
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Tambah Data Surat</DialogTitle><DialogDescription>{
-            user.role === 'unit' ? 'Unit hanya bisa input Laporan Informasi.' : 'Isi data surat manual.'
-          }</DialogDescription></DialogHeader>
+            <DialogHeader><DialogTitle>Tambah Data Surat</DialogTitle><DialogDescription>Isi data surat manual.</DialogDescription></DialogHeader>
           <div className="space-y-3">
             <div>
               <Label>Jenis</Label>
               <div className="grid grid-cols-3 gap-2 mt-1">
-                {user.role !== 'unit' && (
                   <button type="button" onClick={() => setCreateForm({ ...createForm, case_type: 'pengaduan' })}
                     className={`px-3 py-1.5 rounded-md border text-xs font-medium ${createForm.case_type === 'pengaduan' ? 'bg-blue-800 text-white border-blue-900' : 'bg-white text-slate-700 border-slate-300'}`}>Pengaduan</button>
-                )}
-                <button type="button" onClick={() => setCreateForm({ ...createForm, case_type: 'laporan_informasi' })}
-                  className={`px-3 py-1.5 rounded-md border text-xs font-medium ${createForm.case_type === 'laporan_informasi' ? 'bg-sky-800 text-white border-sky-900' : 'bg-white text-slate-700 border-slate-300'}`}>Laporan Informasi</button>
-                {user.role !== 'unit' && (
+                  <button type="button" onClick={() => setCreateForm({ ...createForm, case_type: 'laporan_informasi' })}
+                    className={`px-3 py-1.5 rounded-md border text-xs font-medium ${createForm.case_type === 'laporan_informasi' ? 'bg-sky-800 text-white border-sky-900' : 'bg-white text-slate-700 border-slate-300'}`}>Laporan Informasi</button>
                   <button type="button" onClick={() => setCreateForm({ ...createForm, case_type: 'non_dumas' })}
                     className={`px-3 py-1.5 rounded-md border text-xs font-medium ${createForm.case_type === 'non_dumas' ? 'bg-slate-800 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300'}`}>Non-Dumas</button>
-                )}
-              </div>
+                </div>
             </div>
             <div><Label>Perihal *</Label><Input value={createForm.perihal || ''} onChange={(e) => setCreateForm({ ...createForm, perihal: e.target.value })} placeholder="Perihal surat" /></div>
             <div><Label>Pelapor/Pengirim *</Label><Input value={createForm.pengirim || ''} onChange={(e) => setCreateForm({ ...createForm, pengirim: e.target.value })} placeholder="Nama pengirim" /></div>
@@ -1811,7 +1435,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
                   <Button variant="outline" size="sm" onClick={cancelEdit} className="flex-1">Batal</Button>
                   <Button onClick={saveEdit} disabled={submitting || !toUnit} className="flex-1 bg-amber-700 hover:bg-amber-800" data-testid="disposisi-submit">
                     {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                    Simpan & Sinkronkan
+                    Simpan
                   </Button>
                 </div>
               ) : (
@@ -1869,7 +1493,7 @@ function MasterUnitPage({ user }) {
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({ name: '', parent: 'KASUBBID PAMINAL POLDA JAWA BARAT', order: 99 })
   const [syncing, setSyncing] = useState(false)
-  const isKasubbid = user.role === 'kasubbid' || user.role === 'admin'
+  const isKasubbid = ['superadmin', 'kabid', 'kasubbag', 'kasubbid', 'admin'].includes(user.role)
 
   const load = async () => {
     setLoading(true)
@@ -2073,189 +1697,7 @@ function SatkerSatwilPage({ user }) {
   )
 }
 
-// ---------------- Document Register (Register Dokumen) ----------------
-const DOC_TYPES = [
-  { key: 'sprin', label: 'Sprin', prefix: 'SPRIN' },
-  { key: 'sp2hp2', label: 'SP2HP2', prefix: 'SP2HP2' },
-  { key: 'lhp', label: 'LHP', prefix: 'LHP' },
-  { key: 'nota_dinas', label: 'Nota Dinas', prefix: 'ND' },
-  { key: 'surat_henti', label: 'Surat Henti', prefix: 'SH' },
-  { key: 'buku_register', label: 'Buku Register', prefix: 'BR' },
-  { key: 'surat_ankum', label: 'Surat Ankum', prefix: 'SA' },
-]
 
-function DocumentRegisterPage() {
-  const [rows, setRows] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ document_type: '', perihal: '', unit_pengaju: '', keterangan: '', auto: true, nomor: '', target_seq: '' })
-  const [reference, setReference] = useState({ units: [] })
-  const [generating, setGenerating] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(null)
-
-  const load = async () => {
-    setLoading(true)
-    try { const r = await api('/document-register'); setRows(r.data) }
-    catch (e) { toast.error(e.message) }
-    finally { setLoading(false) }
-  }
-  useEffect(() => { load() }, [])
-  useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
-
-  const openCreate = (docType = '') => {
-    setEditing(null)
-    setForm({ document_type: docType, perihal: '', unit_pengaju: '', keterangan: '', auto: true, nomor: '', target_seq: '' })
-    setDialogOpen(true)
-  }
-  const openEdit = (r) => {
-    setEditing(r)
-    setForm({ document_type: r.document_type, perihal: r.perihal || '', unit_pengaju: r.unit_pengaju || '', keterangan: r.keterangan || '', auto: !r.manual, nomor: r.nomor || '', target_seq: '' })
-    setDialogOpen(true)
-  }
-  const generateNumber = async () => {
-    setGenerating(true)
-    try {
-      const r = await api('/document-register/generate', { method: 'POST', body: JSON.stringify({ document_type: form.document_type, target_seq: form.target_seq ? parseInt(form.target_seq, 10) : undefined }) })
-      setForm((f) => ({ ...f, nomor: r.data.nomor, target_seq: '' }))
-      toast.success(`Nomor dibuat: ${r.data.nomor}`)
-    } catch (e) { toast.error(e.message) }
-    finally { setGenerating(false) }
-  }
-  const save = async () => {
-    if (!form.document_type) return toast.error('Jenis dokumen wajib')
-    setSaving(true)
-    try {
-      const body = {
-        document_type: form.document_type,
-        perihal: form.perihal,
-        unit_pengaju: form.unit_pengaju,
-        keterangan: form.keterangan,
-        manual: !form.auto,
-        nomor: form.nomor,
-        target_seq: form.target_seq ? parseInt(form.target_seq, 10) : undefined,
-      }
-      if (editing) {
-        await api(`/document-register/${encodeURIComponent(editing.id)}`, { method: 'PUT', body: JSON.stringify(body) })
-        toast.success('Diperbarui')
-      } else {
-        await api('/document-register', { method: 'POST', body: JSON.stringify(body) })
-        toast.success('Ditambahkan')
-      }
-      setDialogOpen(false); await load()
-    } catch (e) { toast.error(e.message) }
-    finally { setSaving(false) }
-  }
-  const remove = async (r) => {
-    if (!confirm(`Hapus register "${r.nomor}"?`)) return
-    setDeleting(r.id)
-    try { await api(`/document-register/${encodeURIComponent(r.id)}`, { method: 'DELETE' }); toast.success('Dihapus'); await load() }
-    catch (e) { toast.error(e.message) }
-    finally { setDeleting(null) }
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h2 className="text-2xl font-bold text-slate-900">Register Dokumen</h2>
-        <div className="flex flex-wrap gap-2">
-          {DOC_TYPES.map((dt) => (
-            <Button key={dt.key} size="sm" variant="outline" onClick={() => openCreate(dt.key)}><FileText className="h-4 w-4 mr-1" /> {dt.label}</Button>
-          ))}
-        </div>
-      </div>
-      {loading ? <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div> :
-        <Card><CardContent className="p-0">
-          <div className="overflow-x-auto"><Table>
-            <TableHeader className="bg-slate-50"><TableRow>
-              <TableHead className="w-12 text-sm">No</TableHead>
-              <TableHead className="text-sm">Jenis Dokumen</TableHead>
-              <TableHead className="text-sm">Nomor</TableHead>
-              <TableHead className="text-sm">Tanggal</TableHead>
-              <TableHead className="text-sm">Perihal</TableHead>
-              <TableHead className="text-sm">Unit Pengaju</TableHead>
-              <TableHead className="text-sm">Keterangan</TableHead>
-              <TableHead className="text-sm">Manual</TableHead>
-              <TableHead className="w-[80px] text-sm">Aksi</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {rows.map((r, i) => (
-                <TableRow key={r.id}>
-                  <TableCell className="text-sm">{i + 1}</TableCell>
-                  <TableCell className="text-sm">{DOC_TYPES.find((d) => d.key === r.document_type)?.label || r.document_type}</TableCell>
-                  <TableCell className="text-sm font-mono text-blue-800">{r.nomor || '-'}</TableCell>
-                  <TableCell className="text-sm">{fmtDate(r.tanggal)}</TableCell>
-                  <TableCell className="text-sm max-w-[200px] line-clamp-2">{r.perihal || '-'}</TableCell>
-                  <TableCell className="text-sm">{shortUnit(r.unit_pengaju) || '-'}</TableCell>
-                  <TableCell className="text-sm max-w-[150px] line-clamp-2">{r.keterangan || '-'}</TableCell>
-                  <TableCell>{r.manual ? <Badge variant="outline" className="text-xs">Manual</Badge> : <Badge className="bg-blue-100 text-blue-800 text-xs">Auto</Badge>}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => openEdit(r)}>Edit</Button>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={() => remove(r)} disabled={deleting === r.id}>
-                        {deleting === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Hapus'}
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {rows.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-12 text-slate-500">Belum ada register dokumen.</TableCell></TableRow>}
-            </TableBody>
-          </Table></div>
-        </CardContent></Card>
-      }
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{editing ? 'Edit' : 'Tambah'} Register Dokumen</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div><Label>Jenis Dokumen</Label>
-              <Select value={form.document_type} onValueChange={(v) => setForm({ ...form, document_type: v })}>
-                <SelectTrigger><SelectValue placeholder="Pilih jenis dokumen" /></SelectTrigger>
-                <SelectContent>
-                  {DOC_TYPES.map((dt) => <SelectItem key={dt.key} value={dt.key}>{dt.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex-1"><Label>Perihal</Label><Input value={form.perihal} onChange={(e) => setForm({ ...form, perihal: e.target.value })} placeholder="Perihal dokumen" /></div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <Switch id="doc-auto" checked={form.auto} onCheckedChange={(v) => setForm({ ...form, auto: v, nomor: '' })} />
-                <Label htmlFor="doc-auto">Auto</Label>
-              </div>
-              <div className="flex-1">
-                <Label>Nomor</Label>
-                <div className="flex items-center gap-2">
-                  <Input value={form.auto ? (form.nomor || '{seq}') : form.nomor} onChange={(e) => setForm({ ...form, nomor: e.target.value })} placeholder={form.auto ? '{seq}' : '_____'} className="font-mono text-sm" disabled={form.auto} />
-                  {form.auto && <Button size="sm" variant="outline" onClick={generateNumber} disabled={generating || !form.document_type}>{generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Hash className="h-3 w-3 mr-1" />} Generate</Button>}
-                </div>
-              </div>
-            </div>
-            {!editing && form.auto && (
-              <div><Label>Posisi (Booking)</Label><Input type="number" value={form.target_seq} onChange={(e) => setForm({ ...form, target_seq: e.target.value })} placeholder="Kosongkan untuk next" /></div>
-            )}
-            <div><Label>Unit Pengaju</Label>
-              <Select value={form.unit_pengaju} onValueChange={(v) => setForm({ ...form, unit_pengaju: v })}>
-                <SelectTrigger><SelectValue placeholder="Pilih unit" /></SelectTrigger>
-                <SelectContent>
-                  {reference.units?.map((u) => <SelectItem key={u} value={u}>{shortUnit(u)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div><Label>Keterangan</Label><Textarea value={form.keterangan} onChange={(e) => setForm({ ...form, keterangan: e.target.value })} placeholder="Keterangan tambahan..." className="min-h-[60px]" /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setDialogOpen(false)}>Batal</Button>
-            <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Simpan</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
 
 // ---------------- Sync & Audit ----------------
 function SyncLogsView() {
@@ -2315,137 +1757,258 @@ function AuditView() {
   )
 }
 
-// ---------------- Personel ----------------
-function PersonelPage() {
-  const [rows, setRows] = useState([])
+// ---------------- Account Management Page (Super Admin) ----------------
+function AccountManagementPage() {
+  const [users, setUsers] = useState([])
+  const [units, setUnits] = useState([])
   const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState('users')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ nama: '', nip: '', pangkat: '', jabatan: '', kesatuan: '', unit: '', tim: '', wa: '', ketua_tim: false })
-  const [search, setSearch] = useState('')
-  const [reference, setReference] = useState({ units: [] })
   const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(null)
+  const [form, setForm] = useState({ username: '', password: '', name: '', role: 'unit', unit: '', email: '' })
+  const [unitForm, setUnitForm] = useState({ name: '', parent: 'BID PROPAM POLDA JABAR', order: 99 })
+  const [unitDialog, setUnitDialog] = useState(false)
+  const [unitEditing, setUnitEditing] = useState(null)
 
-  const load = async () => {
-    setLoading(true)
-    try { const r = await api(`/personel${search ? `?search=${encodeURIComponent(search)}` : ''}`); setRows(r.data) }
-    catch (e) { toast.error(e.message) }
-    finally { setLoading(false) }
+  const loadUsers = async () => {
+    try { const r = await api('/admin/users'); setUsers(r.data || []) } catch (_) { setUsers([]) }
   }
-  useEffect(() => { load() }, []) // eslint-disable-line
-  useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
+  const loadUnits = async () => {
+    try { const r = await api('/units-master'); setUnits(r.data || []) } catch (_) { setUnits([]) }
+  }
+  useEffect(() => { loadUsers(); loadUnits(); setLoading(false) }, [])
 
-  const openCreate = () => { setEditing(null); setForm({ nama: '', nip: '', pangkat: '', jabatan: '', kesatuan: '', unit: '', tim: '', wa: '', ketua_tim: false }); setDialogOpen(true) }
-  const openEdit = (r) => {
-    setEditing(r)
-    setForm({ nama: r.nama || '', nip: r.nip || '', pangkat: r.pangkat || '', jabatan: r.jabatan || '', kesatuan: r.kesatuan || '', unit: r.unit || '', tim: r.tim || '', wa: r.wa || '', ketua_tim: !!r.ketua_tim })
+  const openCreateUser = () => {
+    setEditing(null)
+    setForm({ username: '', password: '', name: '', role: 'unit', unit: '', email: '' })
     setDialogOpen(true)
   }
-  const save = async () => {
-    if (!form.nama) return toast.error('Nama wajib')
+  const openEditUser = (u) => {
+    setEditing(u)
+    setForm({ username: u.username, password: '', name: u.name, role: u.role, unit: u.unit || '', email: u.email || '' })
+    setDialogOpen(true)
+  }
+  const saveUser = async () => {
+    if (!form.username || !form.name || !form.role) return toast.error('Username, nama, dan role wajib')
+    if (!editing && !form.password) return toast.error('Password wajib untuk user baru')
     setSaving(true)
     try {
       if (editing) {
-        await api(`/personel/${encodeURIComponent(editing.id)}`, { method: 'PUT', body: JSON.stringify(form) })
-        toast.success('Personel diperbarui')
+        await api(`/admin/users/${encodeURIComponent(editing.username)}`, { method: 'PUT', body: JSON.stringify(form) })
+        toast.success('User diperbarui')
       } else {
-        await api('/personel', { method: 'POST', body: JSON.stringify(form) })
-        toast.success('Personel ditambahkan')
+        await api('/admin/users', { method: 'POST', body: JSON.stringify(form) })
+        toast.success('User ditambahkan')
       }
-      setDialogOpen(false); await load()
+      setDialogOpen(false); await loadUsers()
     } catch (e) { toast.error(e.message) }
     finally { setSaving(false) }
   }
-  const remove = async (r) => {
-    if (!confirm(`Hapus personel "${r.nama}"?`)) return
-    setDeleting(r.id)
-    try { await api(`/personel/${encodeURIComponent(r.id)}`, { method: 'DELETE' }); toast.success('Dihapus'); await load() }
+  const deleteUser = async (u) => {
+    if (!confirm(`Hapus user "${u.name}" (${u.username})?`)) return
+    try { await api(`/admin/users/${encodeURIComponent(u.username)}`, { method: 'DELETE' }); toast.success('User dihapus'); await loadUsers() }
     catch (e) { toast.error(e.message) }
-    finally { setDeleting(null) }
   }
 
+  const openCreateUnit = () => {
+    setUnitEditing(null)
+    setUnitForm({ name: '', parent: 'BID PROPAM POLDA JABAR', order: 99, active: true })
+    setUnitDialog(true)
+  }
+  const openEditUnit = (u) => {
+    setUnitEditing(u)
+    setUnitForm({ name: u.name, parent: u.parent || '', order: u.order || 99, active: u.active !== false })
+    setUnitDialog(true)
+  }
+  const saveUnit = async () => {
+    if (!unitForm.name) return toast.error('Nama unit wajib')
+    setSaving(true)
+    try {
+      if (unitEditing) {
+        await api(`/units-master/${encodeURIComponent(unitEditing.id)}`, { method: 'PUT', body: JSON.stringify(unitForm) })
+        toast.success('Unit diperbarui')
+      } else {
+        await api('/units-master', { method: 'POST', body: JSON.stringify(unitForm) })
+        toast.success('Unit ditambahkan')
+      }
+      setUnitDialog(false); await loadUnits()
+    } catch (e) { toast.error(e.message) }
+    finally { setSaving(false) }
+  }
+  const toggleUnitActive = async (u) => {
+    try { await api(`/units-master/${encodeURIComponent(u.id)}`, { method: 'PATCH', body: JSON.stringify({ active: !u.active }) }); await loadUnits() }
+    catch (e) { toast.error(e.message) }
+  }
+  const deleteUnit = async (u) => {
+    if (!confirm(`Hapus unit "${u.name}"?`)) return
+    try { await api(`/units-master/${encodeURIComponent(u.id)}`, { method: 'DELETE' }); toast.success('Unit dihapus'); await loadUnits() }
+    catch (e) { toast.error(e.message) }
+  }
+
+  const roleLabel = (r) => ({ superadmin: 'Super Admin', kabid: 'Kabid', kasubbag: 'Kasubbag', kasubbid: 'Kasubbid', admin: 'Admin', unit: 'Unit', polres: 'Polres' })[r] || r
+  const roleBadgeColor = (r) => {
+    const map = { superadmin: 'bg-red-100 text-red-800', kabid: 'bg-purple-100 text-purple-800', kasubbag: 'bg-indigo-100 text-indigo-800', kasubbid: 'bg-blue-100 text-blue-800', admin: 'bg-cyan-100 text-cyan-800', unit: 'bg-slate-100 text-slate-700', polres: 'bg-amber-100 text-amber-800' }
+    return map[r] || 'bg-slate-100 text-slate-700'
+  }
+
+  const parentUnits = units.filter((u) => u.is_kasubbid || (u.name && !units.some((c) => c.parent === u.name)))
+  const groupedUnits = {}
+  for (const u of units) {
+    const p = u.parent || 'ROOT'
+    if (!groupedUnits[p]) groupedUnits[p] = []
+    groupedUnits[p].push(u)
+  }
+
+  if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin text-blue-800" /></div>
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <h2 className="text-2xl font-bold text-slate-900">Personel</h2>
-        <div className="flex items-center gap-2">
-          <div className="relative w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari nama / NIP..." className="pl-9" onKeyDown={(e) => e.key === 'Enter' && load()} />
-          </div>
-          <Button variant="outline" size="sm" onClick={load}><Search className="h-4 w-4 mr-2" /> Cari</Button>
-          <Button onClick={openCreate}><Users className="h-4 w-4 mr-2" /> Tambah</Button>
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">Pengaturan Akun</h2>
+          <p className="text-sm text-slate-500 mt-1">Kelola user / akun dan master unit organisasi</p>
         </div>
       </div>
-      {loading ? <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div> :
-        <Card><CardContent className="p-0">
-          <div className="overflow-x-auto"><Table>
-            <TableHeader className="bg-slate-50"><TableRow>
-              <TableHead className="w-12 text-sm">No</TableHead>
-              <TableHead className="text-sm">Jabatan</TableHead>
-              <TableHead className="text-sm">Pangkat</TableHead>
-              <TableHead className="text-sm">NRP</TableHead>
-              <TableHead className="text-sm">Nama</TableHead>
-              <TableHead className="text-sm">Unit</TableHead>
-              <TableHead className="w-[80px] text-sm">Aksi</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {rows.map((r, i) => (
-                <TableRow key={r.id}>
-                  <TableCell className="text-sm">{i + 1}</TableCell>
-                  <TableCell className="text-sm">{r.jabatan || '-'}</TableCell>
-                  <TableCell className="text-sm">{r.pangkat || '-'}</TableCell>
-                  <TableCell className="text-sm font-mono">{r.nip || '-'}</TableCell>
-                  <TableCell className="text-sm">
-                    <div className="flex items-center gap-1">
-                      {r.nama_lengkap || '-'}
-                      {r.ketua_tim && <Badge className="bg-amber-100 text-amber-800 text-xs">Ketua Tim</Badge>}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm">{shortUnit(r.unit) || '-'}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => openEdit(r)}>Edit</Button>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={() => remove(r)} disabled={deleting === r.id}>
-                        {deleting === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Hapus'}
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {rows.length === 0 && <TableRow><TableCell colSpan={7} className="text-center py-12 text-slate-500">Belum ada data personel.</TableCell></TableRow>}
-            </TableBody>
-          </Table></div>
-        </CardContent></Card>
-      }
 
+      <div className="flex gap-2 border-b border-slate-200">
+        {['users', 'units'].map((t) => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === t ? 'border-blue-800 text-blue-800' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+            {t === 'users' ? '👤 Data User' : '🏢 Master Unit'}
+          </button>
+        ))}
+      </div>
+
+      {/* USERS TAB */}
+      {tab === 'users' && (
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <Button onClick={openCreateUser}><Users className="h-4 w-4 mr-2" /> Tambah User</Button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {users.map((u) => (
+              <Card key={u.username}>
+                <CardHeader className="pb-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <CardTitle className="text-sm">{u.name}</CardTitle>
+                      <p className="text-xs text-slate-500 font-mono">{u.username}</p>
+                      {u.email && <p className="text-xs text-slate-400">{u.email}</p>}
+                    </div>
+                    <Badge className={roleBadgeColor(u.role)}>{roleLabel(u.role)}</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  {u.unit && <p className="text-xs text-slate-500 truncate" title={u.unit}>Unit: {shortUnit(u.unit)}</p>}
+                  {u._source === 'hardcoded' && <Badge variant="outline" className="text-[10px] mt-1 bg-slate-100">Hardcoded</Badge>}
+                  <div className="flex justify-end gap-1 mt-2">
+                    <Button size="sm" variant="ghost" onClick={() => openEditUser(u)}>Edit</Button>
+                    <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700"
+                      disabled={u._source === 'hardcoded'}
+                      onClick={() => deleteUser(u)}>Hapus</Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+            {users.length === 0 && <p className="text-sm text-slate-500 col-span-full text-center py-8">Belum ada data user. Tambahkan user baru.</p>}
+          </div>
+        </div>
+      )}
+
+      {/* UNITS TAB */}
+      {tab === 'units' && (
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <Button onClick={openCreateUnit}><Building2 className="h-4 w-4 mr-2" /> Tambah Unit</Button>
+          </div>
+          {Object.entries(groupedUnits).map(([parent, children]) => (
+            <div key={parent} className="space-y-2">
+              {parent !== 'ROOT' && (
+                <h3 className="text-sm font-semibold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-md">
+                  {shortUnit(parent)}
+                </h3>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {children.map((u) => (
+                  <Card key={u.id} className={`${u.is_kasubbid ? 'border-2 border-blue-500 bg-blue-50/40' : ''} ${!u.active ? 'opacity-50' : ''}`}>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <CardTitle className="text-xs leading-snug">{u.name}</CardTitle>
+                        {u.is_kasubbid && <Badge className="bg-blue-800 text-white text-[10px]">INDUK</Badge>}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0 flex items-center justify-between">
+                      <Badge className={u.active ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'}>
+                        {u.active ? 'Aktif' : 'Nonaktif'}
+                      </Badge>
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => toggleUnitActive(u)}>{u.active ? 'Nonaktifkan' : 'Aktifkan'}</Button>
+                        <Button size="sm" variant="ghost" onClick={() => openEditUnit(u)}>Edit</Button>
+                        <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700" onClick={() => deleteUnit(u)}>Hapus</Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          ))}
+          {units.length === 0 && <p className="text-sm text-slate-500 text-center py-8">Belum ada data unit.</p>}
+        </div>
+      )}
+
+      {/* USER DIALOG */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editing ? 'Edit' : 'Tambah'} Personel</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editing ? 'Edit User' : 'Tambah User'}</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <div><Label>Nama Lengkap</Label><Input value={form.nama} onChange={(e) => setForm({ ...form, nama: e.target.value })} placeholder="Nama lengkap" /></div>
-            <div><Label>NIP / NRP</Label><Input value={form.nip} onChange={(e) => setForm({ ...form, nip: e.target.value })} placeholder="Nomor NIP / NRP" /></div>
-            <div><Label>Pangkat</Label><Input value={form.pangkat} onChange={(e) => setForm({ ...form, pangkat: e.target.value })} placeholder="Pangkat / Golongan" /></div>
-            <div><Label>Jabatan</Label><Input value={form.jabatan} onChange={(e) => setForm({ ...form, jabatan: e.target.value })} placeholder="Jabatan" /></div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><Label>Kesatuan</Label><Input value={form.kesatuan} onChange={(e) => setForm({ ...form, kesatuan: e.target.value })} placeholder="Kesatuan" /></div>
-              <div><Label>Tim</Label><Input value={form.tim} onChange={(e) => setForm({ ...form, tim: e.target.value })} placeholder="Nama tim" /></div>
-            </div>
-            <div><Label>Unit</Label>
-              <Select value={form.unit} onValueChange={(v) => setForm({ ...form, unit: v })}>
-                <SelectTrigger><SelectValue placeholder="Pilih unit" /></SelectTrigger>
+            <div><Label>Username</Label><Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="username" disabled={!!editing} /></div>
+            <div><Label>Password {editing && <span className="text-xs text-slate-400">(kosongkan jika tidak diubah)</span>}</Label><Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder={editing ? '••••••••' : 'password'} /></div>
+            <div><Label>Nama Lengkap</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nama lengkap" /></div>
+            <div><Label>Email</Label><Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="email@propam.polri.go.id" /></div>
+            <div>
+              <Label>Role</Label>
+              <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {reference.units?.map((u) => <SelectItem key={u} value={u}>{shortUnit(u)}</SelectItem>)}
+                  {['superadmin', 'kabid', 'kasubbag', 'kasubbid', 'admin', 'unit', 'polres'].map((r) => (
+                    <SelectItem key={r} value={r}>{roleLabel(r)}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
-            <div><Label>Nomor WA</Label><Input value={form.wa} onChange={(e) => setForm({ ...form, wa: e.target.value })} placeholder="Nomor WhatsApp" /></div>
-            <div className="flex items-center gap-2"><Checkbox id="p-ketua" checked={form.ketua_tim} onCheckedChange={(v) => setForm({ ...form, ketua_tim: !!v })} /><Label htmlFor="p-ketua">Ketua Tim</Label></div>
+            <div><Label>Unit (opsional)</Label><Input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="Nama unit" /></div>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDialogOpen(false)}>Batal</Button>
-            <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Simpan</Button>
+            <Button onClick={saveUser} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Simpan</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* UNIT DIALOG */}
+      <Dialog open={unitDialog} onOpenChange={setUnitDialog}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{unitEditing ? 'Edit Unit' : 'Tambah Unit'}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div><Label>Nama Unit</Label><Input value={unitForm.name} onChange={(e) => setUnitForm({ ...unitForm, name: e.target.value })} placeholder="mis. UNIT 4 SUBBID PAMINAL POLDA JAWA BARAT" /></div>
+            <div>
+              <Label>Parent Unit</Label>
+              <Select value={unitForm.parent} onValueChange={(v) => setUnitForm({ ...unitForm, parent: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="BID PROPAM POLDA JABAR">BID PROPAM POLDA JABAR</SelectItem>
+                  {units.filter((u) => u.is_kasubbid).map((u) => (
+                    <SelectItem key={u.id} value={u.name}>{shortUnit(u.name)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div><Label>Urutan</Label><Input type="number" value={unitForm.order} onChange={(e) => setUnitForm({ ...unitForm, order: parseInt(e.target.value || '99', 10) })} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setUnitDialog(false)}>Batal</Button>
+            <Button onClick={saveUnit} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Simpan</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2634,13 +2197,15 @@ function SettingsPage({ connStatus }) {
 function AppShell({ user, onLogout }) {
   const [tab, setTab] = useState('dashboard')
   const [selectedCase, setSelectedCase] = useState(null)
-  const isKasubbid = user.role === 'kasubbid' || user.role === 'admin'
+  const isKasubbid = ['superadmin', 'kabid', 'kasubbag', 'kasubbid', 'admin'].includes(user.role)
+  const isSuperadmin = user.role === 'superadmin'
+  const isYanduan = user.role === 'yanduan'
   const [disposisiCount, setDisposisiCount] = useState(0)
   const notifiedRef = useRef(false)
   const [connStatus, setConnStatus] = useState({ astina: false, gajamada: false, ai: false })
 
   const refreshDisposisiCount = async () => {
-    if (!isKasubbid) return
+    if (!isKasubbid && !isYanduan) return
     try { const r = await api('/disposisi-queue/count'); setDisposisiCount(r.count || 0) } catch (_) { /* ignore */ }
   }
   const refreshConnStatus = async () => {
@@ -2655,13 +2220,13 @@ function AppShell({ user, onLogout }) {
     return () => clearInterval(interval)
   }, []) // eslint-disable-line
   useEffect(() => {
-    if (!isKasubbid) return
+    if (!isKasubbid && !isYanduan) return
     refreshDisposisiCount()
     const interval = setInterval(refreshDisposisiCount, 30000)
     return () => clearInterval(interval)
-  }, [isKasubbid]) // eslint-disable-line
+  }, [isKasubbid, isYanduan]) // eslint-disable-line
   useEffect(() => {
-    if (isKasubbid && disposisiCount > 0 && !notifiedRef.current) {
+    if ((isKasubbid || isYanduan) && disposisiCount > 0 && !notifiedRef.current) {
       notifiedRef.current = true
       toast.info(`Ada ${disposisiCount} pengaduan belum didisposisi ke unit`, {
         action: { label: 'Lihat', onClick: () => setTab('disposisi') },
@@ -2669,14 +2234,21 @@ function AppShell({ user, onLogout }) {
     }
   }, [disposisiCount]) // eslint-disable-line
 
-  const menu = [
+  const menu = isYanduan ? [
+    { id: 'dashboard', label: 'Dashboard ANEV', icon: LayoutDashboard },
+    { id: 'cases', label: 'Daftar Surat', icon: FolderKanban },
+    { id: 'disposisi', label: 'Disposisi (ke Kabid)', icon: ArrowRightLeft, badge: disposisiCount },
+    { id: 'input-manual', label: 'Input Manual', icon: FileText },
+    { id: 'sync', label: 'Log Sync', icon: Send },
+    { id: 'audit', label: 'Audit Log', icon: History },
+    { id: 'settings', label: 'Pengaturan', icon: Settings },
+  ] : [
     { id: 'dashboard', label: 'Dashboard ANEV', icon: LayoutDashboard },
     { id: 'cases', label: 'Daftar Surat', icon: FolderKanban },
     ...(isKasubbid ? [{ id: 'disposisi', label: 'Disposisi', icon: ArrowRightLeft, badge: disposisiCount }] : []),
     ...(isKasubbid ? [{ id: 'units', label: 'Master Unit', icon: Building2 }] : []),
     ...(isKasubbid ? [{ id: 'satker', label: 'Satker/Satwil', icon: MapPin }] : []),
-    ...(isKasubbid ? [{ id: 'register', label: 'Register Dokumen', icon: FileText }] : []),
-    ...(isKasubbid ? [{ id: 'personel', label: 'Personel', icon: Users }] : []),
+    ...(isSuperadmin ? [{ id: 'accounts', label: 'Pengaturan Akun', icon: Shield }] : []),
     { id: 'sync', label: 'Log Sync', icon: Send },
     { id: 'audit', label: 'Audit Log', icon: History },
     { id: 'settings', label: 'Pengaturan', icon: Settings },
@@ -2740,11 +2312,11 @@ function AppShell({ user, onLogout }) {
         <div className="max-w-[1600px] mx-auto p-6">
           {tab === 'dashboard' && <Dashboard user={user} />}
           {tab === 'cases' && <CasesList user={user} onOpenCase={setSelectedCase} />}
-          {tab === 'disposisi' && isKasubbid && <DisposisiPage user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
+          {tab === 'disposisi' && (isKasubbid || isYanduan) && <DisposisiPage user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
           {tab === 'units' && isKasubbid && <MasterUnitPage user={user} />}
           {tab === 'satker' && isKasubbid && <SatkerSatwilPage user={user} />}
-          {tab === 'register' && isKasubbid && <DocumentRegisterPage />}
-          {tab === 'personel' && isKasubbid && <PersonelPage />}
+          {tab === 'input-manual' && isYanduan && <CasesList user={user} onOpenCase={setSelectedCase} />}
+          {tab === 'accounts' && isSuperadmin && <AccountManagementPage />}
           {tab === 'sync' && <SyncLogsView />}
           {tab === 'audit' && <AuditView />}
           {tab === 'settings' && <SettingsPage connStatus={connStatus} />}

@@ -1,19 +1,35 @@
-// Master units list for Polda Jabar - Subbid Paminal
-// The parent (Kasubbid) can disposisi to any of the child units below.
-// Discovered from Gajamada dimension.catalog_unit_v2 (case_position_after = KASUBBID PAMINAL POLDA JAWA BARAT)
+// Master units list for Polda Jabar - Bid Propam + Polres Jajaran
+// Hierarchy:
+//   BID PROPAM POLDA JABAR (KABID)
+//     SUBBAG RENMIN (KASUBBAG)
+//     SUBBID PAMINAL (KASUBBID) -- existing
+//     SUBBID PROVOS (KASUBBID)
+//     SUBBID WABPROF (KASUBBID)
+//   POLRES Jajaran (per Polres/Ta)
 
-export const KASUBBID_UNIT = 'KASUBBID PAMINAL POLDA JAWA BARAT'
+// ---- ROOT ----
+export const BID_PROPAM = 'BID PROPAM POLDA JABAR'
 
-// Aliases used by Gajamada for the same Kasubbid position. Gajamada's
-// `disposisi_case_position` uses 'POLDA JABAR SUBBID PAMINAL' while our
-// internal display / units_master uses the fully-qualified name. Include
-// both in list filters so we surface all incoming Kasubbid-level cases.
+// ---- SUBBAG ----
+export const SUBBAG_RENMIN = 'SUBBAG RENMIN BID PROPAM POLDA JABAR'
+
+// ---- SUBBID ----
+export const KASUBBID_PAMINAL = 'SUBBID PAMINAL BID PROPAM POLDA JABAR'
+export const KASUBBID_PROVOS = 'SUBBID PROVOS BID PROPAM POLDA JABAR'
+export const KASUBBID_WABPROF = 'SUBBID WABPROF BID PROPAM POLDA JABAR'
+
+// Backward-compat alias
+export const KASUBBID_UNIT = KASUBBID_PAMINAL
+
+// Gajamada aliases for Kasubbid Paminal
 export const KASUBBID_UNIT_ALIASES = [
   'POLDA JABAR SUBBID PAMINAL',
   'KASUBBID PAMINAL POLDA JAWA BARAT',
+  'SUBBID PAMINAL BID PROPAM POLDA JABAR',
 ]
 
-export const CHILD_UNITS = [
+// ---- CHILD UNITS (Paminal) ----
+export const CHILD_UNITS_PAMINAL = [
   'UNIT 1 SUBBID PAMINAL POLDA JAWA BARAT',
   'UNIT 2 SUBBID PAMINAL POLDA JAWA BARAT',
   'UNIT 3 SUBBID PAMINAL POLDA JAWA BARAT',
@@ -23,15 +39,82 @@ export const CHILD_UNITS = [
   'KAUR BINPAM SUBBID PAMINAL POLDA JAWA BARAT',
 ]
 
-// All Paminal-scope units (Kasubbid + child) - default scope for Simondu
-export const PAMINAL_SCOPE_UNITS = [KASUBBID_UNIT, ...CHILD_UNITS]
+// Backward-compat alias
+export const CHILD_UNITS = CHILD_UNITS_PAMINAL
+
+// ---- CHILD UNITS (Subbag Renmin) ----
+export const CHILD_UNITS_RENMIN = [
+  'UR RENMIN SUBBAG RENMIN BID PROPAM POLDA JABAR',
+  'UR KEU SUBBAG RENMIN BID PROPAM POLDA JABAR',
+]
+
+// ---- CHILD UNITS (Provos) ----
+export const CHILD_UNITS_PROVOS = [
+  'UNIT 1 SUBBID PROVOS BID PROPAM POLDA JABAR',
+  'UNIT 2 SUBBID PROVOS BID PROPAM POLDA JABAR',
+]
+
+// ---- CHILD UNITS (Wabprof) ----
+export const CHILD_UNITS_WABPROF = [
+  'UNIT 1 SUBBID WABPROF BID PROPAM POLDA JABAR',
+  'UNIT 2 SUBBID WABPROF BID PROPAM POLDA JABAR',
+]
+
+// ---- POLRES JAJARAN POLDA JABAR ----
+export const POLRES_JABAR = [
+  'POLRESTABES BANDUNG',
+  'POLRES BANDUNG',
+  'POLRES BANDUNG BARAT',
+  'POLRES BOGOR',
+  'POLRES SUKABUMI',
+  'POLRES CIANJUR',
+  'POLRES PURWAKARTA',
+  'POLRES KARAWANG',
+  'POLRES BEKASI',
+  'POLRES SUBANG',
+  'POLRES SUMEDANG',
+  'POLRES MAJALENGKA',
+  'POLRES INDRAMAYU',
+  'POLRES CIREBON',
+  'POLRESTA CIREBON',
+  'POLRES KUNINGAN',
+  'POLRES CIAMIS',
+  'POLRES TASIKMALAYA',
+  'POLRESTA TASIKMALAYA',
+  'POLRES GARUT',
+  'POLRES BANJAR',
+  'POLRES CIMAHI',
+  'POLRESTA BANDUNG',
+]
+
+// ---- SCOPE UNITS ----
+// Paminal scope (backward compat)
+export const PAMINAL_SCOPE_UNITS = [KASUBBID_PAMINAL, ...CHILD_UNITS_PAMINAL]
+
+// All Propam internal units (non-Polres)
+export const PROPAM_INTERNAL_UNITS = [
+  BID_PROPAM,
+  SUBBAG_RENMIN, ...CHILD_UNITS_RENMIN,
+  KASUBBID_PAMINAL, ...CHILD_UNITS_PAMINAL,
+  KASUBBID_PROVOS, ...CHILD_UNITS_PROVOS,
+  KASUBBID_WABPROF, ...CHILD_UNITS_WABPROF,
+]
+
+// Full scope: Bid Propam + all Polres
+export const PROPAM_FULL_SCOPE = [...PROPAM_INTERNAL_UNITS, ...POLRES_JABAR]
 
 // Short label for display in badges
 export function shortUnit(u) {
   if (!u) return '-'
   return u
     .replace(' SUBBID PAMINAL POLDA JAWA BARAT', ' PAMINAL')
+    .replace(' SUBBID PAMINAL BID PROPAM POLDA JABAR', ' PAMINAL')
+    .replace(' SUBBID PROVOS BID PROPAM POLDA JABAR', ' PROVOS')
+    .replace(' SUBBID WABPROF BID PROPAM POLDA JABAR', ' WABPROF')
+    .replace(' SUBBAG RENMIN BID PROPAM POLDA JABAR', ' RENMIN')
+    .replace(' BID PROPAM POLDA JABAR', ' PROPAM')
     .replace(' POLDA JAWA BARAT', '')
+    .replace(' BID PROPAM', '')
 }
 
 // Internal derived-status labels used across the app

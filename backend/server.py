@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("simondu-proxy")
 
-NEXT_URL = os.environ.get("NEXT_UPSTREAM_URL", "http://localhost:3000")
+NEXT_URL = os.environ.get("NEXT_UPSTREAM_URL", "http://localhost:3002")
 TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "120"))
 
 app = FastAPI()

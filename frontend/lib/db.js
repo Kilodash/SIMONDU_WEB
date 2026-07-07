@@ -2,7 +2,13 @@
 // Translates find/findOne/insertOne/updateOne/deleteOne/countDocuments to PostgREST
 // calls via @supabase/supabase-js. Uses service_role key for full table access.
 import { createClient } from '@supabase/supabase-js'
-import { KASUBBID_UNIT, CHILD_UNITS } from './units'
+import {
+  BID_PROPAM, SUBBAG_RENMIN,
+  KASUBBID_PAMINAL, KASUBBID_PROVOS, KASUBBID_WABPROF,
+  CHILD_UNITS_PAMINAL, CHILD_UNITS_RENMIN, CHILD_UNITS_PROVOS, CHILD_UNITS_WABPROF,
+  POLRES_JABAR,
+  KASUBBID_UNIT, CHILD_UNITS,
+} from './units'
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -173,12 +179,18 @@ export async function getDb() {
       const c = new SupabaseCollection('units_master')
       const count = await c.countDocuments({})
       if (count === 0) {
-        await c.insertMany([
-          { id: 'kasubbid', name: KASUBBID_UNIT, parent: null, is_kasubbid: true, active: true, order: 0, created_at: new Date().toISOString() },
-          ...CHILD_UNITS.map((u, i) => ({
-            id: `unit-${i + 1}`, name: u, parent: KASUBBID_UNIT, is_kasubbid: false, active: true, order: i + 1, created_at: new Date().toISOString(),
-          })),
-        ])
+        await seedUnits(c)
+      } else {
+        // Migration: detect old single-Paminal seed (id='kasubbid') and upgrade
+        const oldRoot = await c.findOne({ id: 'kasubbid' }).catch(() => null)
+        if (oldRoot) {
+          // Delete old rows and re-seed with full hierarchy
+          const oldRows = await c.find({}).toArray()
+          for (const r of oldRows) {
+            await c.deleteOne({ id: r.id }).catch(() => {})
+          }
+          await seedUnits(c)
+        }
       }
     } catch (e) { /* seeding is best-effort */ }
   }
@@ -188,6 +200,23 @@ export async function getDb() {
 
 export async function getActiveUnits() {
   const db = await getDb()
-  const rows = await db.collection('units_master').find({ active: true, is_kasubbid: false }).sort({ order: 1 }).toArray()
+  const rows = await db.collection('units_master').find({ active: true }).sort({ order: 1 }).toArray()
   return rows.map((r) => r.name)
+}
+
+async function seedUnits(c) {
+  const now = new Date().toISOString()
+  const rows = [
+    { id: 'bid-propam', name: BID_PROPAM, parent: null, is_kasubbid: true, active: true, order: 0, created_at: now },
+    { id: 'subbag-renmin', name: SUBBAG_RENMIN, parent: BID_PROPAM, is_kasubbid: false, active: true, order: 1, created_at: now },
+    ...CHILD_UNITS_RENMIN.map((u, i) => ({ id: `renmin-${i + 1}`, name: u, parent: SUBBAG_RENMIN, is_kasubbid: false, active: true, order: i + 1, created_at: now })),
+    { id: 'kasubbid-paminal', name: KASUBBID_PAMINAL, parent: BID_PROPAM, is_kasubbid: true, active: true, order: 2, created_at: now },
+    ...CHILD_UNITS_PAMINAL.map((u, i) => ({ id: `paminal-${i + 1}`, name: u, parent: KASUBBID_PAMINAL, is_kasubbid: false, active: true, order: i + 1, created_at: now })),
+    { id: 'kasubbid-provos', name: KASUBBID_PROVOS, parent: BID_PROPAM, is_kasubbid: true, active: true, order: 3, created_at: now },
+    ...CHILD_UNITS_PROVOS.map((u, i) => ({ id: `provos-${i + 1}`, name: u, parent: KASUBBID_PROVOS, is_kasubbid: false, active: true, order: i + 1, created_at: now })),
+    { id: 'kasubbid-wabprof', name: KASUBBID_WABPROF, parent: BID_PROPAM, is_kasubbid: true, active: true, order: 4, created_at: now },
+    ...CHILD_UNITS_WABPROF.map((u, i) => ({ id: `wabprof-${i + 1}`, name: u, parent: KASUBBID_WABPROF, is_kasubbid: false, active: true, order: i + 1, created_at: now })),
+    ...POLRES_JABAR.map((u, i) => ({ id: `polres-${i + 1}`, name: u, parent: BID_PROPAM, is_kasubbid: false, active: true, order: 100 + i, created_at: now })),
+  ]
+  await c.insertMany(rows)
 }
