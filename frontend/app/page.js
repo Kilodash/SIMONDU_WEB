@@ -18,7 +18,7 @@ import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import {
   Shield, LayoutDashboard, FolderKanban, Send, ClipboardList, LogOut, Search,
-  Loader2, FileText, RefreshCw, ChevronLeft, ChevronRight, Download, Paperclip,
+  Loader2, FileText, RefreshCw, ChevronDown, ChevronLeft, ChevronRight, Download, Paperclip,
   Building2, User, Calendar, Tag, CheckCircle2, XCircle, Clock,
   AlertCircle, ArrowRightLeft, History, Star, QrCode, Mail, Phone, MapPin,
   Bell, Hash, Ban, Scale, Settings, Brain, Eye, EyeOff,
@@ -1746,13 +1746,73 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   )
 }
 
-// ---------------- Master Unit CRUD ----------------
+// ---------------- Master Unit CRUD (Tree View) ----------------
+function UnitGroup({ parent, children, level, isKasubbid, onToggle, onEdit, onRemove, onAddChild }) {
+  const [open, setOpen] = useState(level === 0)
+  const indent = level * 24
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-3 px-4 py-3 bg-blue-50 hover:bg-blue-100 transition-colors text-left"
+      >
+        {children.length > 0 ? (
+          open ? <ChevronDown className="h-4 w-4 text-blue-600 shrink-0" /> : <ChevronRight className="h-4 w-4 text-blue-600 shrink-0" />
+        ) : (
+          <div className="w-4 shrink-0" />
+        )}
+        <Building2 className="h-4 w-4 text-blue-800 shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold text-blue-900 truncate">{parent.name}</div>
+          {!parent.active && <Badge className="text-[10px] bg-red-100 text-red-700 ml-1">Nonaktif</Badge>}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Badge className={`text-[10px] ${level === 0 ? 'bg-blue-800 text-white' : level === 1 ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-700'}`}>
+            {level === 0 ? 'SATKER INDUK' : level === 1 ? 'SUB SATKER' : 'UNIT PELAKSANA'}
+          </Badge>
+          <Badge variant="outline" className="text-[10px]">{children.length} anak</Badge>
+        </div>
+        {isKasubbid && (
+          <div className="flex gap-1 shrink-0 ml-2" onClick={(e) => e.stopPropagation()}>
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onToggle(parent)}>
+              {parent.active ? 'Nonaktifkan' : 'Aktifkan'}
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onEdit(parent)}>Edit</Button>
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onAddChild(parent)}>+Anak</Button>
+            {level > 0 && (
+              <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={() => onRemove(parent)}>Hapus</Button>
+            )}
+          </div>
+        )}
+      </button>
+      {open && children.length > 0 && (
+        <div style={{ marginLeft: indent + 16 }}>
+          {children.map(([child, grandChildren]) => (
+            <UnitGroup
+              key={child.id}
+              parent={child}
+              children={grandChildren}
+              level={level + 1}
+              isKasubbid={isKasubbid}
+              onToggle={onToggle}
+              onEdit={onEdit}
+              onRemove={onRemove}
+              onAddChild={onAddChild}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function MasterUnitPage({ user }) {
   const [units, setUnits] = useState([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ name: '', parent: 'KASUBBID PAMINAL POLDA JAWA BARAT', order: 99 })
+  const [form, setForm] = useState({ name: '', parent: '', order: 99 })
   const [syncing, setSyncing] = useState(false)
   const isKasubbid = user.role === 'kasubbid' || user.role === 'admin'
 
@@ -1764,8 +1824,16 @@ function MasterUnitPage({ user }) {
   }
   useEffect(() => { load() }, [])
 
-  const openCreate = () => { setEditing(null); setForm({ name: '', parent: 'KASUBBID PAMINAL POLDA JAWA BARAT', order: 99 }); setDialogOpen(true) }
-  const openEdit = (u) => { setEditing(u); setForm({ name: u.name, parent: u.parent || '', order: u.order || 99, active: u.active }); setDialogOpen(true) }
+  const openCreate = (parentUnit) => {
+    setEditing(null)
+    setForm({ name: '', parent: parentUnit ? parentUnit.name : '', order: 99 })
+    setDialogOpen(true)
+  }
+  const openEdit = (u) => {
+    setEditing(u)
+    setForm({ name: u.name, parent: u.parent || '', order: u.order || 99, active: u.active })
+    setDialogOpen(true)
+  }
   const save = async () => {
     if (!form.name) return toast.error('Nama unit wajib')
     try {
@@ -1795,59 +1863,57 @@ function MasterUnitPage({ user }) {
     catch (e) { toast.error(e.message) }
   }
 
+  const tree = useMemo(() => {
+    const byParent = {}
+    for (const u of units) {
+      const p = u.parent || '__root__'
+      if (!byParent[p]) byParent[p] = []
+      byParent[p].push(u)
+    }
+    const sorted = (arr) => arr.sort((a, b) => (a.order || 99) - (b.order || 99))
+    for (const k of Object.keys(byParent)) byParent[k] = sorted(byParent[k])
+    const buildChildren = (parentName) => {
+      const children = byParent[parentName] || []
+      return sorted(children).map((c) => [c, buildChildren(c.name)])
+    }
+    const roots = byParent['__root__'] || []
+    return sorted(roots).map((r) => [r, buildChildren(r.name)])
+  }, [units])
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Master Unit</h2>
+          <p className="text-xs text-slate-500 mt-0.5">Hierarki: Satker Induk — Sub Satker — Unit Pelaksana</p>
         </div>
         {isKasubbid && (
           <div className="flex gap-2">
             <Button variant="outline" onClick={syncGajamada} disabled={syncing}>
               {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />} Sync dari Gajamada
             </Button>
-            <Button onClick={openCreate}><Building2 className="h-4 w-4 mr-2" /> Tambah Unit</Button>
+            <Button onClick={() => openCreate(null)}><Building2 className="h-4 w-4 mr-2" /> Tambah Satker Induk</Button>
           </div>
         )}
       </div>
 
       {loading ? <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div> :
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {units.map((u) => (
-            <Card key={u.id} className={`${u.is_kasubbid ? 'border-2 border-blue-500 bg-blue-50/40' : ''} ${!u.active ? 'opacity-50' : ''}`}>
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <CardTitle className="text-sm leading-snug">{u.name}</CardTitle>
-                    <p className="text-[11px] text-slate-500 mt-1">
-                      {u.is_kasubbid ? 'Unit induk (Kasubbid)' : `Bawahan dari: ${shortUnit(u.parent) || '-'}`}
-                    </p>
-                  </div>
-                  {u.is_kasubbid ? (
-                    <Badge className="bg-blue-800 text-white text-[10px]">INDUK</Badge>
-                  ) : (
-                    <Badge variant="outline" className="text-[10px]">Urutan {u.order}</Badge>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent className="flex items-center justify-between pt-0">
-                <div className="flex items-center gap-2">
-                  <Badge className={u.active ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'}>
-                    {u.active ? 'Aktif' : 'Nonaktif'}
-                  </Badge>
-                  {u.source === 'gajamada' && <Badge variant="outline" className="text-[10px]">Gajamada</Badge>}
-                </div>
-                {isKasubbid && !u.is_kasubbid && (
-                  <div className="flex gap-1">
-                    <Button size="sm" variant="ghost" onClick={() => toggleActive(u)}>{u.active ? 'Nonaktifkan' : 'Aktifkan'}</Button>
-                    <Button size="sm" variant="ghost" onClick={() => openEdit(u)}>Edit</Button>
-                    <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700" onClick={() => remove(u)}>Hapus</Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+        tree.length === 0 ? <Card><CardContent className="py-16 text-center"><p className="text-slate-500">Belum ada unit. Klik "Tambah Satker Induk" atau "Sync dari Gajamada".</p></CardContent></Card> :
+        <Card className="divide-y">
+          {tree.map(([root, children]) => (
+            <UnitGroup
+              key={root.id}
+              parent={root}
+              children={children}
+              level={0}
+              isKasubbid={isKasubbid}
+              onToggle={toggleActive}
+              onEdit={openEdit}
+              onRemove={remove}
+              onAddChild={(p) => openCreate(p)}
+            />
           ))}
-        </div>
+        </Card>
       }
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -1858,11 +1924,11 @@ function MasterUnitPage({ user }) {
           <div className="space-y-3">
             <div>
               <Label>Nama Unit</Label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="mis. UNIT 4 SUBBID PAMINAL POLDA JAWA BARAT" />
+              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="mis. KASUBBID PAMINAL POLDA JAWA BARAT" />
             </div>
             <div>
-              <Label>Parent Unit</Label>
-              <Input value={form.parent} onChange={(e) => setForm({ ...form, parent: e.target.value })} />
+              <Label>Parent Unit (kosongkan untuk Satker Induk)</Label>
+              <Input value={form.parent} onChange={(e) => setForm({ ...form, parent: e.target.value })} placeholder="Nama unit induk..." />
             </div>
             <div>
               <Label>Urutan Tampilan</Label>
