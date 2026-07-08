@@ -1,9 +1,30 @@
-// Short label for display in badges
+import { getUnitType, getCaseTypeForUnit } from './checklist.js'
+
 export function shortUnit(u) {
   if (!u) return '-'
   return u
     .replace(' SUBBID PAMINAL POLDA JAWA BARAT', ' PAMINAL')
     .replace(' POLDA JAWA BARAT', '')
+}
+
+export const FILTER_UNITS = [
+  { label: 'KABID PROPAM', value: 'KABID PROPAM', desc: 'Belum didisposisi Kabid' },
+  { label: 'SUBBAG YANDUAN', value: 'SUBBAG YANDUAN', desc: 'Belum diterima / diberi saran' },
+  { label: 'SUBBID PAMINAL', value: 'SUBBID PAMINAL', desc: 'Penyelidikan (Laporan Informasi)' },
+  { label: 'SUBBID PROVOS', value: 'SUBBID PROVOS', desc: 'GARPLIN / Sidang Disiplin' },
+  { label: 'SUBBID WABPROF', value: 'SUBBID WABPROF', desc: 'GAR KEPP / Sidang KKE' },
+  { label: 'POLRES', value: 'POLRES', desc: 'Lidik / GARPLIN / Sidang Disiplin' },
+  { label: 'WASSIDIK', value: 'WASSIDIK', desc: 'Dilimpahkan (Selesai, monitor)' },
+]
+
+export { getUnitType, getCaseTypeForUnit }
+
+export function resolveFilterUnit(filterValue) {
+  const nameMap = {}
+  for (const f of FILTER_UNITS) {
+    nameMap[f.value] = f.label
+  }
+  return nameMap[filterValue] || filterValue
 }
 
 // Category list - full set discovered from live Paminal cases

@@ -3,20 +3,40 @@ import { SignJWT, jwtVerify } from 'jose'
 const SECRET = new TextEncoder().encode(process.env.APP_JWT_SECRET || 'dev-secret-change-me')
 const COOKIE_NAME = 'simondu_session'
 
-// Hardcoded MVP users - one per unit in the Paminal hierarchy
 export const USERS = [
-  { username: 'kasubbid', password: 'kasubbid123', name: 'Kasubbid Paminal Polda Jabar', role: 'kasubbid', unit: null },
-  { username: 'admin', password: 'admin123', name: 'Admin/Operator Subbid Paminal', role: 'admin', unit: null },
+  { username: 'kasubbid', password: 'kasubbid123', name: 'Kasubbid Paminal Polda Jabar', role: 'kasubbid_paminal', unit: null },
+  { username: 'kasubbid_paminal', password: 'paminal123', name: 'Kasubbid Paminal Polda Jabar', role: 'kasubbid_paminal', unit: null },
+  { username: 'kasubbid_provos', password: 'provos123', name: 'Kasubbid Provos Polda Jabar', role: 'kasubbid_provos', unit: null },
+  { username: 'kasubbid_wabprof', password: 'wabprof123', name: 'Kasubbid Wabprof Polda Jabar', role: 'kasubbid_wabprof', unit: null },
+  { username: 'kabid_propam', password: 'kabid123', name: 'Kabid Propam Polda Jabar', role: 'kabid_propam', unit: null },
+  { username: 'kasubbag_yanduan', password: 'yanduan123', name: 'Kasubbag Yanduan Polda Jabar', role: 'kasubbag_yanduan', unit: null },
+  { username: 'kasubbag_rehabpers', password: 'rehabpers123', name: 'Kasubbag Rehabpers Polda Jabar', role: 'kasubbag_rehabpers', unit: null },
+  { username: 'admin', password: 'admin123', name: 'Admin/Operator Propam', role: 'admin', unit: null },
+  { username: 'super_admin', password: 'superadmin123', name: 'Super Admin', role: 'super_admin', unit: null },
   { username: 'unit1', password: 'unit123', name: 'Kanit 1 Paminal Polda Jabar', role: 'unit', unit: 'UNIT 1 SUBBID PAMINAL POLDA JAWA BARAT' },
   { username: 'unit2', password: 'unit123', name: 'Kanit 2 Paminal Polda Jabar', role: 'unit', unit: 'UNIT 2 SUBBID PAMINAL POLDA JAWA BARAT' },
   { username: 'unit3', password: 'unit123', name: 'Kanit 3 Paminal Polda Jabar', role: 'unit', unit: 'UNIT 3 SUBBID PAMINAL POLDA JAWA BARAT' },
   { username: 'urbinpam', password: 'unit123', name: 'Ur Binpam Paminal Polda Jabar', role: 'unit', unit: 'UR BINPAM SUBBID PAMINAL POLDA JAWA BARAT' },
   { username: 'urlitpers', password: 'unit123', name: 'Ur Litpers Paminal Polda Jabar', role: 'unit', unit: 'UR LITPERS SUBBID PAMINAL POLDA JAWA BARAT' },
   { username: 'urprodok', password: 'unit123', name: 'Ur Prodok Paminal Polda Jabar', role: 'unit', unit: 'UR PRODOK SUBBID PAMINAL POLDA JAWA BARAT' },
-  { username: 'super_admin', password: 'superadmin123', role: 'super_admin' },
-  { username: 'kabid_propam', password: 'kabid123', role: 'kabid_propam' },
-  { username: 'kasubbag_yanduan', password: 'yanduan123', role: 'kasubbag_yanduan' },
 ]
+
+export function isDisposisiRole(role) {
+  return role === 'kasubbid_paminal' || role === 'kasubbid_provos' || role === 'kasubbid_wabprof'
+    || role === 'admin' || role === 'kabid_propam' || role === 'kasubbag_yanduan'
+}
+
+export function isAdminRole(role) {
+  return role === 'admin' || role === 'super_admin'
+}
+
+export function isKasubbidRole(role) {
+  return role === 'kasubbid_paminal' || role === 'kasubbid_provos' || role === 'kasubbid_wabprof'
+}
+
+export function isUnitRole(role) {
+  return role === 'unit'
+}
 
 export async function signSession(user) {
   const jwt = await new SignJWT({ username: user.username, role: user.role, unit: user.unit, name: user.name })

@@ -25,9 +25,26 @@ import {
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RTooltip, PieChart, Pie, Cell, Legend, CartesianGrid } from 'recharts'
 import { STATUS, RESOLUSI, BUCKET, getBucket } from '../lib/status.js'
+import { FILTER_UNITS } from '../lib/units.js'
+import { getUnitType } from '../lib/checklist.js'
+
+const LIMPAS_PATHS = {
+  PAMINAL: [
+    { to: 'PROVOS', label: 'Subbid Provos', desc: 'Terbukti pelanggaran disiplin → Sidang Disiplin' },
+    { to: 'WABPROF', label: 'Subbid Wabprof', desc: 'Terbukti pelanggaran kode etik → Sidang KKE' },
+    { to: 'POLRES', label: 'Polres', desc: 'Terbukti pelanggaran disiplin → Sidang Disiplin Polres' },
+  ],
+  PROVOS: [
+    { to: 'POLRES', label: 'Polres', desc: 'Berkas pelanggaran disiplin → Sidang Disiplin Polres' },
+  ],
+  POLRES: [
+    { to: 'PROVOS', label: 'Subbid Provos', desc: 'Hasil lidik pelanggaran disiplin → Sidang Disiplin Polda' },
+    { to: 'WABPROF', label: 'Subbid Wabprof', desc: 'Hasil lidik pelanggaran kode etik → Sidang KKE Polda' },
+  ],
+}
 
 const APP_NAME = 'SIMONDU WEB'
-const APP_SUBTITLE = 'Sistem Monitoring Pengaduan — Polda Jabar'
+const APP_SUBTITLE = 'Sistem Monitoring Dumas Bidpropam Polda Jabar'
 
 async function api(path, options = {}) {
   const res = await fetch(`/api${path}`, {
@@ -87,9 +104,10 @@ const SyncBadge = memo(function SyncBadge({ status }) {
 
 // ---------------- Login ----------------
 function LoginPage({ onSuccess }) {
-  const [username, setUsername] = useState('kasubbid')
-  const [password, setPassword] = useState('kasubbid123')
-  const [loading, setLoading] = useState(false)
+    const [username, setUsername] = useState('kasubbid')
+    const [password, setPassword] = useState('kasubbid123')
+    const [loading, setLoading] = useState(false)
+    const [showPw, setShowPw] = useState(false)
 
   const submit = async (e) => {
     e.preventDefault()
@@ -106,11 +124,14 @@ function LoginPage({ onSuccess }) {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-950 via-blue-900 to-indigo-950 p-4">
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center mb-8">
-          <div className="h-20 w-20 rounded-full bg-white/10 backdrop-blur border border-white/20 flex items-center justify-center mb-4 shadow-2xl">
-            <Shield className="h-10 w-10 text-white" />
+          <div className="flex items-center gap-4 mb-4">
+            <img src="/logo-pengaduan.png" alt="Logo Pengaduan" className="h-20 w-20 object-contain bg-white/10 backdrop-blur rounded-xl p-2 border border-white/20 shadow-2xl" />
+            <span className="text-white text-2xl font-bold">×</span>
+            <img src="/logo-gajamada.png" alt="Logo Gajamada" className="h-20 w-20 object-contain bg-white/10 backdrop-blur rounded-xl p-2 border border-white/20 shadow-2xl" />
           </div>
           <h1 className="text-3xl font-bold text-white tracking-tight">{APP_NAME}</h1>
-
+          <p className="text-blue-200 text-sm mt-1 text-center">Sistem Monitoring Dumas</p>
+          <p className="text-blue-300 text-xs mt-0.5">Bidpropam Polda Jabar</p>
         </div>
         <Card className="border-white/10 shadow-2xl backdrop-blur-lg bg-white/95">
           <CardHeader>
@@ -123,10 +144,15 @@ function LoginPage({ onSuccess }) {
                 <Label htmlFor="u">Username</Label>
                 <Input id="u" value={username} onChange={(e) => setUsername(e.target.value)} required autoFocus />
               </div>
-              <div>
-                <Label htmlFor="p">Password</Label>
-                <Input id="p" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-              </div>
+                <div>
+                  <Label htmlFor="p">Password</Label>
+                  <div className="relative">
+                    <Input id="p" type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} required className="pr-10" />
+                    <button type="button" onClick={() => setShowPw(!showPw)} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                      {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
               <Button type="submit" disabled={loading} className="w-full bg-blue-800 hover:bg-blue-900">
                 {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Masuk
               </Button>
@@ -144,14 +170,13 @@ function LoginPage({ onSuccess }) {
 function Dashboard({ user }) {
   const [anev, setAnev] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [scope, setScope] = useState('paminal')
 
   const load = useCallback(async () => {
     setLoading(true)
-    try { const r = await api(`/anev?scope=${scope}`); setAnev(r) }
+    try { const r = await api('/anev'); setAnev(r) }
     catch (e) { toast.error(e.message) }
     finally { setLoading(false) }
-  }, [scope])
+  }, [])
   useEffect(() => { load() }, [load])
 
   const COLORS = useMemo(() => ['#1e40af', '#7c3aed', '#0891b2', '#059669', '#ea580c', '#dc2626', '#4338ca', '#9333ea'], [])
@@ -173,18 +198,6 @@ function Dashboard({ user }) {
           <h2 className="text-2xl font-bold text-slate-900">Dashboard ANEV</h2>
         </div>
         <div className="flex items-center gap-3">
-          {user.role !== 'unit' && (
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-slate-500">Cakupan:</span>
-              <Select value={scope} onValueChange={setScope}>
-                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="paminal">Paminal & Unit</SelectItem>
-                  <SelectItem value="all">Semua Polda Jabar</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
           <Button variant="outline" onClick={load}><RefreshCw className="h-4 w-4 mr-2" /> Refresh</Button>
         </div>
       </div>
@@ -283,10 +296,20 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const [atts, setAtts] = useState([])
   const [loading, setLoading] = useState(true)
   const [completing, setCompleting] = useState(false)
+  const [tolakOpen, setTolakOpen] = useState(false)
+  const [tolakAlasan, setTolakAlasan] = useState('')
+  const [tolakSaving, setTolakSaving] = useState(false)
+  const [limpasOpen, setLimpasOpen] = useState(false)
+  const [limpasUnit, setLimpasUnit] = useState('')
+  const [limpasAlasan, setLimpasAlasan] = useState('')
+  const [limpasSaving, setLimpasSaving] = useState(false)
+  const [wassidikOpen, setWassidikOpen] = useState(false)
+  const [wassidikCatatan, setWassidikCatatan] = useState('')
+  const [wassidikSaving, setWassidikSaving] = useState(false)
   const [terimaLoading, setTerimaLoading] = useState(false)
   const [showFullChronology, setShowFullChronology] = useState(false)
   const [mergedTimeline, setMergedTimeline] = useState([])
-  const [reference, setReference] = useState({ hasil_lidik_options: [], settlement_options: [], satker_satwil: [] })
+  const [reference, setReference] = useState({ hasil_lidik_options: [], settlement_options: [], satker_satwil: [], all_active_units: [], units: [] })
   const [notingItem, setNotingItem] = useState(null)
   const [noteDraft, setNoteDraft] = useState('')
   const [perdamaianOpen, setPerdamaianOpen] = useState(false)
@@ -379,6 +402,44 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
     } catch (e) { toast.error(e.message) }
     finally { setTerimaLoading(false) }
   }
+  const doTolak = async () => {
+    if (!tolakAlasan) return toast.error('Alasan penolakan wajib diisi')
+    setTolakSaving(true)
+    try {
+      await api('/tolak', { method: 'POST', body: JSON.stringify({ pid, alasan: tolakAlasan }) })
+      toast.success('Kasus dikembalikan ke Kabid Propam')
+      setTolakOpen(false); setTolakAlasan('')
+      await load(); onChanged?.()
+    } catch (e) { toast.error(e.message) }
+    finally { setTolakSaving(false) }
+  }
+  const doLimpas = async () => {
+    if (!limpasUnit || !limpasAlasan) return toast.error('Unit tujuan dan alasan wajib diisi')
+    setLimpasSaving(true)
+    try {
+      const allUnits = reference.all_active_units || reference.units || []
+      const targetUnit = allUnits.find((u) => (typeof u === 'string' ? u : u.name || '').toUpperCase().includes(limpasUnit))
+      const toUnitName = typeof targetUnit === 'string' ? targetUnit : targetUnit?.name || limpasUnit
+      const path = LIMPAS_PATHS[currentUnitType]?.find((p) => p.to === limpasUnit)
+      const alasanLengkap = path ? `${path.desc}. ${limpasAlasan}` : limpasAlasan
+      await api('/limpas-unit', { method: 'POST', body: JSON.stringify({ pid, to_unit: toUnitName, alasan: alasanLengkap }) })
+      toast.success(`Dilimpahkan ke ${shortUnit(toUnitName)}`)
+      setLimpasOpen(false)
+      await load(); onChanged?.()
+    } catch (e) { toast.error(e.message) }
+    finally { setLimpasSaving(false) }
+  }
+  const doWassidik = async () => {
+    if (!wassidikCatatan) return toast.error('Catatan pelimpahan wajib diisi')
+    setWassidikSaving(true)
+    try {
+      await api('/limpas-wassidik', { method: 'POST', body: JSON.stringify({ pid, catatan: wassidikCatatan }) })
+      toast.success('Dilimpahkan ke Wassidik, status Selesai')
+      setWassidikOpen(false)
+      await load(); onChanged?.()
+    } catch (e) { toast.error(e.message) }
+    finally { setWassidikSaving(false) }
+  }
 
   if (!pid) return null
   const checklist = data?._internal?.checklist
@@ -386,6 +447,13 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const canComplete = data && (user.role === 'unit' ? data.disposisi_case_position === user.unit : true) && data?.status !== STATUS.SELESAI && (checklist ? checklist.canComplete : true)
   const latestDisp = data?._internal?.dispositions?.[data._internal.dispositions.length - 1]
   const canTerima = user.role === 'unit' && latestDisp?.to_unit === user.unit && getBucket(data?.status) === 'SURAT_MASUK'
+  const isKasubbidRole = user.role === 'kasubbid_paminal' || user.role === 'kasubbid_provos' || user.role === 'kasubbid_wabprof'
+  const isKabidRole = user.role === 'kabid_propam'
+  const currentUnitType = getUnitType(data?.disposisi_case_position)
+  const limpasTargets = LIMPAS_PATHS[currentUnitType] || []
+  const canTolak = isKasubbidRole && data?.status !== STATUS.SELESAI && getBucket(data?.status) !== 'SURAT_MASUK'
+  const canLimpas = isKasubbidRole && data?.status !== STATUS.SELESAI && limpasTargets.length > 0
+  const canWassidik = isKabidRole && data?.status !== STATUS.SELESAI
 
   return (
     <Sheet open={!!pid} onOpenChange={(v) => !v && onClose()}>
@@ -428,6 +496,21 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                   </Button>
                 )}
                 <Button size="sm" variant="secondary" onClick={() => setPerdamaianOpen(true)}><ClipboardList className="h-4 w-4 mr-1" /> Perdamaian</Button>
+                {canTolak && (
+                  <Button size="sm" variant="secondary" onClick={() => { setTolakAlasan(''); setTolakOpen(true) }}>
+                    <Ban className="h-4 w-4 mr-1" /> Tolak / Kembalikan
+                  </Button>
+                )}
+                {canLimpas && (
+                  <Button size="sm" variant="secondary" onClick={() => { setLimpasUnit(''); setLimpasAlasan(''); setLimpasOpen(true) }}>
+                    <ArrowRightLeft className="h-4 w-4 mr-1" /> Limpahkan
+                  </Button>
+                )}
+                {canWassidik && (
+                  <Button size="sm" variant="secondary" onClick={() => { setWassidikCatatan(''); setWassidikOpen(true) }}>
+                    <Send className="h-4 w-4 mr-1" /> Limpas Wassidik
+                  </Button>
+                )}
                 {canComplete && (
                   <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={doComplete} disabled={completing}>
                     {completing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />} Tandai Selesai
@@ -783,6 +866,62 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                 </DialogFooter>
               </DialogContent>
       </Dialog>
+
+            <Dialog open={tolakOpen} onOpenChange={setTolakOpen}>
+              <DialogContent><DialogHeader><DialogTitle>Tolak / Kembalikan ke Kabid</DialogTitle></DialogHeader>
+                <div className="space-y-3">
+                  <Label>Alasan penolakan</Label>
+                  <Textarea value={tolakAlasan} onChange={(e) => setTolakAlasan(e.target.value)} placeholder="Alasan dikembalikan ke Kabid Propam..." />
+                </div>
+                <DialogFooter>
+                  <Button variant="ghost" onClick={() => setTolakOpen(false)}>Batal</Button>
+                  <Button onClick={doTolak} disabled={tolakSaving || !tolakAlasan}>{tolakSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Kembalikan</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={limpasOpen} onOpenChange={setLimpasOpen}>
+              <DialogContent><DialogHeader><DialogTitle>Limpahkan ke Unit Lain</DialogTitle><DialogDescription>Pilih unit tujuan dan alasan pelimpahan.</DialogDescription></DialogHeader>
+                <div className="space-y-3">
+                  {limpasTargets.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Unit Tujuan</Label>
+                      <div className="grid grid-cols-1 gap-2">
+                        {limpasTargets.map((p) => (
+                          <button key={p.to} type="button" onClick={() => setLimpasUnit(p.to)}
+                            className={`text-left p-3 rounded-md border text-xs ${limpasUnit === p.to ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                            <p className="font-medium">{p.label}</p>
+                            <p className="text-slate-500 text-[11px]">{p.desc}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <Label>Alasan pelimpahan</Label>
+                    <Textarea value={limpasAlasan} onChange={(e) => setLimpasAlasan(e.target.value)} placeholder="Alasan pelimpahan..." />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="ghost" onClick={() => setLimpasOpen(false)}>Batal</Button>
+                  <Button onClick={doLimpas} disabled={limpasSaving || !limpasUnit || !limpasAlasan}>{limpasSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Limpahkan</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={wassidikOpen} onOpenChange={setWassidikOpen}>
+              <DialogContent><DialogHeader><DialogTitle>Limpahkan ke Wassidik</DialogTitle><DialogDescription>Pelimpahan ke Wassidik. Status akan menjadi Selesai (monitor only).</DialogDescription></DialogHeader>
+                <div className="space-y-3">
+                  <Label>Catatan pelimpahan</Label>
+                  <Textarea value={wassidikCatatan} onChange={(e) => setWassidikCatatan(e.target.value)} placeholder="Alasan dilimpahkan ke Wassidik..." />
+                </div>
+                <DialogFooter>
+                  <Button variant="ghost" onClick={() => setWassidikOpen(false)}>Batal</Button>
+                  <Button onClick={doWassidik} disabled={wassidikSaving || !wassidikCatatan}>{wassidikSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Limpahkan ke Wassidik</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
     </div>
         )}
       </SheetContent>
@@ -812,10 +951,10 @@ function CasesList({ user, onOpenCase }) {
   const [status, setStatus] = useState('')
   const [category, setCategory] = useState('')
   const [unit, setUnit] = useState('')
-  const [scope, setScope] = useState('paminal')
+  const [polres, setPolres] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
   const [loading, setLoading] = useState(true)
-  const [reference, setReference] = useState({ units: [], statuses: [], categories: [] })
+  const [reference, setReference] = useState({ filter_units: [], polres_units: [], statuses: [], categories: [] })
   const [editOpen, setEditOpen] = useState(false)
   const [editSaving, setEditSaving] = useState(false)
   const [editForm, setEditForm] = useState({})
@@ -884,27 +1023,28 @@ function CasesList({ user, onOpenCase }) {
 
     setLoading(true)
     try {
-      const qs = new URLSearchParams({ page: String(page), size: String(size), scope })
+      const qs = new URLSearchParams({ page: String(page), size: String(size) })
       if (search) qs.set('search', search)
       if (status) qs.set('status', status)
       if (category) qs.set('category', category)
       if (unit) qs.set('unit', unit)
+      if (polres && unit === 'POLRES') qs.set('polres', polres)
       qs.set('case_type', 'dumas')
       const r = await api(`/cases?${qs.toString()}`)
       setCases(r.data); setTotal(r.total)
     } catch (e) { toast.error(e.message) }
     finally { setLoading(false) }
-  }, [page, status, category, unit, scope, search, size, sourceFilter])
+  }, [page, status, category, unit, polres, search, size, sourceFilter])
   useEffect(() => { load() }, [load])
   useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
 
   const onSearch = useCallback((e) => { e.preventDefault(); setPage(1); load() }, [load])
-  const clearFilter = useCallback(() => { setStatus(''); setCategory(''); setUnit(''); setSearch(''); setScope('paminal'); setPage(1) }, [])
+  const clearFilter = useCallback(() => { setStatus(''); setCategory(''); setUnit(''); setPolres(''); setSearch(''); setPage(1) }, [])
   const maxPage = useMemo(() => Math.ceil(total / size) || 1, [total, size])
   const handleStatusChange = useCallback((v) => { setStatus(v === '__all' ? '' : v); setPage(1) }, [])
   const handleCategoryChange = useCallback((v) => { setCategory(v === '__all' ? '' : v); setPage(1) }, [])
-  const handleUnitChange = useCallback((v) => { setUnit(v === '__all' ? '' : v); setPage(1) }, [])
-  const handleScopeChange = useCallback((v) => { setScope(v); setPage(1) }, [])
+  const handleUnitChange = useCallback((v) => { setUnit(v === '__all' ? '' : v); setPolres(''); setPage(1) }, [])
+  const handlePolresChange = useCallback((v) => { setPolres(v); setPage(1) }, [])
 
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 96px)' }}>
@@ -947,18 +1087,16 @@ function CasesList({ user, onOpenCase }) {
             </Select>
             {user.role !== 'unit' && (
               <Select value={unit || '__all'} onValueChange={handleUnitChange}>
-                <SelectTrigger className="w-[200px]"><SelectValue placeholder="Semua Unit" /></SelectTrigger>
+                <SelectTrigger className="w-[220px]"><SelectValue placeholder="Semua Unit" /></SelectTrigger>
                 <SelectContent><SelectItem value="__all">Semua Unit</SelectItem>
-                  {(scope === 'all' ? (reference.gajamada_satker || reference.satker_satwil || []) : reference.units).map((u) => <SelectItem key={typeof u === 'string' ? u : u.id} value={typeof u === 'string' ? u : u.name}>{typeof u === 'string' ? shortUnit(u) : u.name}</SelectItem>)}</SelectContent>
+                  {(reference.filter_units || FILTER_UNITS).map((u) => <SelectItem key={u.value} value={u.value}>{u.label}</SelectItem>)}</SelectContent>
               </Select>
             )}
-            {user.role !== 'unit' && (
-              <Select value={scope} onValueChange={handleScopeChange}>
-                <SelectTrigger className="w-[180px]"><SelectValue placeholder="Cakupan" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="paminal">Paminal & Unit</SelectItem>
-                  <SelectItem value="all">Semua Polda Jabar</SelectItem>
-                </SelectContent>
+            {user.role !== 'unit' && unit === 'POLRES' && (reference.polres_units || []).length > 0 && (
+              <Select value={polres || '__all'} onValueChange={handlePolresChange}>
+                <SelectTrigger className="w-[220px]"><SelectValue placeholder="Semua Polres" /></SelectTrigger>
+                <SelectContent><SelectItem value="__all">Semua Polres</SelectItem>
+                  {(reference.polres_units || []).map((u) => <SelectItem key={u} value={u}>{shortUnit(u)}</SelectItem>)}</SelectContent>
               </Select>
             )}
             <div className="relative w-[200px]">
@@ -1160,8 +1298,9 @@ function CasesList({ user, onOpenCase }) {
   )
 }
 
-// ---------------- Disposisi Page (Kasubbid only) ----------------
-function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
+// ---------------- Disposisi/Saran Page ----------------
+function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode = 'disposisi' }) {
+  const isSaranMode = mode === 'saran'
   const [queue, setQueue] = useState([])
   const [loading, setLoading] = useState(true)
   const [idx, setIdx] = useState(0)
@@ -1170,31 +1309,35 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   const [editDisp, setEditDisp] = useState(null)
   const [editFormData, setEditFormData] = useState({ to_unit: '', note: '', is_atensi: false })
   const [editOpen, setEditOpen] = useState(false)
-  const [editMode, setEditMode] = useState(null) // full edit mode: disposition object
-  const [editQueueItem, setEditQueueItem] = useState(null) // synthetic queue item for edit mode
-  const [reference, setReference] = useState({ units: [], default_disposisi_tasks: [] })
+  const [editMode, setEditMode] = useState(null)
+  const [editQueueItem, setEditQueueItem] = useState(null)
+  const [reference, setReference] = useState({ units: [], all_active_units: [], default_disposisi_tasks: [], unit_default_tasks: {} })
   // Form state
   const [toUnit, setToUnit] = useState('')
   const [note, setNote] = useState('')
   const [isAtensi, setIsAtensi] = useState(false)
-  const [tasks, setTasks] = useState([]) // {label, checked}
+  const [tasks, setTasks] = useState([])
   const [caseType, setCaseType] = useState('dumas')
   const [submitting, setSubmitting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  // Extra details for the current case
+  // Saran mode checklist
+  const [saranChecklist, setSaranChecklist] = useState({ penelaahan: false, kelengkapan: false })
+  // Extra details
   const [atts, setAtts] = useState([])
   const [detail, setDetail] = useState(null)
   const [timeline, setTimeline] = useState([])
-  // UI: tab per current source; kronologi mode (Gajamada); PDF selection index
   const [activeTab, setActiveTab] = useState('info')
   const [pdfIdx, setPdfIdx] = useState(0)
   const [kronologiMode, setKronologiMode] = useState('singkat')
   const resetForm = (ref, item) => {
     setToUnit(''); setNote(''); setIsAtensi(false)
+    setSaranChecklist({ penelaahan: false, kelengkapan: false })
     const ct = item?.case_type || ''
     if (ct === 'non_pengaduan' || ct === 'non_dumas') setCaseType('non_dumas')
     else setCaseType('dumas')
-    const dumasTasks = ref?.default_disposisi_tasks || reference.default_disposisi_tasks || []
+    const unitType = getUnitType(item?.disposisi_case_position)
+    const ut = unitType || 'PAMINAL'
+    const dumasTasks = ref?.unit_default_tasks?.[ut] || ref?.default_disposisi_tasks || reference.unit_default_tasks?.[ut] || reference.default_disposisi_tasks || []
     const nonDumasTasks = ref?.non_dumas_disposisi_tasks || reference.non_dumas_disposisi_tasks || dumasTasks
     const isNonDumas = ct === 'non_pengaduan' || ct === 'non_dumas'
     const defaults = isNonDumas ? nonDumasTasks : dumasTasks
@@ -1320,7 +1463,24 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
 
   const submitAndNext = async () => {
     if (!current) return
-    if (!toUnit) return toast.error('Pilih unit tujuan')
+    if (!isSaranMode && !toUnit) return toast.error('Pilih unit tujuan')
+    if (isSaranMode) {
+      setSubmitting(true)
+      try {
+        const checklist = []
+        if (saranChecklist.penelaahan) checklist.push('Sudah dilakukan penelaahan')
+        if (saranChecklist.kelengkapan) checklist.push('Sudah diperiksa kelengkapan')
+        await api('/saran-yanduan', { method: 'POST', body: JSON.stringify({ pid: current.prepetrator_id, checklist, catatan: note }) })
+        toast.success('Saran/Masukan berhasil disimpan')
+        const newQueue = queue.filter((_, i) => i !== idx)
+        setQueue(newQueue)
+        setIdx(Math.min(idx, newQueue.length - 1))
+        resetForm(null, current)
+        onQueueChange?.()
+      } catch (e) { toast.error(e.message) }
+      finally { setSubmitting(false) }
+      return
+    }
     setConfirmOpen(true)
   }
   const confirmedSubmit = async () => {
@@ -1350,7 +1510,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
       <div className="space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
-            <h2 className="text-2xl font-bold text-slate-900">Disposisi</h2>
+            <h2 className="text-2xl font-bold text-slate-900">{isSaranMode ? 'Saran/Masukan' : 'Disposisi'}</h2>
             <Tabs value={tab} onValueChange={(v) => { setTab(v); if (v === 'riwayat') loadRiwayat() }}>
               <TabsList><TabsTrigger value="antrian">Antrian</TabsTrigger><TabsTrigger value="riwayat">Riwayat</TabsTrigger></TabsList>
             </Tabs>
@@ -1525,6 +1685,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
             <CardTitle className="text-sm flex items-center gap-2"><ArrowRightLeft className="h-4 w-4 text-blue-800" /> Lembar Disposisi</CardTitle>
           </CardHeader>
           <div className="overflow-y-auto p-4 space-y-4" data-testid="panel-disposisi">
+            {!isSaranMode && (
             <div>
               <Label className="text-xs">Jenis Kasus</Label>
               <div className="grid grid-cols-2 gap-2 mt-1">
@@ -1532,24 +1693,42 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
                 <button type="button" onClick={() => { setCaseType('non_dumas'); const defaults = reference.non_dumas_disposisi_tasks || reference.default_disposisi_tasks || []; setTasks(defaults.map((label) => ({ label, checked: false }))) }} className={`px-3 py-1.5 rounded-md border text-xs font-medium ${caseType === 'non_dumas' ? 'bg-slate-800 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'}`} data-testid="case-type-non-dumas">NON-DUMAS</button>
               </div>
             </div>
+            )}
 
+            {isSaranMode ? (
+            <div>
+              <Label className="text-xs">Ceklis Penelaahan</Label>
+              <div className="space-y-2 border rounded-md p-3 bg-blue-50/50 mt-1">
+                <div className="flex items-center gap-2">
+                  <Checkbox id="saran-telaah" checked={saranChecklist.penelaahan} onCheckedChange={(v) => setSaranChecklist((p) => ({ ...p, penelaahan: !!v }))} />
+                  <Label htmlFor="saran-telaah" className="text-xs cursor-pointer">Sudah dilakukan penelaahan</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox id="saran-kelengkapan" checked={saranChecklist.kelengkapan} onCheckedChange={(v) => setSaranChecklist((p) => ({ ...p, kelengkapan: !!v }))} />
+                  <Label htmlFor="saran-kelengkapan" className="text-xs cursor-pointer">Sudah diperiksa kelengkapan</Label>
+                </div>
+              </div>
+            </div>
+            ) : (
             <div>
               <Label className="text-xs">Unit Tujuan</Label>
               <Select value={toUnit} onValueChange={setToUnit}>
                 <SelectTrigger data-testid="disposisi-unit-select" className="h-9"><SelectValue placeholder="Pilih unit" /></SelectTrigger>
                 <SelectContent>
-                  {reference.units?.map((u) => <SelectItem key={u} value={u}>{shortUnit(u)}</SelectItem>)}
+                  {(reference.all_active_units || reference.units || []).map((u) => <SelectItem key={typeof u === 'string' ? u : u.id} value={typeof u === 'string' ? u : u.name}>{typeof u === 'string' ? shortUnit(u) : u.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
+            )}
 
+            {!isSaranMode && (
             <div>
               <div className="flex items-center justify-between mb-1">
                 <Label className="text-xs">Ceklist Tugas</Label>
                 <Button type="button" size="sm" variant="ghost" className="h-6 text-[10px]" onClick={addTask}>+ Tambah</Button>
               </div>
               <div className="space-y-1.5 border rounded-md p-2 bg-slate-50/50 max-h-[180px] overflow-y-auto">
-                {tasks.length === 0 && <p className="text-[10px] text-slate-400">Klik &quot;+ Tambah&quot; untuk menambah tugas.</p>}
+                {tasks.length === 0 && <p className="text-[10px] text-slate-400">Klik "+ Tambah" untuk menambah tugas.</p>}
                 {tasks.map((t, i) => (
                   <div key={i} className="flex items-center gap-1.5">
                     <Checkbox checked={t.checked} onCheckedChange={() => toggleTask(i)} />
@@ -1561,16 +1740,19 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
                 ))}
               </div>
             </div>
+            )}
 
             <div>
-              <Label className="text-xs">Instruksi / Catatan</Label>
-              <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Instruksi disposisi..." className="min-h-[70px] text-xs" data-testid="disposisi-note" />
+              <Label className="text-xs">{isSaranMode ? 'Saran / Masukan' : 'Instruksi / Catatan'}</Label>
+              <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder={isSaranMode ? 'Saran untuk Kabid Propam...' : 'Instruksi disposisi...'} className="min-h-[70px] text-xs" data-testid="disposisi-note" />
             </div>
 
+            {!isSaranMode && (
             <div className="flex items-center gap-2 rounded-md border p-2 bg-amber-50/30">
               <Checkbox id="atensi-single" checked={isAtensi} onCheckedChange={setIsAtensi} />
               <Label htmlFor="atensi-single" className="cursor-pointer flex items-center gap-1 text-xs"><Star className="h-3.5 w-3.5 text-amber-500" /> ATENSI (prioritas)</Label>
             </div>
+            )}
 
             <div className="border-t pt-3">
               {editMode ? (
@@ -1582,9 +1764,9 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
                   </Button>
                 </div>
               ) : (
-                <Button onClick={submitAndNext} disabled={submitting || !toUnit} className="w-full bg-blue-800 hover:bg-blue-900" data-testid="disposisi-submit">
-                  {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ArrowRightLeft className="h-4 w-4 mr-2" />}
-                  Disposisi &amp; Lanjut
+                <Button onClick={submitAndNext} disabled={submitting || (!isSaranMode && !toUnit)} className="w-full bg-blue-800 hover:bg-blue-900" data-testid="disposisi-submit">
+                  {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : isSaranMode ? <FileText className="h-4 w-4 mr-2" /> : <ArrowRightLeft className="h-4 w-4 mr-2" />}
+                  {isSaranMode ? 'Simpan Saran & Lanjut' : 'Disposisi & Lanjut'}
                 </Button>
               )}
             </div>
@@ -2172,19 +2354,136 @@ function AstinaInputPage() {
   )
 }
 
+// ---------------- Rehabpers Page ----------------
+function RehabpersPage({ user }) {
+  const [cases, setCases] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [rekomendasi, setRekomendasi] = useState('')
+  const [selectedPid, setSelectedPid] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const r = await api('/antrian-rehabpers')
+      setCases(r.data || [])
+    } catch (e) { toast.error(e.message) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [])
+
+  const submit = async () => {
+    if (!selectedPid || !rekomendasi) return toast.error('Pilih kasus dan isi rekomendasi')
+    setSubmitting(true)
+    try {
+      await api('/rekomendasi-rehabpers', { method: 'POST', body: JSON.stringify({ pid: selectedPid, rekomendasi }) })
+      toast.success('Rekomendasi tersimpan')
+      setRekomendasi('')
+      setSelectedPid(null)
+      load()
+    } catch (e) { toast.error(e.message) }
+    finally { setSubmitting(false) }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h2 className="text-2xl font-bold text-slate-900">Antrian Rekomendasi</h2>
+        <Button variant="outline" size="sm" onClick={load}><RefreshCw className="h-4 w-4 mr-2" /> Refresh</Button>
+      </div>
+
+      {loading ? <div className="flex items-center justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div> :
+      cases.length === 0 ? <Card><CardContent className="py-16 text-center"><p className="text-slate-500">Tidak ada kasus menunggu rekomendasi.</p></CardContent></Card> :
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card className="lg:col-span-1">
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Putusan Sidang</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {cases.map((c) => (
+              <button key={c.prepator_id || c.prepetrator_id} onClick={() => { setSelectedPid(c.prepator_id || c.prepetrator_id); setRekomendasi('') }}
+                className={`w-full text-left p-3 rounded-md border text-xs ${selectedPid === (c.prepator_id || c.prepetrator_id) ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                <p className="font-medium">{c.pengirim || c.prepetrator_name || '-'}</p>
+                <p className="text-slate-500 truncate">{c.perihal || '-'}</p>
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+        {selectedPid && (
+        <Card className="lg:col-span-2">
+          <CardContent className="p-4 space-y-3">
+            <h3 className="text-sm font-semibold">Rekomendasi</h3>
+            <Textarea value={rekomendasi} onChange={(e) => setRekomendasi(e.target.value)} placeholder="Masukkan rekomendasi..." className="min-h-[150px]" />
+            <Button onClick={submit} disabled={submitting || !rekomendasi} className="bg-blue-800 hover:bg-blue-900">
+              {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null} Simpan Rekomendasi
+            </Button>
+          </CardContent>
+        </Card>
+        )}
+      </div>}
+    </div>
+  )
+}
+
+// ---------------- Riwayat Saya ----------------
+function RiwayatSayaPage({ user, onOpenCase }) {
+  const [cases, setCases] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const r = await api('/riwayat-saya')
+      setCases(r.data || [])
+    } catch (e) { toast.error(e.message) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [])
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h2 className="text-2xl font-bold text-slate-900">Riwayat Saya</h2>
+        <Button variant="outline" size="sm" onClick={load}><RefreshCw className="h-4 w-4 mr-2" /> Refresh</Button>
+      </div>
+
+      {loading ? <div className="flex items-center justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div> :
+      cases.length === 0 ? <Card><CardContent className="py-16 text-center"><p className="text-slate-500">Belum ada kasus yang pernah Anda tangani.</p></CardContent></Card> :
+      <Card><CardContent className="p-0"><div className="overflow-x-auto"><Table>
+        <TableHeader className="bg-slate-50"><TableRow>
+          <TableHead className="text-sm">ID</TableHead><TableHead className="text-sm">Pengirim</TableHead><TableHead className="text-sm">Perihal</TableHead><TableHead className="text-sm">Status</TableHead>
+        </TableRow></TableHeader>
+        <TableBody>
+          {cases.map((c) => (
+            <TableRow key={c.prepetrator_id} className="cursor-pointer hover:bg-slate-50" onClick={() => onOpenCase?.(c.prepetrator_id)}>
+              <TableCell className="text-xs font-mono">{String(c.prepetrator_id).slice(0, 12)}...</TableCell>
+              <TableCell className="text-xs">{c.pengirim || '-'}</TableCell>
+              <TableCell className="text-xs max-w-[300px] truncate">{c.perihal || '-'}</TableCell>
+              <TableCell><Badge className={`text-xs ${getBucket(c.status) === 'SELESAI' ? 'bg-green-100 text-green-800' : getBucket(c.status) === 'DALAM_PENANGANAN' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-700'}`}>{c.status || '-'}</Badge></TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table></div></CardContent></Card>}
+    </div>
+  )
+}
+
 // ---------------- App Shell ----------------
 function AppShell({ user, onLogout }) {
   const [tab, setTab] = useState('dashboard')
   const [selectedCase, setSelectedCase] = useState(null)
   const role = user?.role || 'unit'
-  const isKasubbid = role === 'kasubbid' || role === 'admin'
-  const isPropamYanduan = role === 'kabid_propam' || role === 'kasubbag_yanduan'
-  const isSuperAdmin = role === 'super_admin'
-  const canDisposisi = isKasubbid || isPropamYanduan
-  const canAstina = isPropamYanduan
-  const canManageUnits = isKasubbid || isSuperAdmin
-  const canSettings = isKasubbid || isSuperAdmin
-  const canDashboardCases = !isSuperAdmin
+  const isYanduan = role === 'kasubbag_yanduan'
+  const isKabid = role === 'kabid_propam'
+  const isKasubbid = role === 'kasubbid_paminal' || role === 'kasubbid_provos' || role === 'kasubbid_wabprof'
+  const isAdmin = role === 'admin' || role === 'super_admin'
+  const isRehabpers = role === 'kasubbag_rehabpers'
+  const isUnit = role === 'unit'
+  const canDisposisi = isKasubbid || isKabid || isYanduan || isAdmin
+  const canSaranMasukan = isYanduan
+  const canAstina = isYanduan || isKabid
+  const canManageUnits = isAdmin
+  const canSettings = isAdmin
+  const canRiwayat = isKasubbid || isKabid || isYanduan || isUnit
+  const canDashboardCases = !(role === 'kasubbag_rehabpers')
   const [disposisiCount, setDisposisiCount] = useState(0)
   const notifiedRef = useRef(false)
   const [connStatus, setConnStatus] = useState({ gajamada: false })
@@ -2222,8 +2521,11 @@ function AppShell({ user, onLogout }) {
   const menu = [
     ...(canDashboardCases ? [{ id: 'dashboard', label: 'Dashboard ANEV', icon: LayoutDashboard }] : []),
     ...(canDashboardCases ? [{ id: 'cases', label: 'Daftar Surat', icon: FolderKanban }] : []),
-    ...(canDisposisi ? [{ id: 'disposisi', label: 'Disposisi', icon: ArrowRightLeft, badge: disposisiCount }] : []),
+    ...(canSaranMasukan ? [{ id: 'saran-masukan', label: 'Saran/Masukan', icon: FileText, badge: disposisiCount }] : []),
+    ...(canDisposisi && !isYanduan ? [{ id: 'disposisi', label: 'Disposisi', icon: ArrowRightLeft, badge: disposisiCount }] : []),
     ...(canAstina ? [{ id: 'astina', label: 'ASTINA', icon: FileText }] : []),
+    ...(isRehabpers ? [{ id: 'rehabpers', label: 'Rekomendasi', icon: CheckCircle2 }] : []),
+    ...(canRiwayat ? [{ id: 'riwayat-saya', label: 'Riwayat Saya', icon: History }] : []),
     ...(canManageUnits ? [{ id: 'units', label: 'Master Unit', icon: Building2 }] : []),
     ...(canManageUnits ? [{ id: 'satker', label: 'Satker/Satwil', icon: MapPin }] : []),
     { id: 'sync', label: 'Log Sync', icon: Send },
@@ -2235,9 +2537,9 @@ function AppShell({ user, onLogout }) {
     <div className="min-h-screen flex bg-slate-100">
       <aside className="w-64 bg-gradient-to-b from-blue-950 via-blue-900 to-indigo-950 text-white flex flex-col shadow-2xl">
         <div className="p-5 border-b border-white/10">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-white/10 flex items-center justify-center"><Shield className="h-5 w-5" /></div>
-            <div>
+            <div className="flex items-center gap-3">
+              <img src="/logo-pengaduan.png" alt="Logo" className="h-10 w-10 rounded-lg object-contain bg-white/10 p-0.5" />
+              <div>
               <p className="font-bold text-lg leading-tight">{APP_NAME}</p>
             </div>
           </div>
@@ -2281,8 +2583,11 @@ function AppShell({ user, onLogout }) {
         <div className="max-w-[1600px] mx-auto p-6">
           {tab === 'dashboard' && canDashboardCases && <Dashboard user={user} />}
           {tab === 'cases' && canDashboardCases && <CasesList user={user} onOpenCase={setSelectedCase} />}
-          {tab === 'disposisi' && canDisposisi && <DisposisiPage user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
+          {tab === 'saran-masukan' && canSaranMasukan && <DisposisiPage mode="saran" user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
+          {tab === 'disposisi' && canDisposisi && !isYanduan && <DisposisiPage mode="disposisi" user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
           {tab === 'astina' && canAstina && <AstinaInputPage />}
+          {tab === 'rehabpers' && isRehabpers && <RehabpersPage user={user} />}
+          {tab === 'riwayat-saya' && canRiwayat && <RiwayatSayaPage user={user} onOpenCase={setSelectedCase} />}
           {tab === 'units' && canManageUnits && <MasterUnitPage user={user} />}
           {tab === 'satker' && canManageUnits && <SatkerSatwilPage user={user} />}
           {tab === 'sync' && <SyncLogsView />}

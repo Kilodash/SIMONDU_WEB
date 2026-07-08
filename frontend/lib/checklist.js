@@ -2,6 +2,39 @@
 
 import { STATUS, RESOLUSI } from './status.js'
 
+export const UNIT_DOC_TYPES = {
+  PAMINAL: ['Laporan Informasi', 'Nota Dinas', 'Laporan Hasil'],
+  PROVOS:  ['LP Model A', 'Nota Dinas', 'Berita Acara Pemeriksaan'],
+  WABPROF: ['LP Model A', 'Nota Dinas', 'Berita Acara Pemeriksaan'],
+  POLRES:  ['Laporan Informasi', 'SP2HP', 'Gelar Perkara'],
+}
+
+export const UNIT_DEFAULT_TASKS = {
+  PAMINAL: ['LIDIK/PULBAKET', 'GELARKAN', 'LAPORKAN HASILNYA'],
+  PROVOS:  ['PERIKSA', 'BERKAS GARPLIN', 'SIDANG DISIPLIN'],
+  WABPROF: ['PERIKSA', 'BERKAS GAR KEPP', 'SIDANG KKE'],
+  POLRES:  ['LIDIK/PULBAKET', 'GELARKAN', 'SIDANG DISIPLIN'],
+}
+
+export function getUnitType(disposisiCasePosition) {
+  if (!disposisiCasePosition) return null
+  const up = disposisiCasePosition.toUpperCase()
+  if (up.includes('PAMINAL')) return 'PAMINAL'
+  if (up.includes('PROVOS')) return 'PROVOS'
+  if (up.includes('WABPROF')) return 'WABPROF'
+  if (up.includes('POLRES')) return 'POLRES'
+  if (up.includes('WASSIDIK')) return 'WASSIDIK'
+  if (up.includes('YANDUAN')) return 'YANDUAN'
+  if (up.includes('KABID PROPAM')) return 'KABID'
+  return null
+}
+
+export function getCaseTypeForUnit(unitType) {
+  if (unitType === 'PAMINAL' || unitType === 'POLRES') return 'laporan_informasi'
+  if (unitType === 'PROVOS' || unitType === 'WABPROF') return 'pengaduan'
+  return 'laporan_informasi'
+}
+
 // ponytail: FOLLOWUP_DOC_TYPES removed; add when document tracking re-enabled.
 // ponytail: NON_DUMAS_DOC_TYPES removed; add when non-dumas document tracking re-enabled.
 

@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import * as gajamada from '@/lib/gajamada'
-import { getDb, getActiveUnits, getKasubbidName, getKasubbidAliases } from '@/lib/db'
-import { authenticate, signSession, getCookieHeader, clearCookieHeader, getUserFromRequest } from '@/lib/auth'
-import { CATEGORY_OPTIONS, shortUnit } from '@/lib/units'
-import { STAGE_LABELS, NON_DUMAS_STAGE_LABELS, HASIL_LIDIK_OPTIONS, SETTLEMENT_OPTIONS, computeChecklist, getStageOrder, getStageLabels, MINI_CHECKLIST } from '@/lib/checklist'
+import { getDb, getActiveUnits, getKasubbidName, getKasubbidAliases, getPolresUnits, getAllActiveUnitNames } from '@/lib/db'
+import { authenticate, signSession, getCookieHeader, clearCookieHeader, getUserFromRequest, isDisposisiRole, isAdminRole, isKasubbidRole, isUnitRole } from '@/lib/auth'
+import { CATEGORY_OPTIONS, shortUnit, FILTER_UNITS } from '@/lib/units'
+import { STAGE_LABELS, NON_DUMAS_STAGE_LABELS, HASIL_LIDIK_OPTIONS, SETTLEMENT_OPTIONS, computeChecklist, getStageOrder, getStageLabels, MINI_CHECKLIST, UNIT_DOC_TYPES, UNIT_DEFAULT_TASKS, getUnitType, getCaseTypeForUnit } from '@/lib/checklist'
 import { STATUS, RESOLUSI, BUCKET, getBucket, canTransition, canResolve } from '@/lib/status'
 
 // Default disposisi task templates
@@ -17,13 +17,6 @@ function fail(msg, status = 400) { return NextResponse.json({ ok: false, error: 
 async function requireAuth(request) {
   const u = await getUserFromRequest(request)
   return u || null
-}
-
-function isDisposisiRole(role) {
-  return role === 'kasubbid' || role === 'admin' || role === 'kabid_propam' || role === 'kasubbag_yanduan'
-}
-function isAdminRole(role) {
-  return role === 'admin' || role === 'super_admin'
 }
 
 async function logAudit(actor, action, resource, meta = {}) {
@@ -299,8 +292,12 @@ async function handleRoute(request, ctx) {
     [STATUS.DISPOSISI_PIMPINAN]: ['Didistribusi', 'Distribusi', 'Lidik', 'Laporan Dikirim ke Polres'],
     [STATUS.PENYELIDIKAN_PAMINAL]: ['Proses Lidik', 'Laporan Diterima Kasubbid Paminal'],
     [STATUS.PENYELIDIKAN_PROVOS]: ['Laporan Diterima Kasubbid Provos'],
+    [STATUS.PEMERIKSAAN_GARPLIN]: [],
+    [STATUS.PEMERIKSAAN_GAR_KEPP]: [],
     [STATUS.SIDANG_DISIPLIN]: ['PUTUSAN SIDANG'],
+    [STATUS.SIDANG_KKE]: [],
     [STATUS.LIMPAH_PAMINAL_PROVOS]: ['Didistribusi'],
+    [STATUS.PUTUSAN_SIDANG]: [],
     [STATUS.SELESAI]: ['Selesai', 'Terbukti', 'Tidak Terbukti', 'Perdamaian', 'Restorative Justice', 'Henti Lidik', 'Tolak', 'Laporan Ditolak Polda', 'Laporan ditolak', 'Pencabutan', 'HENTI LIDIK SEBELUM TERBIT SPRIN'],
   }
   const ALL_GAJAMADA_STATUSES = Object.values(GAJAMADA_STATUS_MAP).flat()
@@ -355,19 +352,23 @@ async function handleRoute(request, ctx) {
         }
       } catch (_) {}
     }
-    await ensureCreds(me.username)
+    if (me.role === 'kasubbag_yanduan' || me.role === 'admin' || me.role === 'super_admin') {
+      await ensureCreds(me.username)
+    }
 
     // ---------- REFERENCE ----------
     if (route === '/reference' && method === 'GET') {
-      const [dynamicUnits, db, gajamadaStatuses, nonPaminal] = await Promise.all([
+      const [dynamicUnits, db, gajamadaStatuses, nonPaminal, polresUnits, allActiveUnits] = await Promise.all([
         getActiveUnits(),
         getDb(),
         gajamada.getStatuses(null).catch(() => []),
         getSatkerUnits(),
+        getPolresUnits(),
+        getAllActiveUnitNames(),
       ])
       const satkerRows = await db.collection('satker_satwil').find({}).sort({ order: 1, name: 1 }).toArray()
       const allStatuses = SIMPLIFIED_STATUSES
-      const groups = { YANDUAN: false, WASSIDIK: false, POLRES_TA_TABES: false, PROVOS: false, WABPROF: false }
+      const groups = { YANDUAN: false, WASSIDIK: false, POLRES_TA_TABES: false, PROVOS: false, WABPROF: false, PAMINAL: false }
       for (const u of nonPaminal) {
         const up = u.toUpperCase()
         if (up.includes('YANDUAN')) groups.YANDUAN = true
@@ -376,12 +377,17 @@ async function handleRoute(request, ctx) {
         else if (up.includes('PROVOS')) groups.PROVOS = true
         else if (up.includes('WABPROF')) groups.WABPROF = true
       }
+      for (const u of allActiveUnits) {
+        const up = u.toUpperCase()
+        if (up.includes('PAMINAL')) groups.PAMINAL = true
+      }
       const gajamadaSatker = [
         ...(groups.YANDUAN ? ['YANDUAN'] : ['YANDUAN']),
         ...(groups.WASSIDIK ? ['WASSIDIK'] : ['WASSIDIK']),
         ...(groups.POLRES_TA_TABES ? ['POLRES/TA/TABES'] : ['POLRES/TA/TABES']),
         ...(groups.PROVOS ? ['KASUBBID PROVOS POLDA JAWA BARAT'] : ['KASUBBID PROVOS POLDA JAWA BARAT']),
         ...(groups.WABPROF ? ['KASUBBID WABPROF POLDA JAWA BARAT'] : ['KASUBBID WABPROF POLDA JAWA BARAT']),
+        ...(groups.PAMINAL ? ['KASUBBID PAMINAL POLDA JAWA BARAT'] : ['KASUBBID PAMINAL POLDA JAWA BARAT']),
       ]
       const kasubbid = await getKasubbidName()
       const childUnits = await loadUnitList()
@@ -393,6 +399,7 @@ async function handleRoute(request, ctx) {
         categories: CATEGORY_OPTIONS,
         default_disposisi_tasks: DEFAULT_DISPOSISI_TASKS,
         non_dumas_disposisi_tasks: NON_DUMAS_DISPOSISI_TASKS,
+        unit_default_tasks: UNIT_DEFAULT_TASKS,
         stage_labels: STAGE_LABELS,
         non_dumas_stage_labels: NON_DUMAS_STAGE_LABELS,
         hasil_lidik_options: HASIL_LIDIK_OPTIONS,
@@ -400,6 +407,9 @@ async function handleRoute(request, ctx) {
         satker_satwil: satkerRows.map(({ _id, ...r }) => r),
         gajamada_satker: gajamadaSatker,
         all_satker_units: nonPaminal,
+        filter_units: FILTER_UNITS,
+        polres_units: polresUnits,
+        all_active_units: allActiveUnits,
       })
     }
 
@@ -530,35 +540,118 @@ async function handleRoute(request, ctx) {
     }
 
     // ---------- CASES ----------
-    async function fetchCasesForUser(u, opts) {
-      let units = opts.units // explicit array override
-      const scope = opts.scope || 'paminal'
-      if (u.role === 'unit') {
-        units = [u.unit]
-      } else if (opts.unit && scope === 'all') {
-        const allUnits = await getSatkerUnits()
-        const up = opts.unit.toUpperCase()
-        if (up === 'YANDUAN') units = allUnits.filter((n) => n.toUpperCase().includes('YANDUAN'))
-        else if (up === 'WASSIDIK') units = allUnits.filter((n) => n.toUpperCase().includes('WASSIDIK'))
-        else if (up === 'POLRES/TA/TABES') units = allUnits.filter((n) => n.toUpperCase().includes('POLRES'))
-        else if (up === 'KASUBBID PROVOS POLDA JAWA BARAT') units = allUnits.filter((n) => n.toUpperCase().includes('PROVOS'))
-        else if (up === 'KASUBBID WABPROF POLDA JAWA BARAT') units = allUnits.filter((n) => n.toUpperCase().includes('WABPROF'))
-        else units = [opts.unit]
-        if (!units || units.length === 0) units = [opts.unit]
-      } else if (opts.unit) {
-        units = [opts.unit]
-      } else if (!units) {
-        if (scope === 'paminal') {
-          const [kasubbid, childUnits] = await Promise.all([getKasubbidName(), loadUnitList()])
-          units = [kasubbid, ...childUnits].filter(Boolean)
+    async function fetchCasesLocal(u, opts) {
+      const db = await getDb()
+      let rows = await db.collection('local_cases').find({}).sort({ created_at: -1 }).toArray()
+      if (opts.case_type) rows = rows.filter((r) => r.case_type === opts.case_type || (!r.case_type && opts.case_type === 'dumas'))
+      if (opts.bucket) {
+        const statuses = BUCKET[opts.bucket] || []
+        rows = rows.filter((r) => statuses.includes(r.status || STATUS.SURAT_MASUK_POLDA_JABAR))
+      }
+      if (opts.search) {
+        const s = opts.search.toLowerCase()
+        rows = rows.filter((r) => (r.pengirim || '').toLowerCase().includes(s) || (r.perihal || '').toLowerCase().includes(s) || (r.prepetrator_name || r.prepator_name || '').toLowerCase().includes(s) || (r.prepetrator_id || r.prepator_id || '').toLowerCase().includes(s))
+      }
+      if (opts.status) {
+        rows = rows.filter((r) => r.status === opts.status)
+      }
+      if (opts.category) {
+        rows = rows.filter((r) => r.category === opts.category)
+      }
+      // Unit filter based on latest disposition
+      if (opts.unit && rows.length > 0) {
+        const allPids = [...new Set(rows.map((r) => r.prepator_id || r.prepetrator_id).filter(Boolean))]
+        const dispRows = await db.collection('dispositions').find({ prepetrator_id: { $in: allPids } }).sort({ created_at: -1 }).toArray()
+        const latestByPid = {}
+        for (const d of dispRows) {
+          if (!latestByPid[d.prepetrator_id]) latestByPid[d.prepetrator_id] = d
+        }
+        if (opts.unit === 'POLRES' && opts.polres) {
+          rows = rows.filter((r) => {
+            const pid = r.prepator_id || r.prepetrator_id
+            const d = latestByPid[pid]
+            return d && d.to_unit === opts.polres
+          })
+        } else if (opts.unit === 'KABID PROPAM') {
+          rows = rows.filter((r) => r.status === STATUS.DISPOSISI_PIMPINAN)
+        } else if (opts.unit === 'SUBBAG YANDUAN') {
+          rows = rows.filter((r) => r.status === STATUS.SURAT_MASUK_POLDA_JABAR)
         } else {
-          units = undefined
+          const up = opts.unit.toUpperCase()
+          rows = rows.filter((r) => {
+            const pid = r.prepator_id || r.prepetrator_id
+            const d = latestByPid[pid]
+            return d && d.to_unit && d.to_unit.toUpperCase().includes(up)
+          })
         }
       }
+      const total = rows.length
+      const page = opts.page || 1
+      const size = opts.size || 20
+      const paged = rows.slice((page - 1) * size, page * size)
+      // Enrich with disposition info
+      const pids = paged.map((r) => r.prepator_id || r.prepetrator_id).filter(Boolean)
+      if (pids.length > 0) {
+        const dispRows = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).sort({ created_at: -1 }).toArray()
+        const dispBy = {}
+        for (const d of dispRows) if (!dispBy[d.prepetrator_id]) dispBy[d.prepetrator_id] = d
+        for (const r of paged) {
+          const pid = r.prepator_id || r.prepetrator_id
+          const d = dispBy[pid]
+          r.disposisi_case_position = d?.to_unit || '-'
+          r.is_atensi = !!d?.is_atensi
+          r._internal_disposisi = !!d
+          r.status_label = r.status || STATUS.SURAT_MASUK_POLDA_JABAR
+          r.bucket = getBucket(r.status || STATUS.SURAT_MASUK_POLDA_JABAR)
+          r.created_date = r.created_at
+          r.pengirim = r.pengirim || '-'
+          r.prepetrator_id = pid
+          r.prepetrator_name = r.prepator_name || r.prepetrator_name || '-'
+          r.perihal = r.perihal || r.summary || ''
+          r.summary = r.perihal || r.summary || r.content || ''
+          r.category = r.category || 'NON-DUMAS'
+          r.source_alias = r.source_alias || r.source || 'LOCAL'
+        }
+      }
+      return { data: paged, total }
+    }
+
+    async function fetchCasesForUser(u, opts) {
+      if (u.role !== 'kasubbag_yanduan' && u.role !== 'admin' && u.role !== 'super_admin') {
+        return fetchCasesLocal(u, opts)
+      }
+      let units = opts.units // explicit array override
+      if (u.role === 'unit') {
+        units = [u.unit]
+      } else if (opts.unit) {
+        const up = opts.unit.toUpperCase()
+        if (['KABID PROPAM', 'SUBBAG YANDUAN', 'SUBBID PAMINAL', 'SUBBID PROVOS', 'SUBBID WABPROF', 'WASSIDIK'].includes(opts.unit)) {
+          const allUnits = await getSatkerUnits()
+          if (up.includes('YANDUAN')) units = allUnits.filter((n) => n.toUpperCase().includes('YANDUAN'))
+          else if (up.includes('PAMINAL')) units = allUnits.filter((n) => n.toUpperCase().includes('PAMINAL'))
+          else if (up.includes('PROVOS')) units = allUnits.filter((n) => n.toUpperCase().includes('PROVOS'))
+          else if (up.includes('WABPROF')) units = allUnits.filter((n) => n.toUpperCase().includes('WABPROF'))
+          else if (up.includes('WASSIDIK')) units = allUnits.filter((n) => n.toUpperCase().includes('WASSIDIK'))
+          else if (up.includes('KABID PROPAM')) units = allUnits.filter((n) => n.toUpperCase().includes('KABID PROPAM'))
+          if (!units || units.length === 0) units = [opts.unit]
+        } else if (opts.unit === 'POLRES') {
+          if (opts.polres) {
+            units = [opts.polres]
+          } else {
+            const allUnits = await getSatkerUnits()
+            units = allUnits.filter((n) => n.toUpperCase().includes('POLRES'))
+            if (!units || units.length === 0) units = [opts.unit]
+          }
+        } else {
+          units = [opts.unit]
+        }
+      } else if (!units) {
+        const [kasubbid, childUnits, satkerUnits] = await Promise.all([getKasubbidName(), loadUnitList(), getSatkerUnits()])
+        units = [kasubbid, ...(childUnits || []), ...(satkerUnits || [])].filter(Boolean)
+      }
       const params = { ...opts, units }
-      delete params.scope
-      delete params.unit // 'units' array takes precedence
-      // Map simplified status to Gajamada statuses
+      delete params.unit
+      delete params.polres
       if (params.status && SIMPLIFIED_STATUSES.includes(params.status)) {
         params.statuses = resolveGajamadaStatuses(params.status)
         delete params.status
@@ -602,7 +695,7 @@ async function handleRoute(request, ctx) {
           bucket: getBucket(status),
         }
       })
-      return { data: enriched, total: (opts.case_type || opts.bucket) ? enriched.length : r.total }
+      return { data: enriched, total: r.total || enriched.length }
     }
 
     if (route === '/cases' && method === 'GET') {
@@ -612,10 +705,10 @@ async function handleRoute(request, ctx) {
       const status = url.searchParams.get('status') || undefined
       const category = url.searchParams.get('category') || undefined
       const unit = url.searchParams.get('unit') || undefined
-      const scope = url.searchParams.get('scope') || 'paminal'
+      const polres = url.searchParams.get('polres') || undefined
       const caseType = url.searchParams.get('case_type') || undefined
       const bucket = url.searchParams.get('bucket') || undefined
-      const result = await fetchCasesForUser(me, { page, size, search, status, category, unit: unit || undefined, scope, case_type: caseType, bucket })
+      const result = await fetchCasesForUser(me, { page, size, search, status, category, unit: unit || undefined, polres, case_type: caseType, bucket })
       return ok({ ...result, page, size })
     }
 
@@ -697,15 +790,16 @@ async function handleRoute(request, ctx) {
       if (!isDisposisiRole(me.role)) return fail('Hanya Kasubbid/Admin/Kabid Propam/Kasubbag Yanduan', 403)
       const { items, to_unit, note, is_atensi, case_type, tasks } = await request.json()
       if (!Array.isArray(items) || items.length === 0) return fail('items wajib')
-      const childUnits = await loadUnitList()
-      if (!to_unit || !childUnits.includes(to_unit)) return fail('Unit tujuan tidak valid')
+      const allUnits = await getAllActiveUnitNames()
+      if (!to_unit || !allUnits.includes(to_unit)) return fail('Unit tujuan tidak valid')
       const db = await getDb()
       const results = []
-      const kasubbid = await getKasubbidName()
+      const unitType = getUnitType(to_unit)
+      const autoCaseType = case_type || getCaseTypeForUnit(unitType)
+      const fromUnit = me.role === 'kabid_propam' ? 'KABID PROPAM' : 'SUBBAG YANDUAN'
       for (const item of items) {
         const pid = typeof item === 'string' ? item : item.pid
         const itemSource = typeof item === 'string' ? 'gajamada' : (item.source || 'gajamada')
-        // Prevent duplicate disposition to same unit
         const exists = await db.collection('dispositions').findOne({ prepetrator_id: pid, to_unit })
         if (exists) { results.push({ pid, status: 'skipped', reason: 'Sudah didisposisi ke unit ini' }); continue }
         const taskLabels = Array.isArray(tasks) ? tasks.filter((t) => t.checked && t.label).map((t) => t.label) : []
@@ -714,7 +808,7 @@ async function handleRoute(request, ctx) {
           id: uuidv4(),
           prepetrator_id: pid,
           to_unit,
-          from_unit: kasubbid,
+          from_unit: fromUnit,
           note: taskNote + (note || ''),
           is_atensi: !!is_atensi,
           by: { username: me.username, name: me.name, role: me.role },
@@ -722,9 +816,7 @@ async function handleRoute(request, ctx) {
           synced_to_gajamada: false,
         }
         await db.collection('dispositions').insertOne(disp)
-        // Seed checklist items based on case_type
         try {
-          const ctype = case_type || 'dumas'
           const docTypes = MINI_CHECKLIST
           for (const dt of docTypes) {
             await db.collection('followup_checklist').updateOne(
@@ -734,21 +826,20 @@ async function handleRoute(request, ctx) {
             )
           }
         } catch (_) {}
-        // Upsert case_type + update status to local_cases
+        const newStatus = me.role === 'kabid_propam'
+          ? (unitType === 'PAMINAL' || unitType === 'POLRES' ? STATUS.PENYELIDIKAN_PAMINAL : STATUS.PENYELIDIKAN_PROVOS)
+          : STATUS.DISPOSISI_PIMPINAN
         try {
           await db.collection('local_cases').updateOne(
             { prepetrator_id: pid },
-            { $set: { case_type: case_type || 'dumas', status: STATUS.DISPOSISI_PIMPINAN, updated_at: new Date() }, $setOnInsert: { prepetrator_id: pid, source: itemSource, created_at: new Date() } },
+            { $set: { case_type: autoCaseType, status: newStatus, updated_at: new Date() }, $setOnInsert: { prepetrator_id: pid, source: itemSource, created_at: new Date() } },
             { upsert: true }
           )
         } catch (_) {}
-        const dateStr = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })
-        const timelineTitle = `Didistribusi ${to_unit} - POLDA JAWA BARAT`
-        const timelineDesc = `${is_atensi ? 'ATENSI - ' : ''}${note || 'Disposisi oleh ' + me.name}`
         await db.collection('timelines').insertOne({
           id: uuidv4(), prepetrator_id: pid,
-          title: timelineTitle,
-          description: timelineDesc,
+          title: `Didistribusi ke ${to_unit}`,
+          description: `${is_atensi ? 'ATENSI - ' : ''}${note || 'Disposisi oleh ' + me.name}`,
           by: { username: me.username, name: me.name, role: me.role },
           created_at: new Date(),
         })
@@ -820,6 +911,160 @@ async function handleRoute(request, ctx) {
         const { _id, ...clean } = row
         return ok({ data: clean })
       }
+    }
+
+    // ---------- SARAN YANDUAN ----------
+    if (route === '/saran-yanduan' && method === 'POST') {
+      if (me.role !== 'kasubbag_yanduan' && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Kasubbag Yanduan', 403)
+      const { pid, checklist, catatan } = await request.json()
+      if (!pid) return fail('pid wajib')
+      const db = await getDb()
+      const doc = {
+        id: uuidv4(), prepetrator_id: pid,
+        checklist: checklist || [],
+        catatan: catatan || '',
+        by: { username: me.username, name: me.name, role: me.role },
+        created_at: new Date(),
+      }
+      await db.collection('saran_yanduan').insertOne(doc)
+      await db.collection('local_cases').updateOne({ prepetrator_id: pid }, { $set: { status: STATUS.DISPOSISI_PIMPINAN, updated_at: new Date() } }, { upsert: true })
+      await db.collection('timelines').insertOne({
+        id: uuidv4(), prepetrator_id: pid,
+        title: 'Saran/Masukan dari Yanduan',
+        description: catatan || 'Telaah selesai, menunggu disposisi Kabid',
+        by: { username: me.username, name: me.name, role: me.role },
+        created_at: new Date(),
+      })
+      scheduleSync(pid, me, 'saran_yanduan')
+      await logAudit(me, 'saran_yanduan', pid, { checklist, catatan })
+      return ok({ data: doc })
+    }
+
+    // ---------- LIMPAS WASSIDIK ----------
+    if (route === '/limpas-wassidik' && method === 'POST') {
+      if (me.role !== 'kabid_propam' && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Kabid Propam', 403)
+      const { pid, catatan } = await request.json()
+      if (!pid) return fail('pid wajib')
+      const db = await getDb()
+      await db.collection('local_cases').updateOne({ prepetrator_id: pid }, { $set: { status: STATUS.SELESAI, limpas_wassidik: true, limpas_wassidik_at: new Date(), updated_at: new Date() } }, { upsert: true })
+      await db.collection('timelines').insertOne({
+        id: uuidv4(), prepetrator_id: pid,
+        title: 'Dilimpahkan ke Wassidik',
+        description: catatan || 'Dilimpahkan oleh Kabid',
+        by: { username: me.username, name: me.name, role: me.role },
+        created_at: new Date(),
+      })
+      scheduleSync(pid, me, 'limpas_wassidik')
+      await logAudit(me, 'limpas_wassidik', pid, { catatan })
+      return ok({ data: { pid, status: STATUS.SELESAI } })
+    }
+
+    // ---------- TOLAK (Unit kembalikan ke Kabid) ----------
+    if (route === '/tolak' && method === 'POST') {
+      if (!isKasubbidRole(me.role) && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Kasubbid/Admin', 403)
+      const { pid, alasan } = await request.json()
+      if (!pid) return fail('pid wajib')
+      const db = await getDb()
+      const latestDisp = await db.collection('dispositions').findOne({ prepetrator_id: pid }, { sort: { created_at: -1 } })
+      const fromUnit = latestDisp?.to_unit || me.unit
+      await db.collection('local_cases').updateOne({ prepetrator_id: pid }, { $set: { status: STATUS.DISPOSISI_PIMPINAN, updated_at: new Date() } }, { upsert: true })
+      await db.collection('timelines').insertOne({
+        id: uuidv4(), prepetrator_id: pid,
+        title: `Ditolak oleh ${fromUnit}, kembali ke Kabid`,
+        description: alasan || 'Dikembalikan ke Kabid Propam',
+        by: { username: me.username, name: me.name, role: me.role },
+        created_at: new Date(),
+      })
+      scheduleSync(pid, me, 'tolak')
+      await logAudit(me, 'tolak', pid, { alasan, from_unit: fromUnit })
+      return ok({ data: { pid, status: STATUS.DISPOSISI_PIMPINAN } })
+    }
+
+    // ---------- LIMPAS ANTAR UNIT ----------
+    if (route === '/limpas-unit' && method === 'POST') {
+      if (!isKasubbidRole(me.role) && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Kasubbid/Admin', 403)
+      const { pid, to_unit, alasan } = await request.json()
+      if (!pid || !to_unit) return fail('pid dan to_unit wajib')
+      const db = await getDb()
+      const currentDisp = await db.collection('dispositions').findOne({ prepetrator_id: pid }, { sort: { created_at: -1 } })
+      const fromUnit = currentDisp?.to_unit || me.unit
+      const newDisp = {
+        id: uuidv4(), prepetrator_id: pid, to_unit,
+        from_unit: fromUnit,
+        note: alasan || '', is_atensi: false,
+        by: { username: me.username, name: me.name, role: me.role },
+        created_at: new Date(), synced_to_gajamada: false,
+        is_limpas: true,
+      }
+      await db.collection('dispositions').insertOne(newDisp)
+      await db.collection('timelines').insertOne({
+        id: uuidv4(), prepetrator_id: pid,
+        title: `Dilimpahkan dari ${fromUnit} ke ${to_unit}`,
+        description: alasan || '',
+        by: { username: me.username, name: me.name, role: me.role },
+        created_at: new Date(),
+      })
+      scheduleSync(pid, me, 'limpas_unit')
+      await logAudit(me, 'limpas_unit', pid, { from: fromUnit, to: to_unit, alasan })
+      return ok({ data: { pid, to_unit } })
+    }
+
+    // ---------- RIWAYAT SAYA ----------
+    if (route === '/riwayat-saya' && method === 'GET') {
+      const db = await getDb()
+      const username = me.username
+      const myDisp = await db.collection('dispositions').find({ 'by.username': username }).sort({ created_at: -1 }).limit(100).toArray()
+      const myTimelines = await db.collection('timelines').find({ 'by.username': username }).sort({ created_at: -1 }).limit(100).toArray()
+      const involvedPids = [...new Set([...myDisp.map((d) => d.prepetrator_id), ...myTimelines.map((t) => t.prepetrator_id)])]
+      const result = []
+      for (const pid of involvedPids) {
+        const [lc] = await Promise.all([
+          db.collection('local_cases').findOne({ prepetrator_id: pid }).catch(() => null),
+        ])
+        let caseInfo = { prepetrator_id: pid, pengirim: '-', perihal: '-', status: lc?.status || STATUS.SURAT_MASUK_POLDA_JABAR }
+        try {
+          const gj = await gajamada.getCase(me.username, pid).catch(() => null)
+          if (gj) caseInfo = { ...caseInfo, pengirim: gj.pengirim || gj.prepetrator_name || '-', perihal: gj.perihal || gj.summary || '-', nomor_surat: gj.nomor_surat || '-', disposisi_case_position: gj.disposisi_case_position }
+        } catch (_) {}
+        result.push(caseInfo)
+      }
+      return ok({ data: result.slice(0, 50) })
+    }
+
+    // ---------- REKOMENDASI REHABPERS ----------
+    if (route === '/rekomendasi-rehabpers' && method === 'POST') {
+      if (me.role !== 'kasubbag_rehabpers' && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Kasubbag Rehabpers', 403)
+      const { pid, rekomendasi } = await request.json()
+      if (!pid || !rekomendasi) return fail('pid dan rekomendasi wajib')
+      const db = await getDb()
+      await db.collection('local_cases').updateOne({ prepetrator_id: pid }, { $set: { status: STATUS.SELESAI, rekomendasi_rehabpers: rekomendasi, updated_at: new Date() } }, { upsert: true })
+      await db.collection('timelines').insertOne({
+        id: uuidv4(), prepetrator_id: pid,
+        title: 'Rekomendasi Rehabpers',
+        description: rekomendasi,
+        by: { username: me.username, name: me.name, role: me.role },
+        created_at: new Date(),
+      })
+      scheduleSync(pid, me, 'rekomendasi_rehabpers')
+      await logAudit(me, 'rekomendasi_rehabpers', pid, { rekomendasi })
+      return ok({ data: { pid, status: STATUS.SELESAI } })
+    }
+
+    // Antrian putusan sidang untuk Rehabpers
+    if (route === '/antrian-rehabpers' && method === 'GET') {
+      if (me.role !== 'kasubbag_rehabpers' && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Kasubbag Rehabpers', 403)
+      const db = await getDb()
+      const cases = await db.collection('local_cases').find({ status: STATUS.PUTUSAN_SIDANG }).sort({ updated_at: -1 }).limit(50).toArray()
+      const result = []
+      for (const lc of cases) {
+        let info = { ...lc, pengirim: lc.pengirim || '-', perihal: lc.perihal || '-' }
+        try {
+          const gj = await gajamada.getCase(me.username, lc.prepator_id).catch(() => null)
+          if (gj) info = { ...info, pengirim: gj.pengirim || gj.prepetrator_name || '-', perihal: gj.perihal || '-', nomor_surat: gj.nomor_surat || '-', disposisi_case_position: gj.disposisi_case_position }
+        } catch (_) {}
+        result.push(info)
+      }
+      return ok({ data: result.map(({ _id, ...r }) => r) })
     }
 
     // ---------- Sub-resources of cases ----------
@@ -939,11 +1184,12 @@ async function handleRoute(request, ctx) {
       if (!isDisposisiRole(me.role)) return fail('Hanya Kasubbid/Admin/Kabid Propam/Kasubbag Yanduan', 403)
       const pid = decodeURIComponent(dispMatch[1])
       const { to_unit, note, is_atensi } = await request.json()
-      const childUnits = await loadUnitList()
-      if (!to_unit || !childUnits.includes(to_unit)) return fail('Unit tujuan tidak valid')
+      const allUnits = await getAllActiveUnitNames()
+      if (!to_unit || !allUnits.includes(to_unit)) return fail('Unit tujuan tidak valid')
       const db = await getDb()
+      const fromUnit = me.role === 'kabid_propam' ? 'KABID PROPAM' : 'SUBBAG YANDUAN'
       const disp = {
-        id: uuidv4(), prepetrator_id: pid, to_unit, from_unit: await getKasubbidName(),
+        id: uuidv4(), prepetrator_id: pid, to_unit, from_unit: fromUnit,
         note: note || '', is_atensi: !!is_atensi,
         by: { username: me.username, name: me.name, role: me.role },
         created_at: new Date(), synced_to_gajamada: false,
@@ -1207,13 +1453,9 @@ async function handleRoute(request, ctx) {
 
     // ---------- ANEV ----------
     if (route === '/anev' && method === 'GET') {
-      const scope = url.searchParams.get('scope') || 'paminal'
       const opts = { page: 1, size: 500 }
       if (me.role === 'unit') {
         opts.units = [me.unit]
-      } else if (scope === 'paminal') {
-        const [kasubbid, childUnits] = await Promise.all([getKasubbidName(), loadUnitList()])
-        opts.units = [kasubbid, ...childUnits].filter(Boolean)
       } else {
         opts.units = undefined
       }
@@ -1256,7 +1498,7 @@ async function handleRoute(request, ctx) {
       }
       const toArr = (o) => Object.entries(o).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)
       return ok({
-        total, sampled: cases.length, scope,
+        total, sampled: cases.length,
         kpi: { totalAtensi },
         byStatus: toArr(byStatus), byCategory: toArr(byCategory), byUnit: toArr(byUnit),
       })

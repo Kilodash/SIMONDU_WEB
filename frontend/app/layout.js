@@ -3,8 +3,9 @@ import { Providers } from './providers'
 import { Toaster } from '@/components/ui/sonner'
 
 export const metadata = {
-  title: 'SIMONDU WEB — Sistem Monitoring Pengaduan Polda Jabar',
-  description: 'Aplikasi internal Kasubbid Paminal Polda Jabar untuk mengelola kasus pengaduan',
+  title: 'SIMONDU WEB — Sistem Monitoring Dumas Bidpropam Polda Jabar',
+  description: 'Aplikasi internal Bidpropam Polda Jabar untuk mengelola kasus pengaduan',
+  icons: { icon: '/logo-pengaduan.png' },
 }
 
 export default function RootLayout({ children }) {

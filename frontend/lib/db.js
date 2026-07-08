@@ -190,6 +190,18 @@ export async function getKasubbidName() {
   return row?.name || null
 }
 
+export async function getPolresUnits() {
+  const db = await getDb()
+  const rows = await db.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
+  return rows.filter((r) => r.name && r.name.toUpperCase().includes('POLRES')).map((r) => r.name)
+}
+
+export async function getAllActiveUnitNames() {
+  const db = await getDb()
+  const rows = await db.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
+  return rows.map((r) => r.name)
+}
+
 // Look up Gajamada external_name aliases for the kasubbid unit from unit_mapping.
 // Returns [] if no mapping has been configured yet.
 export async function getKasubbidAliases() {
