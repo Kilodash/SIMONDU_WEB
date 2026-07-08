@@ -478,6 +478,62 @@ export async function getTimeline(username = null, prepetratorId) {
   return rows.map((row) => Object.fromEntries(header.map((k, i) => [k, row[i]])))
 }
 
+// Fetch kesatuan/unit catalog — includes POLRES, MABES, etc.
+// Filterable by polda_name pattern (e.g. contains "JABAR" or "JAWA BARAT")
+export async function getKesatuanCatalog(username = null, nameFilter = '') {
+  const filters = []
+  if (nameFilter) {
+    filters.push({
+      field: 'polda_name',
+      operator: 'contains',
+      table: 'dimension.catalog_kesatuan_terlapor',
+      fieldType: 'text',
+      value: { gte: 0, is: '', isOneOf: [], lte: 0, contains: nameFilter },
+    })
+  }
+  const payload = {
+    orderBy: 'polda_name',
+    order: 'asc',
+    page: 1,
+    size: 1000,
+    connectionId: CONNECTION_ID,
+    table: 'dimension.catalog_kesatuan_terlapor',
+    database: DATABASE,
+    filters,
+  }
+  const { body } = await apiCall(username, '/api/v1/apps/data/management/get-all', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  return (body?.data || []).map((r) => ({
+    id: r.id,
+    name: r.polda_name,
+    level: r.level,
+  }))
+}
+
+// Discover internal Polda Jabar unit hierarchy from Gajamada cases
+export async function getPoldaJabarUnits(username = null) {
+  const all = []
+  // 1. Internal units via catalog_unit_v2 (case_position, case_position_after)
+  const catalog = await getUnitsCatalog(username, null)
+  for (const c of catalog) {
+    if (!c.case_position) continue
+    const name = c.case_position.toUpperCase()
+    if (name.includes('JABAR') || name.includes('JAWA BARAT') || name.includes('BANDUNG') || name.includes('PAMINAL') || name.includes('PROVOS') || name.includes('WABPROF') || name.includes('YANDUAN') || name.includes('WASSIDIK')) {
+      all.push({ name: c.case_position, parent: c.case_position_after || null, level: 'INTERNAL', source: 'catalog_unit_v2' })
+    }
+  }
+  // 2. POLRES jajaran via catalog_kesatuan_terlapor (contains JABAR)
+  const kesatuan = await getKesatuanCatalog(username, 'JABAR')
+  for (const k of kesatuan) {
+    if (!all.some((a) => a.name === k.name)) {
+      all.push({ name: k.name, parent: null, level: k.level, source: 'catalog_kesatuan_terlapor' })
+    }
+  }
+  return all
+}
+
 export async function pushUpdate(username = null, params) {
   const payload = {
     client: 'Propam Polri',

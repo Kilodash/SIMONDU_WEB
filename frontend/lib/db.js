@@ -2,7 +2,6 @@
 // Translates find/findOne/insertOne/updateOne/deleteOne/countDocuments to PostgREST
 // calls via @supabase/supabase-js. Uses service_role key for full table access.
 import { createClient } from '@supabase/supabase-js'
-import { KASUBBID_UNIT, CHILD_UNITS } from './units'
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -169,18 +168,9 @@ export async function getDb() {
 
   if (!_seeded) {
     _seeded = true
-    try {
-      const c = new SupabaseCollection('units_master')
-      const count = await c.countDocuments({})
-      if (count === 0) {
-        await c.insertMany([
-          { id: 'kasubbid', name: KASUBBID_UNIT, parent: null, is_kasubbid: true, active: true, order: 0, created_at: new Date().toISOString() },
-          ...CHILD_UNITS.map((u, i) => ({
-            id: `unit-${i + 1}`, name: u, parent: KASUBBID_UNIT, is_kasubbid: false, active: true, order: i + 1, created_at: new Date().toISOString(),
-          })),
-        ])
-      }
-    } catch (e) { /* seeding is best-effort */ }
+    // units_master is bootstrapped via POST /units-master/sync-gajamada.
+    // No hardcoded seed here — kasubbid + child unit names are dynamic
+    // and discovered from Gajamada (see /units-master/sync-gajamada route).
   }
 
   return wrapper
@@ -190,4 +180,22 @@ export async function getActiveUnits() {
   const db = await getDb()
   const rows = await db.collection('units_master').find({ active: true, is_kasubbid: false }).sort({ order: 1 }).toArray()
   return rows.map((r) => r.name)
+}
+
+// Look up the kasubbid unit name from units_master.
+// Returns null if no kasubbid has been synced yet.
+export async function getKasubbidName() {
+  const db = await getDb()
+  const row = await db.collection('units_master').findOne({ is_kasubbid: true, active: true })
+  return row?.name || null
+}
+
+// Look up Gajamada external_name aliases for the kasubbid unit from unit_mapping.
+// Returns [] if no mapping has been configured yet.
+export async function getKasubbidAliases() {
+  const db = await getDb()
+  const kasubbid = await getKasubbidName()
+  if (!kasubbid) return []
+  const rows = await db.collection('unit_mapping').find({ internal_unit: kasubbid }).toArray()
+  return rows.map((r) => r.external_name).filter(Boolean)
 }

@@ -2,7 +2,7 @@
 slug: stack
 title: Tech stack
 role: tech-stack choices
-updated: "2026-07-06T14:35:20"
+updated: "2026-07-08T10:00:00"
 ---
 
 # Tech stack
@@ -21,10 +21,8 @@ updated: "2026-07-06T14:35:20"
 | **Auth** | jose 5 (JWT HS256) | Cookie HttpOnly, tanpa database user |
 | **Database** | Supabase PostgreSQL (via db.js adapter) | Sebelumnya MongoDB, dikembalikan ke Supabase. Adapter meniru API MongoDB-style untuk kompatibilitas route.js |
 | **Storage** | Supabase Storage | Upload dokumen follow-up |
-| **AI** | Gemini 2.5 Flash / OpenCode Vision | Captcha solving, OCR PDF |
 | **Proxy** | Python FastAPI + httpx | Reverse proxy /api/* ke Next.js |
 | **Test** | Playwright + pytest | E2E frontend, test backend proxy |
-| **Browser Auto** | rebrowser-playwright | Stealth automation untuk sync ASTINA (legacy, diganti HTTP POST) |
 
 ## Dependencies Kunci
 
@@ -41,7 +39,5 @@ updated: "2026-07-06T14:35:20"
 | date-fns | 4 | Date formatting |
 | sonner | 2 | Toast notifications |
 | @playwright/test | 1.61 | E2E testing |
-| imap + mailparser | - | Zimbra OTP fetch |
-| google-generativeai | - | Gemini API |
 | uuid | - | ID generation |
 | axios | - | HTTP client (Gajamada calls) |

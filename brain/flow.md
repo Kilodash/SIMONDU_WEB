@@ -2,86 +2,123 @@
 slug: flow
 title: Key flows
 role: key flows
-updated: "2026-07-06T10:26:06"
+updated: "2026-07-08T10:00:00"
 ---
 
 # Key flows
 
 ## Alur Disposisi (End-to-End)
 
+Simplified flow: Yanduan terima -> Kabid disposisi -> Unit proses -> Selesai.
+
 ```mermaid
 sequenceDiagram
-    actor Kasubbid
+    actor KasubbagYanduan
+    actor KabidPropam
+    actor Unit
     participant SIMONDU as SIMONDU Web
     participant Gajamada as Gajamada API
-    participant DB as MongoDB
-    participant ASTINA as ASTINA API
-    participant Zimbra as Zimbra Mail
+    participant DB as Supabase PostgreSQL
 
-    Kasubbid->>SIMONDU: Login (username/password)
+    KasubbagYanduan->>SIMONDU: Login (username/password)
     SIMONDU->>SIMONDU: JWT session cookie
 
-    Kasubbid->>SIMONDU: Buka Antrian Disposisi
+    KasubbagYanduan->>SIMONDU: Buka Antrian Disposisi
     SIMONDU->>Gajamada: listCases()
-    Gajamada-->>SIMONDU: Kasus di posisi KASUBBID
+    Gajamada-->>SIMONDU: Kasus dari Gajamada
     SIMONDU->>DB: Cek dispositions (sudah didisposisi?)
-    SIMONDU-->>Kasubbid: Queue kasus + ASTINA surat baru
+    SIMONDU-->>KasubbagYanduan: Queue kasus
 
-    Kasubbid->>SIMONDU: Pilih kasus + isi form disposisi
+    Note over KasubbagYanduan,SIMONDU: Yanduan terima kasus (Gajamada atau ASTINA manual input)
+
+    KasubbagYanduan->>SIMONDU: Terima kasus
+    SIMONDU->>DB: Update status via /terima (internal only, no Gajamada push)
+    SIMONDU-->>KasubbagYanduan: Kasus diterima
+
+    KasubbagYanduan->>SIMONDU: Pilih kasus + isi form disposisi ke Kabid
     SIMONDU->>DB: Insert disposition record
-    SIMONDU->>Gajamada: pushUpdate() background sync
-    SIMONDU-->>Kasubbid: Disposisi tersimpan
+    SIMONDU-->>KasubbagYanduan: Disposisi tersimpan
 
-    Note over Kasubbid,SIMONDU: Unit menerima disposisi
+    Note over KasubbagYanduan,SIMONDU: Kabid menerima dan mendisposisi ke Unit
 
-    actor Unit
+    KabidPropam->>SIMONDU: Buka Antrian Disposisi
+    SIMONDU->>Gajamada: listCases()
+    Gajamada-->>SIMONDU: Kasus di posisi KABID_PROPAM
+    SIMONDU->>DB: Cek dispositions
+    SIMONDU-->>KabidPropam: Queue kasus
+
+    KabidPropam->>SIMONDU: Pilih kasus + isi form disposisi ke Unit
+    SIMONDU->>DB: Insert disposition record
+    SIMONDU-->>KabidPropam: Disposisi tersimpan
+
+    Note over KabidPropam,SIMONDU: Unit menerima dan mengerjakan
+
     Unit->>SIMONDU: Buka Daftar Surat (filter unit)
     SIMONDU->>Gajamada: listCases(unit)
     SIMONDU->>DB: Enrich dengan data internal
     SIMONDU-->>Unit: Daftar kasus unit
 
+    Unit->>SIMONDU: Terima kasus (internal)
+    SIMONDU->>DB: Update status via /terima (internal only, no Gajamada push)
+    SIMONDU-->>Unit: Kasus diterima
+
     Unit->>SIMONDU: Upload dokumen follow-up
     SIMONDU->>Supabase: Upload file
-    SIMONDU->>Gajamada: uploadFile() + attachToReport()
     SIMONDU->>DB: Insert followup_document
 
     Unit->>SIMONDU: Update checklist + hasil lidik
     SIMONDU->>DB: Update followup_checklist + case_outcomes
 
-    Unit->>SIMONDU: Mark Complete / Perdamaian
+    Unit->>SIMONDU: Update status/resolusi
+    SIMONDU->>DB: Update via /status atau /resolusi
+
+    Unit->>SIMONDU: Mark Complete / Perdamaian / RJ
     SIMONDU->>DB: Insert completion / settlement
-    SIMONDU->>Gajamada: pushUpdate() background sync
 ```
 
-## Alur Login ASTINA
+## Alur Status Transitions
 
 ```mermaid
 sequenceDiagram
-    participant SIMONDU
-    participant ASTINA as ASTINA API
-    participant Gemini as Gemini Vision
-    participant Zimbra as Zimbra Mail
-    participant DB as MongoDB
+    actor Unit
+    participant SIMONDU as SIMONDU Web
+    participant DB as Supabase PostgreSQL
+    participant Status as lib/status.js
 
-    SIMONDU->>ASTINA: GET /api/auth/login_web
-    ASTINA-->>SIMONDU: { key, captcha (base64 PNG) }
+    Unit->>SIMONDU: Request status change
+    SIMONDU->>Status: validateTransition(current, next, role)
+    Status-->>SIMONDU: Allowed / Denied
 
-    SIMONDU->>Gemini: Solve captcha
-    Gemini-->>SIMONDU: Teks captcha
+    alt Transition Allowed
+        SIMONDU->>DB: Update case status
+        SIMONDU->>DB: Insert timeline entry
+        SIMONDU-->>Unit: Status updated
+    else Transition Denied
+        SIMONDU-->>Unit: Error: invalid transition
+    end
+```
 
-    SIMONDU->>ASTINA: POST /api/auth/login_web (email, password, key, captcha)
-    ASTINA-->>SIMONDU: { access_token }
+## Alur Perdamaian / RJ
 
-    SIMONDU->>Zimbra: IMAP/SOAP cari OTP
-    Zimbra-->>SIMONDU: Kode OTP
+Perdamaian dan RJ dapat diajukan di **tahap mana pun** kecuali SIDANG_DISIPLIN.
 
-    SIMONDU->>ASTINA: POST /api/v1/validasi_otp
-    ASTINA-->>SIMONDU: { status: true }
+```mermaid
+sequenceDiagram
+    actor User
+    participant SIMONDU as SIMONDU Web
+    participant DB as Supabase PostgreSQL
 
-    SIMONDU->>DB: Persist session (astina_sessions)
+    User->>SIMONDU: Ajukan Perdamaian / RJ
+    SIMONDU->>SIMONDU: Check current stage != SIDANG_DISIPLIN
+    SIMONDU->>DB: Insert settlement record
+    SIMONDU->>DB: Update case_outcomes
+    SIMONDU->>DB: Insert timeline entry
+    SIMONDU-->>User: Perdamaian/RJ tercatat
 ```
 
 ## Alur Sinkronisasi Background
+
+Fire-and-forget sync ke Gajamada untuk mutasi tertentu. **Terima kasus internal only** tidak memicu sync ke Gajamada.
 
 ```mermaid
 sequenceDiagram
@@ -90,12 +127,12 @@ sequenceDiagram
     participant Gajamada
     participant DB
 
-    Route->>DB: Mutasi data (disposisi/dokumen/checklist)
+    Route->>DB: Mutasi data (disposisi/dokumen/checklist/status/resolusi)
     Route->>Route: scheduleSync(pid, actor, reason)
-    Note over Route: setTimeout 100ms
+    Note over Route: setTimeout 100ms (kecuali terima kasus)
 
     Sync->>Gajamada: getCase(pid) - data terkini
-    Sync->>DB: get dispositions, timelines, completions
+    Sync->>DB: get dispositions, timelines, completions, statuses
     Sync->>Sync: deriveStatus() - status efektif
     Sync->>Gajamada: pushUpdate(status, position, timeline)
     Sync->>DB: Insert sync_log

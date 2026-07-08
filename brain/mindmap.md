@@ -2,7 +2,7 @@
 slug: mindmap
 title: Feature mindmap
 role: feature mindmap
-updated: "2026-07-06T10:26:24"
+updated: "2026-07-08T10:00:00"
 ---
 
 # Feature mindmap
@@ -11,69 +11,69 @@ updated: "2026-07-06T10:26:24"
 mindmap
   root((SIMONDU WEB))
     Frontend
-      Dashboard ANEV
-        KPI Cards
+      Dashboard ANEV (3-Bucket)
+        SURAT MASUK
+        DALAM PENANGANAN
+        SELESAI
         Bar Chart Status
         Pie Chart Kategori
         Bar Chart Unit
       Daftar Surat
         Filter: Status, Kategori, Unit, Search
-        5 Sumber: Gajamada, ASTINA, Laporan Info, Manual, Non-Dumas
+        4 Sumber: Gajamada, Laporan Info, Manual, Non-Dumas
         Case Detail Sheet
           Info + Attachment
           Follow-up Documents
           Timeline
           Sync Logs
       Antrian Disposisi
-        Dual Source: Gajamada + ASTINA
+        Single Source: Gajamada
         Form Disposisi + Checklist
         Riwayat Disposisi
+        Terima (internal, no Gajamada push)
       Master Unit
         CRUD + Activate/Deactivate
         Sync from Gajamada Catalog
+        Unit Mapping (normalisasi nama)
       Satker/Satwil
         CRUD referensi eksternal
-      Register Dokumen
-        7 Tipe Dokumen
-        Auto-numbering Generator
+      ASTINA Manual Input
+        Input surat ASTINA manual (bukan auto-sync)
       Personel
         Staff Directory + Ketua Tim
       Log Sync
       Audit Log
       Pengaturan
-        User Credentials Gajamada/ASTINA
+        User Credentials Gajamada
         Connection Status
     Backend API
       Auth
         JWT Cookie (jose HS256)
-        7 User Hardcoded
+        Role Hierarchy: super_admin > kabid_propam > kasubbag_yanduan > unit
       Cases
         List + Detail + Enrich
         Attachments + Timeline
       Disposisi
         Create + History
         Queue Count
+        Terima Endpoint
+      Status Kontekstual
+        /status transitions
+        /resolusi transitions
+        Status + Resolusi + Bucket Engine
       Dokumen
         Upload Dual (Supabase + Gajamada)
         Checklist SOP Engine
       Outcomes
         Hasil Lidik + Settlement
-        Perdamaian 10-Checklist
+        Perdamaian (all stages except SIDANG_DISIPLIN)
+        RJ (all stages except SIDANG_DISIPLIN)
       Sync
-        Background bidirectional
+        Background fire-and-forget
         Gajamada pushUpdate
-        ASTINA sync
-      Document Register
-        CRUD + Number Booking
-      ASTINA Integration
-        Auto-login (Captcha + OTP)
-        Surat Baru + Surat Masuk
-        Disposisi ASTINA
-      AI
-        Captcha Solving (Gemini/OpenCode/Emergent)
-        PDF OCR Extraction
-        HAR Parsing
-    Database MongoDB
+      Unit Mapping
+        Auto-mapping Gajamada names
+    Database Supabase PostgreSQL
       dispositions
       timelines
       followup_documents
@@ -86,10 +86,10 @@ mindmap
       satker_satwil
       numbering_settings
       local_cases
-      astina_sessions
-      document_register
       personel
       user_credentials
+      app_settings
+      unit_mapping
     External Systems
       Gajamada (eBdesk Fusion)
         Auth + Session Cookie
@@ -97,17 +97,7 @@ mindmap
         Attachments + Timeline
         Gateway Push Update
         File Upload
-      ASTINA (e-Office Polri)
-        Bearer Token Auth
-        Surat Baru + Masuk
-        Riwayat Disposisi
-        Post Disposisi
+        Katalog Unit
       Supabase Storage
         Bucket simondu-uploads
-      Gemini / OpenCode AI
-        Vision Captcha
-        PDF OCR
-      Zimbra Mail
-        IMAP OTP Fetch
-        SOAP Fallback
 ```

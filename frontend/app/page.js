@@ -21,10 +21,10 @@ import {
   Loader2, FileText, RefreshCw, ChevronDown, ChevronLeft, ChevronRight, Download, Paperclip,
   Building2, User, Calendar, Tag, CheckCircle2, XCircle, Clock,
   AlertCircle, ArrowRightLeft, History, Star, QrCode, Mail, Phone, MapPin,
-  Bell, Hash, Ban, Scale, Settings, Brain, Eye, EyeOff,
+  Bell, Hash, Ban, Scale, Settings, Eye, EyeOff, GripVertical,
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RTooltip, PieChart, Pie, Cell, Legend, CartesianGrid } from 'recharts'
-import { parseAstinaSurat } from '@/lib/parse-astina'
+import { STATUS, RESOLUSI, BUCKET, getBucket } from '../lib/status.js'
 
 const APP_NAME = 'SIMONDU WEB'
 const APP_SUBTITLE = 'Sistem Monitoring Pengaduan — Polda Jabar'
@@ -73,6 +73,17 @@ const sourceColor = (s) => {
   if (/surat/i.test(s)) return 'bg-cyan-100 text-cyan-800 border-cyan-300'
   return 'bg-slate-100 text-slate-700 border-slate-300'
 }
+const bucketColor = (b) => {
+  if (b === 'SURAT_MASUK') return 'bg-blue-100 text-blue-800 border-blue-300'
+  if (b === 'DALAM_PENANGANAN') return 'bg-amber-100 text-amber-800 border-amber-300'
+  if (b === 'SELESAI') return 'bg-green-100 text-green-800 border-green-300'
+  return 'bg-slate-100 text-slate-700 border-slate-300'
+}
+const SyncBadge = memo(function SyncBadge({ status }) {
+  if (status === 'synced') return <Badge className="bg-green-100 text-green-800 border-green-300 text-[10px]"><span className="h-2 w-2 rounded-full bg-green-500 mr-1 inline-block" />Tersinkron</Badge>
+  if (status === 'failed') return <Badge className="bg-red-100 text-red-800 border-red-300 text-[10px]"><span className="h-2 w-2 rounded-full bg-red-500 mr-1 inline-block" />Gagal</Badge>
+  return <Badge className="bg-slate-100 text-slate-600 border-slate-300 text-[10px]"><span className="h-2 w-2 rounded-full bg-slate-400 mr-1 inline-block" />Belum Sync</Badge>
+})
 
 // ---------------- Login ----------------
 function LoginPage({ onSuccess }) {
@@ -144,6 +155,15 @@ function Dashboard({ user }) {
   useEffect(() => { load() }, [load])
 
   const COLORS = useMemo(() => ['#1e40af', '#7c3aed', '#0891b2', '#059669', '#ea580c', '#dc2626', '#4338ca', '#9333ea'], [])
+  const bucketCounts = useMemo(() => {
+    const counts = { SURAT_MASUK: 0, DALAM_PENANGANAN: 0, SELESAI: 0 }
+    if (!anev?.byStatus) return counts
+    for (const { name, value } of anev.byStatus) {
+      const b = getBucket(name)
+      if (b) counts[b] += value
+    }
+    return counts
+  }, [anev])
   if (loading || !anev) return <div className="flex items-center justify-center h-96"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div>
 
   return (
@@ -169,12 +189,10 @@ function Dashboard({ user }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <KpiCard color="blue" icon={<FolderKanban />} label="Total Kasus" value={anev.total} subtitle={`Sampel ${anev.sampled}`} />
-        <KpiCard color="amber" icon={<Clock />} label="Diterima" value={anev.kpi.totalDiterima} />
-        <KpiCard color="blue" icon={<ArrowRightLeft />} label="Didistribusi" value={anev.kpi.totalDidistribusi} />
-        <KpiCard color="purple" icon={<AlertCircle />} label="Proses Lidik" value={anev.kpi.totalLidik} />
-        <KpiCard color="green" icon={<CheckCircle2 />} label="Selesai" value={anev.kpi.totalSelesai} />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <KpiCard color="blue" icon={<Mail />} label="SURAT MASUK" value={bucketCounts.SURAT_MASUK} />
+        <KpiCard color="amber" icon={<Clock />} label="DALAM PENANGANAN" value={bucketCounts.DALAM_PENANGANAN} />
+        <KpiCard color="green" icon={<CheckCircle2 />} label="SELESAI" value={bucketCounts.SELESAI} />
       </div>
 
       {anev.kpi.totalAtensi > 0 && (
@@ -265,6 +283,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const [atts, setAtts] = useState([])
   const [loading, setLoading] = useState(true)
   const [completing, setCompleting] = useState(false)
+  const [terimaLoading, setTerimaLoading] = useState(false)
   const [showFullChronology, setShowFullChronology] = useState(false)
   const [mergedTimeline, setMergedTimeline] = useState([])
   const [reference, setReference] = useState({ hasil_lidik_options: [], settlement_options: [], satker_satwil: [] })
@@ -351,12 +370,22 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
     } catch (e) { toast.error(e.message) }
     finally { setCompleting(false) }
   }
+  const doTerima = async () => {
+    setTerimaLoading(true)
+    try {
+      await api(`/cases/${encodeURIComponent(pid)}/terima`, { method: 'POST' })
+      toast.success('Kasus diterima · status diperbarui')
+      await load(); onChanged?.()
+    } catch (e) { toast.error(e.message) }
+    finally { setTerimaLoading(false) }
+  }
 
   if (!pid) return null
-  const derivedStatus = data?.derived_status
   const checklist = data?._internal?.checklist
   const outcome = data?._internal?.outcome
-  const canComplete = data && (user.role === 'unit' ? data.disposisi_case_position === user.unit : true) && derivedStatus !== 'Selesai' && (checklist ? checklist.canComplete : true)
+  const canComplete = data && (user.role === 'unit' ? data.disposisi_case_position === user.unit : true) && data?.status !== STATUS.SELESAI && (checklist ? checklist.canComplete : true)
+  const latestDisp = data?._internal?.dispositions?.[data._internal.dispositions.length - 1]
+  const canTerima = user.role === 'unit' && latestDisp?.to_unit === user.unit && getBucket(data?.status) === 'SURAT_MASUK'
 
   return (
     <Sheet open={!!pid} onOpenChange={(v) => !v && onClose()}>
@@ -380,11 +409,24 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                   <p className="text-sm mt-2 text-blue-100 line-clamp-2">{data.prepetrator_name || '(Tanpa nama terlapor)'}</p>
                 </div>
                 <div className="flex flex-col items-end gap-2">
-                  <Badge className={statusColor(derivedStatus)}>{derivedStatus}</Badge>
+                  <div className="flex items-center gap-1 flex-wrap justify-end">
+                    <Badge className={`${bucketColor(getBucket(data.status))} text-xs`}>{getBucket(data.status) || data.status}</Badge>
+                    {data.resolusi && <Badge className="bg-purple-100 text-purple-800 border-purple-300 text-[10px]">{data.resolusi}</Badge>}
+                    <SyncBadge status={data._sync_status} />
+                  </div>
+                  <p className="text-xs text-blue-200">Gajamada: {data.status_label || '-'}</p>
+                  {data.status && data.status_label && data.status !== data.status_label && (
+                    <p className="text-[10px] text-amber-300 flex items-center gap-1"><AlertCircle className="h-3 w-3" />Status SIMONDU & Gajamada berbeda</p>
+                  )}
                   <p className="text-xs text-blue-200">{fmtDate(data.created_date)}</p>
                 </div>
               </div>
               <div className="mt-3 flex gap-2 flex-wrap">
+                {canTerima && (
+                  <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white" onClick={doTerima} disabled={terimaLoading}>
+                    {terimaLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />} Terima
+                  </Button>
+                )}
                 <Button size="sm" variant="secondary" onClick={() => setPerdamaianOpen(true)}><ClipboardList className="h-4 w-4 mr-1" /> Perdamaian</Button>
                 {canComplete && (
                   <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={doComplete} disabled={completing}>
@@ -772,9 +814,6 @@ function CasesList({ user, onOpenCase }) {
   const [unit, setUnit] = useState('')
   const [scope, setScope] = useState('paminal')
   const [sourceFilter, setSourceFilter] = useState('')
-  const [astinaToken, setAstinaToken] = useState('')
-  const [astinaTokenSet, setAstinaTokenSet] = useState(!!(process.env.NEXT_PUBLIC_ASTINA_COOKIE || ''))
-  const [astinaCookie, setAstinaCookie] = useState('')
   const [loading, setLoading] = useState(true)
   const [reference, setReference] = useState({ units: [], statuses: [], categories: [] })
   const [editOpen, setEditOpen] = useState(false)
@@ -835,29 +874,10 @@ function CasesList({ user, onOpenCase }) {
           ...c, id: c.id, prepetrator_id: c.prepator_id || c.prepetrator_id, created_date: c.created_at, updated_at: c.updated_at,
           status_label: c.status, category: c.category || 'NON-DUMAS', pengirim: c.pengirim, reporter_nik: c.reporter_nik,
           phone_no: c.phone_no, email: c.email, prepetrator_name: c.prepator_name || c.prepetrator_name, summary: c.perihal, content: c.content,
-          source_alias: c.source_alias, disposisi_case_position: '-', '5w1h_where': '', '5w1h_when': c.tgl_surat, derived_status: c.status,
+          source_alias: c.source_alias, disposisi_case_position: '-', '5w1h_where': '', '5w1h_when': c.tgl_surat,
         }))
         setCases(formatted); setTotal(r.total || formatted.length)
       } catch(e) { toast.error(e.message) }
-      finally { setLoading(false) }
-      return
-    }
-
-    if (sourceFilter === 'astina') {
-      setLoading(true)
-      try {
-        const lc = await api('/local-cases?source=astina&case_type=dumas').catch(() => ({ data: [] }))
-        const localData = (lc.data || []).map(c => ({
-          ...c, id: c.id, prepetrator_id: c.prepator_id, created_date: c.created_at, updated_at: c.updated_at,
-          status_label: c.status, category: c.category || 'NON-DUMAS', pengirim: c.pengirim,
-          prepetrator_name: c.prepator_name, summary: c.perihal, content: c.content,
-          source_alias: c.source_alias, derived_status: c.status,
-          nomor_surat: c.nomor_surat, tgl_surat: c.tgl_surat, perihal: c.perihal,
-        }))
-        // ASTINA tab: only DUMAS (from local_cases), exclude live/unclassified
-        setCases(localData)
-        setTotal(localData.length)
-      } catch(e) { toast.error('Gagal fetch ASTINA: ' + e.message) }
       finally { setLoading(false) }
       return
     }
@@ -895,7 +915,6 @@ function CasesList({ user, onOpenCase }) {
           <Tabs value={sourceFilter || 'gajamada'} onValueChange={(v) => { setSourceFilter(v === 'gajamada' ? '' : v); setPage(1) }}>
             <TabsList>
               <TabsTrigger value="gajamada" className="text-xs">GAJAMADA</TabsTrigger>
-              <TabsTrigger value="astina" className="text-xs">ASTINA</TabsTrigger>
               <TabsTrigger value="laporan_informasi" className="text-xs">LAPORAN INFORMASI</TabsTrigger>
               <TabsTrigger value="manual" className="text-xs">INPUT MANUAL</TabsTrigger>
               <TabsTrigger value="non_dumas" className="text-xs">NON-DUMAS</TabsTrigger>
@@ -961,7 +980,7 @@ function CasesList({ user, onOpenCase }) {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader className="bg-slate-50 sticky top-0">
-                  {sourceFilter && sourceFilter !== 'astina' ? (
+                  {sourceFilter ? (
                     <TableRow>
                       <TableHead className="w-10 text-sm">No</TableHead>
                       <TableHead className="text-sm">Perihal</TableHead>
@@ -985,7 +1004,7 @@ function CasesList({ user, onOpenCase }) {
                   )}
                 </TableHeader>
                 <TableBody>
-                  {sourceFilter && sourceFilter !== 'astina' ? (
+                  {sourceFilter ? (
                     cases.length === 0 ? (
                       <TableRow><TableCell colSpan={6} className="text-center py-12 text-slate-500">
                         {sourceFilter === 'manual' ? 'Belum ada data. Klik "Tambah" untuk input surat manual.' :
@@ -1003,7 +1022,7 @@ function CasesList({ user, onOpenCase }) {
                           <TableCell className="pt-3 text-sm font-mono">{c.nomor_surat || '-'}</TableCell>
                           <TableCell className="pt-3 text-sm">{c.tgl_surat ? fmtDateShort(c.tgl_surat) : fmtDateShort(c.created_date)}</TableCell>
                           <TableCell className="pt-3 text-sm">{c.pengirim || '-'}</TableCell>
-                          <TableCell className="pt-3"><Badge className={statusColor(c.status_label)}>{c.status_label || 'Diterima'}</Badge></TableCell>
+                          <TableCell className="pt-3"><Badge className={statusColor(c.status_label)}>{c.status_label || c.status || '-'}</Badge></TableCell>
                           <TableCell className="pt-3"><Button size="sm" variant="ghost" className="h-7 text-xs" onClick={(e) => { e.stopPropagation(); openEditLocal(c) }}>Edit</Button></TableCell>
                         </TableRow>
                       ))
@@ -1014,17 +1033,8 @@ function CasesList({ user, onOpenCase }) {
                         <TableRow key={`${c._source || 'gajamada'}-${c.prepetrator_id || idx}`} className="cursor-pointer hover:bg-blue-50/40 align-top" onClick={() => onOpenCase(c.prepetrator_id)}>
                           <TableCell className="text-sm text-slate-500 pt-3">{(page - 1) * size + idx + 1}</TableCell>
                           <TableCell className="pt-3">
-                            {c.source_alias === 'ASTINA' ? (
-                              <>
-                                <p className="text-sm font-medium">{c.perihal || c.summary || c.nomor_surat || '-'}</p>
-                                {c.nomor_surat && <p className="text-xs text-slate-500 mt-0.5">No. {c.nomor_surat}</p>}
-                              </>
-                            ) : (
-                              <>
-                                <p className="text-sm font-mono font-semibold">{c.id}</p>
-                                <p className="text-xs text-slate-500 mt-0.5">{fmtDate(c.created_date)}</p>
-                              </>
-                            )}
+                            <p className="text-sm font-mono font-semibold">{c.id}</p>
+                            <p className="text-xs text-slate-500 mt-0.5">{fmtDate(c.created_date)}</p>
                             {c.source_alias && <Badge className={`mt-1.5 text-xs ${sourceColor(c.source_alias)}`}>{c.source_alias}</Badge>}
                           </TableCell>
                           <TableCell className="pt-3 min-w-[220px]">
@@ -1049,7 +1059,7 @@ function CasesList({ user, onOpenCase }) {
                           <TableCell className="text-xs pt-3">{fmtDate(c.updated_at)}</TableCell>
                           <TableCell className="pt-3">
                             <div className="flex flex-col gap-1 items-start">
-                              <Badge className={`${statusColor(c.status_label)} text-xs`}>{c.status_label || c.derived_status}</Badge>
+                              <Badge className={`${statusColor(c.status_label)} text-xs`}>{c.status_label || c.status || '-'}</Badge>
                               <Badge variant="outline" className="text-xs font-normal">{shortUnit(c.disposisi_case_position)}</Badge>
                               {c.is_atensi && <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-xs"><Star className="h-2.5 w-2.5 mr-0.5" />ATENSI</Badge>}
                             </div>
@@ -1179,40 +1189,23 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   const [activeTab, setActiveTab] = useState('info')
   const [pdfIdx, setPdfIdx] = useState(0)
   const [kronologiMode, setKronologiMode] = useState('singkat')
-  const [detailEdit, setDetailEdit] = useState(false)
-  const [detailForm, setDetailForm] = useState({})
-
   const resetForm = (ref, item) => {
     setToUnit(''); setNote(''); setIsAtensi(false)
     const ct = item?.case_type || ''
-    const src = item?._source || ''
     if (ct === 'non_pengaduan' || ct === 'non_dumas') setCaseType('non_dumas')
-    else if (src === 'astina') setCaseType('non_dumas')
     else setCaseType('dumas')
     const dumasTasks = ref?.default_disposisi_tasks || reference.default_disposisi_tasks || []
     const nonDumasTasks = ref?.non_dumas_disposisi_tasks || reference.non_dumas_disposisi_tasks || dumasTasks
-    const isNonDumas = ct === 'non_pengaduan' || ct === 'non_dumas' || src === 'astina'
+    const isNonDumas = ct === 'non_pengaduan' || ct === 'non_dumas'
     const defaults = isNonDumas ? nonDumasTasks : dumasTasks
     setTasks(defaults.map((label) => ({ label, checked: false })))
   }
-
-  const [astinaError, setAstinaError] = useState(null)
 
   const loadQueue = async () => {
     setLoading(true)
     try {
       const [q, r] = await Promise.all([api('/disposisi-queue'), api('/reference')])
       setQueue(q.data); setReference(r); resetForm(r, q.data?.[0]); setIdx(0)
-      if (q.astina_error) {
-        setAstinaError(q.astina_error)
-        if (q.astina_error === 'OTP_REQUIRED') {
-          toast.warning('ASTINA memerlukan OTP. Silakan login ulang ke ASTINA.')
-        } else {
-          toast.warning(`ASTINA: ${q.astina_error}`)
-        }
-      } else {
-        setAstinaError(null)
-      }
     } catch (e) { toast.error(e.message) }
     finally { setLoading(false) }
   }
@@ -1221,7 +1214,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   const loadRiwayat = async () => { try { const r = await api('/disposisi-history'); setRiwayat(r.data) } catch (e) { toast.error(e.message) } }
   const openEdit = async (d) => {
     const src = d.case_info?.source_alias || 'GAJAMADA'
-    const item = { prepetrator_id: d.prepetrator_id, _source: src === 'ASTINA' ? 'astina' : 'gajamada', perihal: d.case_info?.perihal || '', nomor_surat: d.case_info?.nomor_surat || '', pengirim: d.case_info?.pengirim || '', source_alias: src, localCaseId: null }
+    const item = { prepetrator_id: d.prepetrator_id, _source: 'gajamada', perihal: d.case_info?.perihal || '', nomor_surat: d.case_info?.nomor_surat || '', pengirim: d.case_info?.pengirim || '', source_alias: src, localCaseId: null }
     setEditQueueItem(item)
     setToUnit(d.to_unit || '')
     const rawNote = d.note || ''
@@ -1231,7 +1224,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
     setNote(cleanNote)
     setIsAtensi(!!d.is_atensi)
     // Fetch case_type from case detail
-    let ct = src === 'ASTINA' ? 'non_dumas' : 'dumas'
+    let ct = 'dumas'
     let localCaseId = null
     try {
       const caseData = await api(`/cases/${encodeURIComponent(d.prepetrator_id)}`)
@@ -1277,23 +1270,17 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
   useEffect(() => {
     if (!current) { setDetail(null); setAtts([]); setTimeline([]); return }
     const pid = current.prepetrator_id
-    const isAstina = current._source === 'astina'
     // Immediately clear stale data so UI reflects the new case
     setDetail(null); setAtts([]); setTimeline([])
     let cancelled = false
     ;(async () => {
       try {
-        if (isAstina) {
-          const r = await api(`/astina/surat/${encodeURIComponent(pid)}/riwayat`).catch(() => ({ riwayat_disposisi: [] }))
-          if (!cancelled) setTimeline((r.riwayat_disposisi || current._riwayat_disposisi || []).map((e) => ({ ...e, _source: 'astina' })))
-        } else {
-          const [d, a, t] = await Promise.all([
-            api(`/cases/${encodeURIComponent(pid)}`).catch(() => ({ data: null })),
-            api(`/cases/${encodeURIComponent(pid)}/attachments`).catch(() => ({ data: [] })),
-            api(`/cases/${encodeURIComponent(pid)}/timeline-all`).catch(() => ({ data: [] })),
-          ])
-          if (!cancelled) { setDetail(d.data); setAtts(a.data); setTimeline(t.data || []) }
-        }
+        const [d, a, t] = await Promise.all([
+          api(`/cases/${encodeURIComponent(pid)}`).catch(() => ({ data: null })),
+          api(`/cases/${encodeURIComponent(pid)}/attachments`).catch(() => ({ data: [] })),
+          api(`/cases/${encodeURIComponent(pid)}/timeline-all`).catch(() => ({ data: [] })),
+        ])
+        if (!cancelled) { setDetail(d.data); setAtts(a.data); setTimeline(t.data || []) }
       } catch (_) { /* ignore */ }
     })()
     if (!editMode) resetForm(null, current)
@@ -1303,18 +1290,8 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
     return () => { cancelled = true }
   }, [idx, current?.prepetrator_id, current?._source]) // eslint-disable-line
 
-  // Unified attachments across ASTINA / Gajamada sources
   const attachments = useMemo(() => {
     if (!current) return []
-    if (current._source === 'astina') {
-      const files = [...(current.files || []), ...(current.lampiran || [])]
-      return files.map((f) => {
-        const nm = f.filename || 'file'
-        const inlineUrl = `/api/astina/attachment/${encodeURIComponent(f.id)}?filename=${encodeURIComponent(nm)}&inline=1`
-        const dlUrl = `/api/astina/attachment/${encodeURIComponent(f.id)}?filename=${encodeURIComponent(nm)}`
-        return { id: f.id, name: nm, url: inlineUrl, dlUrl, isPdf: /\.pdf$/i.test(nm), source: 'astina' }
-      })
-    }
     return (atts || []).map((a, i) => {
       const nm = a.file_name || a.filename || a.name || `lampiran-${i + 1}`
       const src = a.file_url || a.url || a.link || a.file_path || a.path
@@ -1419,16 +1396,6 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
         <Button variant="outline" size="sm" onClick={loadQueue}><RefreshCw className="h-4 w-4 mr-2" /> Refresh</Button>
       </div>
 
-      {astinaError && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
-          <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-amber-800">ASTINA tidak tersedia</p>
-            <p className="text-xs text-amber-700 mt-0.5">{astinaError === 'OTP_REQUIRED' ? 'Memerlukan OTP. Silakan login ulang di halaman ASTINA.' : astinaError}</p>
-          </div>
-        </div>
-      )}
-
       {(!editMode && queue.length === 0 && tab === 'antrian') ? (
         <Card><CardContent className="py-16 text-center" data-testid="disposisi-empty">
           <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-green-500" />
@@ -1465,46 +1432,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
               <div className="flex items-center gap-2 mb-2 pb-1 border-b border-slate-200">
                 <FileText className="h-4 w-4 text-blue-800" />
                 <h3 className="text-sm font-semibold text-slate-800">Info Surat</h3>
-                {current?._source === 'astina' && !detailEdit && (
-                  <Button variant="ghost" size="sm" className="ml-auto h-6 text-xs" onClick={() => {
-                    const parsed = parseAstinaSurat(current._astina_raw)
-                    setDetailForm({
-                      prepetrator_name: parsed.prepetrator_name || (current.prepetrator_name && current.prepetrator_name !== '-' ? current.prepetrator_name : ''),
-                      pengirim: parsed.pengirim || current.pengirim || '',
-                      perihal: parsed.perihal || current.perihal || '',
-                      nomor_surat: parsed.nomor_surat || current.nomor_surat || '',
-                      summary: parsed.summary || '',
-                      category: current.category !== 'NON-DUMAS' ? current.category : (parsed.category || 'NON-DUMAS'),
-                    })
-                    setDetailEdit(true)
-                  }}>Edit Data</Button>
-                )}
               </div>
-              {detailEdit ? (
-                <div className="space-y-3">
-                  <div><Label className="text-xs">Terlapor</Label><Input value={detailForm.prepetrator_name || ''} onChange={(e) => setDetailForm({ ...detailForm, prepetrator_name: e.target.value })} className="h-8 text-sm" /></div>
-                  <div><Label className="text-xs">Pengirim</Label><Input value={detailForm.pengirim || ''} onChange={(e) => setDetailForm({ ...detailForm, pengirim: e.target.value })} className="h-8 text-sm" /></div>
-                  <div><Label className="text-xs">Perihal</Label><Input value={detailForm.perihal || ''} onChange={(e) => setDetailForm({ ...detailForm, perihal: e.target.value })} className="h-8 text-sm" /></div>
-                  <div><Label className="text-xs">Nomor Surat</Label><Input value={detailForm.nomor_surat || ''} onChange={(e) => setDetailForm({ ...detailForm, nomor_surat: e.target.value })} className="h-8 text-sm" /></div>
-                  <div><Label className="text-xs">Rangkuman</Label><Textarea value={detailForm.summary || ''} onChange={(e) => setDetailForm({ ...detailForm, summary: e.target.value })} rows={3} className="text-sm" /></div>
-                  <div><Label className="text-xs">Kategori</Label><Select value={detailForm.category || 'NON-DUMAS'} onValueChange={(v) => setDetailForm({ ...detailForm, category: v })}>
-                    <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>{reference?.categories?.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                  </Select></div>
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setDetailEdit(false)} className="flex-1">Batal</Button>
-                    <Button size="sm" onClick={async () => {
-                      const pid = current.prepetrator_id
-                      if (!pid) return
-                      try {
-                        await api('/local-cases', { method: 'POST', body: JSON.stringify({ source: 'astina', prepetrator_id: pid, prepetrator_name: detailForm.prepetrator_name, pengirim: detailForm.pengirim, perihal: detailForm.perihal, nomor_surat: detailForm.nomor_surat, summary: detailForm.summary, category: detailForm.category }) })
-                        toast.success('Data tersimpan')
-                        setDetailEdit(false)
-                      } catch (e) { toast.error('Gagal menyimpan: ' + e.message) }
-                    }} className="flex-1">Simpan</Button>
-                  </div>
-                </div>
-              ) : (
               <>
               <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                 <InfoRow icon={<Tag className="h-3.5 w-3.5" />} label="Kategori" value={current?.category} />
@@ -1530,69 +1458,24 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
                 </div>
               )}
               </>
-              )}
             </section>
 
-            {/* --- SECTION: Preview PDF (ASTINA) atau Kronologi (Gajamada) --- */}
-            {current?._source === 'astina' ? (
-              <section data-testid="section-pdf">
-                <div className="flex items-center gap-2 mb-2 pb-1 border-b border-slate-200">
-                  <Paperclip className="h-4 w-4 text-blue-800" />
-                  <h3 className="text-sm font-semibold text-slate-800">Preview PDF ({attachments.length})</h3>
-                  {attachments[pdfIdx] && (
-                    <a href={attachments[pdfIdx].dlUrl} download className="ml-auto text-xs text-emerald-700 hover:underline flex items-center gap-1" data-testid="pdf-download-current">
-                      <Download className="h-3 w-3" /> Unduh
-                    </a>
-                  )}
+            {/* --- SECTION: Kronologi --- */}
+            <section data-testid="section-kronologi">
+              <div className="flex items-center gap-2 mb-2 pb-1 border-b border-slate-200">
+                <FileText className="h-4 w-4 text-blue-800" />
+                <h3 className="text-sm font-semibold text-slate-800">Kronologi</h3>
+                <div className="ml-auto inline-flex rounded-md border border-slate-200 overflow-hidden">
+                  <button onClick={() => setKronologiMode('singkat')} className={`px-2 py-0.5 text-[10px] ${kronologiMode === 'singkat' ? 'bg-blue-800 text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`} data-testid="kronologi-singkat-btn">Singkat</button>
+                  <button onClick={() => setKronologiMode('lengkap')} className={`px-2 py-0.5 text-[10px] border-l ${kronologiMode === 'lengkap' ? 'bg-blue-800 text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`} data-testid="kronologi-lengkap-btn">Lengkap</button>
                 </div>
-                {attachments.length === 0 ? (
-                  <p className="text-xs text-slate-500 italic py-4 text-center" data-testid="pdf-empty">Tidak ada lampiran.</p>
-                ) : (
-                  <>
-                    {attachments.length > 1 && (
-                      <div className="flex flex-wrap gap-1.5 mb-2">
-                        {attachments.map((f, i) => (
-                          <button
-                            key={f.id}
-                            onClick={() => setPdfIdx(i)}
-                            className={`text-[10px] px-2 py-1 rounded border ${i === pdfIdx ? 'bg-blue-800 text-white border-blue-900' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
-                            data-testid={`pdf-tab-${i}`}
-                          >
-                            <span className="max-w-[140px] truncate inline-block align-middle">{f.name}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <div className="w-full border rounded-md overflow-hidden bg-slate-100" style={{ height: '480px' }}>
-                      {attachments[pdfIdx]?.isPdf ? (
-                        <iframe key={attachments[pdfIdx].id} src={attachments[pdfIdx].url} className="w-full h-full" title={attachments[pdfIdx].name} data-testid="pdf-preview-iframe" />
-                      ) : (
-                        <div className="h-full flex flex-col items-center justify-center text-slate-500 text-sm gap-2">
-                          <FileText className="h-8 w-8" />
-                          <a href={attachments[pdfIdx]?.dlUrl} className="text-blue-800 underline" download>Unduh {attachments[pdfIdx]?.name}</a>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </section>
-            ) : (
-              <section data-testid="section-kronologi">
-                <div className="flex items-center gap-2 mb-2 pb-1 border-b border-slate-200">
-                  <FileText className="h-4 w-4 text-blue-800" />
-                  <h3 className="text-sm font-semibold text-slate-800">Kronologi</h3>
-                  <div className="ml-auto inline-flex rounded-md border border-slate-200 overflow-hidden">
-                    <button onClick={() => setKronologiMode('singkat')} className={`px-2 py-0.5 text-[10px] ${kronologiMode === 'singkat' ? 'bg-blue-800 text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`} data-testid="kronologi-singkat-btn">Singkat</button>
-                    <button onClick={() => setKronologiMode('lengkap')} className={`px-2 py-0.5 text-[10px] border-l ${kronologiMode === 'lengkap' ? 'bg-blue-800 text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`} data-testid="kronologi-lengkap-btn">Lengkap</button>
-                  </div>
-                </div>
-                <div className="text-sm text-slate-700 whitespace-pre-wrap bg-slate-50 rounded-md border border-slate-200 p-3 max-h-[300px] overflow-y-auto" data-testid="kronologi-body">
-                  {kronologiMode === 'singkat'
-                    ? (detail?.summary || current?.summary || <span className="text-slate-400 italic">(Tidak ada ringkasan singkat)</span>)
-                    : (detail?.content || current?.content || <span className="text-slate-400 italic">(Tidak ada kronologi lengkap)</span>)}
-                </div>
-              </section>
-            )}
+              </div>
+              <div className="text-sm text-slate-700 whitespace-pre-wrap bg-slate-50 rounded-md border border-slate-200 p-3 max-h-[300px] overflow-y-auto" data-testid="kronologi-body">
+                {kronologiMode === 'singkat'
+                  ? (detail?.summary || current?.summary || <span className="text-slate-400 italic">(Tidak ada ringkasan singkat)</span>)
+                  : (detail?.content || current?.content || <span className="text-slate-400 italic">(Tidak ada kronologi lengkap)</span>)}
+              </div>
+            </section>
 
             {/* --- SECTION: Timeline --- */}
             <section data-testid="section-timeline">
@@ -1605,19 +1488,18 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange }) {
               ) : (
                 <ol className="relative border-l-2 border-slate-200 pl-4 space-y-3">
                   {timeline.map((r, i) => {
-                    const isAstina = current._source === 'astina'
-                    const title = isAstina ? (r.jenis || 'Disposisi') : (r.title || r.status_alias || r.status || 'Aktivitas')
-                    const from = isAstina ? r.dari_name : r.previous_case_position
-                    const to = isAstina ? (Array.isArray(r.tujuan) ? r.tujuan.join(' · ') : r.tujuan_name) : r.case_position
+                    const title = r.title || r.status_alias || r.status || 'Aktivitas'
+                    const from = r.previous_case_position
+                    const to = r.case_position
                     const officer = r.officer_report_name
-                    const desc = isAstina ? (Array.isArray(r.note) ? r.note.join(' · ') : (r.note || r.custom_note)) : r.description
-                    const dateStr = isAstina ? `${r.tanggal || (r.created_at || '').slice(0, 10)} ${r.waktu || ''}` : fmtDate(r.date_activity)
+                    const desc = r.description
+                    const dateStr = fmtDate(r.date_activity)
                     return (
                       <li key={r.id || i} className="text-xs" data-testid={`timeline-item-${i}`}>
                         <span className="absolute -left-[7px] w-3 h-3 rounded-full bg-blue-800 border-2 border-white" />
                         <div className="flex items-baseline gap-1.5 flex-wrap">
                           <span className="font-semibold text-slate-800">{title}</span>
-                          {!isAstina && r.source && <Badge variant="outline" className="text-[8px] py-0">{r.source.toUpperCase()}</Badge>}
+                          {r.source && <Badge variant="outline" className="text-[8px] py-0">{r.source.toUpperCase()}</Badge>}
                           <span className="text-[10px] text-slate-500 ml-auto">{dateStr}</span>
                         </div>
                         {(from || to) && (
@@ -1753,9 +1635,12 @@ function UnitGroup({ parent, children, level, isKasubbid, onToggle, onEdit, onRe
 
   return (
     <div>
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-3 px-4 py-3 bg-blue-50 hover:bg-blue-100 transition-colors text-left"
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(!open) } }}
+        className="w-full flex items-center gap-3 px-4 py-3 bg-blue-50 hover:bg-blue-100 transition-colors text-left cursor-pointer"
       >
         {children.length > 0 ? (
           open ? <ChevronDown className="h-4 w-4 text-blue-600 shrink-0" /> : <ChevronRight className="h-4 w-4 text-blue-600 shrink-0" />
@@ -1785,7 +1670,7 @@ function UnitGroup({ parent, children, level, isKasubbid, onToggle, onEdit, onRe
             )}
           </div>
         )}
-      </button>
+      </div>
       {open && children.length > 0 && (
         <div style={{ marginLeft: indent + 16 }}>
           {children.map(([child, grandChildren]) => (
@@ -1814,7 +1699,7 @@ function MasterUnitPage({ user }) {
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({ name: '', parent: '', order: 99 })
   const [syncing, setSyncing] = useState(false)
-  const isKasubbid = user.role === 'kasubbid' || user.role === 'admin'
+  const isKasubbid = user.role === 'kasubbid' || user.role === 'admin' || user.role === 'kabid_propam' || user.role === 'kasubbag_yanduan' || user.role === 'super_admin'
 
   const load = async () => {
     setLoading(true)
@@ -1952,7 +1837,7 @@ function SatkerSatwilPage({ user }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({ name: '', order: 99 })
-  const isAdmin = user.role === 'kasubbid' || user.role === 'admin'
+  const isAdmin = user.role === 'kasubbid' || user.role === 'admin' || user.role === 'kabid_propam' || user.role === 'kasubbag_yanduan' || user.role === 'super_admin'
 
   const load = async () => {
     setLoading(true)
@@ -2017,190 +1902,6 @@ function SatkerSatwilPage({ user }) {
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDialogOpen(false)}>Batal</Button>
             <Button onClick={save}>Simpan</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
-
-// ---------------- Document Register (Register Dokumen) ----------------
-const DOC_TYPES = [
-  { key: 'sprin', label: 'Sprin', prefix: 'SPRIN' },
-  { key: 'sp2hp2', label: 'SP2HP2', prefix: 'SP2HP2' },
-  { key: 'lhp', label: 'LHP', prefix: 'LHP' },
-  { key: 'nota_dinas', label: 'Nota Dinas', prefix: 'ND' },
-  { key: 'surat_henti', label: 'Surat Henti', prefix: 'SH' },
-  { key: 'buku_register', label: 'Buku Register', prefix: 'BR' },
-  { key: 'surat_ankum', label: 'Surat Ankum', prefix: 'SA' },
-]
-
-function DocumentRegisterPage() {
-  const [rows, setRows] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ document_type: '', perihal: '', unit_pengaju: '', keterangan: '', auto: true, nomor: '', target_seq: '' })
-  const [reference, setReference] = useState({ units: [] })
-  const [generating, setGenerating] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(null)
-
-  const load = async () => {
-    setLoading(true)
-    try { const r = await api('/document-register'); setRows(r.data) }
-    catch (e) { toast.error(e.message) }
-    finally { setLoading(false) }
-  }
-  useEffect(() => { load() }, [])
-  useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
-
-  const openCreate = (docType = '') => {
-    setEditing(null)
-    setForm({ document_type: docType, perihal: '', unit_pengaju: '', keterangan: '', auto: true, nomor: '', target_seq: '' })
-    setDialogOpen(true)
-  }
-  const openEdit = (r) => {
-    setEditing(r)
-    setForm({ document_type: r.document_type, perihal: r.perihal || '', unit_pengaju: r.unit_pengaju || '', keterangan: r.keterangan || '', auto: !r.manual, nomor: r.nomor || '', target_seq: '' })
-    setDialogOpen(true)
-  }
-  const generateNumber = async () => {
-    setGenerating(true)
-    try {
-      const r = await api('/document-register/generate', { method: 'POST', body: JSON.stringify({ document_type: form.document_type, target_seq: form.target_seq ? parseInt(form.target_seq, 10) : undefined }) })
-      setForm((f) => ({ ...f, nomor: r.data.nomor, target_seq: '' }))
-      toast.success(`Nomor dibuat: ${r.data.nomor}`)
-    } catch (e) { toast.error(e.message) }
-    finally { setGenerating(false) }
-  }
-  const save = async () => {
-    if (!form.document_type) return toast.error('Jenis dokumen wajib')
-    setSaving(true)
-    try {
-      const body = {
-        document_type: form.document_type,
-        perihal: form.perihal,
-        unit_pengaju: form.unit_pengaju,
-        keterangan: form.keterangan,
-        manual: !form.auto,
-        nomor: form.nomor,
-        target_seq: form.target_seq ? parseInt(form.target_seq, 10) : undefined,
-      }
-      if (editing) {
-        await api(`/document-register/${encodeURIComponent(editing.id)}`, { method: 'PUT', body: JSON.stringify(body) })
-        toast.success('Diperbarui')
-      } else {
-        await api('/document-register', { method: 'POST', body: JSON.stringify(body) })
-        toast.success('Ditambahkan')
-      }
-      setDialogOpen(false); await load()
-    } catch (e) { toast.error(e.message) }
-    finally { setSaving(false) }
-  }
-  const remove = async (r) => {
-    if (!confirm(`Hapus register "${r.nomor}"?`)) return
-    setDeleting(r.id)
-    try { await api(`/document-register/${encodeURIComponent(r.id)}`, { method: 'DELETE' }); toast.success('Dihapus'); await load() }
-    catch (e) { toast.error(e.message) }
-    finally { setDeleting(null) }
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h2 className="text-2xl font-bold text-slate-900">Register Dokumen</h2>
-        <div className="flex flex-wrap gap-2">
-          {DOC_TYPES.map((dt) => (
-            <Button key={dt.key} size="sm" variant="outline" onClick={() => openCreate(dt.key)}><FileText className="h-4 w-4 mr-1" /> {dt.label}</Button>
-          ))}
-        </div>
-      </div>
-      {loading ? <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div> :
-        <Card><CardContent className="p-0">
-          <div className="overflow-x-auto"><Table>
-            <TableHeader className="bg-slate-50"><TableRow>
-              <TableHead className="w-12 text-sm">No</TableHead>
-              <TableHead className="text-sm">Jenis Dokumen</TableHead>
-              <TableHead className="text-sm">Nomor</TableHead>
-              <TableHead className="text-sm">Tanggal</TableHead>
-              <TableHead className="text-sm">Perihal</TableHead>
-              <TableHead className="text-sm">Unit Pengaju</TableHead>
-              <TableHead className="text-sm">Keterangan</TableHead>
-              <TableHead className="text-sm">Manual</TableHead>
-              <TableHead className="w-[80px] text-sm">Aksi</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {rows.map((r, i) => (
-                <TableRow key={r.id}>
-                  <TableCell className="text-sm">{i + 1}</TableCell>
-                  <TableCell className="text-sm">{DOC_TYPES.find((d) => d.key === r.document_type)?.label || r.document_type}</TableCell>
-                  <TableCell className="text-sm font-mono text-blue-800">{r.nomor || '-'}</TableCell>
-                  <TableCell className="text-sm">{fmtDate(r.tanggal)}</TableCell>
-                  <TableCell className="text-sm max-w-[200px] line-clamp-2">{r.perihal || '-'}</TableCell>
-                  <TableCell className="text-sm">{shortUnit(r.unit_pengaju) || '-'}</TableCell>
-                  <TableCell className="text-sm max-w-[150px] line-clamp-2">{r.keterangan || '-'}</TableCell>
-                  <TableCell>{r.manual ? <Badge variant="outline" className="text-xs">Manual</Badge> : <Badge className="bg-blue-100 text-blue-800 text-xs">Auto</Badge>}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => openEdit(r)}>Edit</Button>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={() => remove(r)} disabled={deleting === r.id}>
-                        {deleting === r.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Hapus'}
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {rows.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-12 text-slate-500">Belum ada register dokumen.</TableCell></TableRow>}
-            </TableBody>
-          </Table></div>
-        </CardContent></Card>
-      }
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{editing ? 'Edit' : 'Tambah'} Register Dokumen</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div><Label>Jenis Dokumen</Label>
-              <Select value={form.document_type} onValueChange={(v) => setForm({ ...form, document_type: v })}>
-                <SelectTrigger><SelectValue placeholder="Pilih jenis dokumen" /></SelectTrigger>
-                <SelectContent>
-                  {DOC_TYPES.map((dt) => <SelectItem key={dt.key} value={dt.key}>{dt.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex-1"><Label>Perihal</Label><Input value={form.perihal} onChange={(e) => setForm({ ...form, perihal: e.target.value })} placeholder="Perihal dokumen" /></div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <Switch id="doc-auto" checked={form.auto} onCheckedChange={(v) => setForm({ ...form, auto: v, nomor: '' })} />
-                <Label htmlFor="doc-auto">Auto</Label>
-              </div>
-              <div className="flex-1">
-                <Label>Nomor</Label>
-                <div className="flex items-center gap-2">
-                  <Input value={form.auto ? (form.nomor || '{seq}') : form.nomor} onChange={(e) => setForm({ ...form, nomor: e.target.value })} placeholder={form.auto ? '{seq}' : '_____'} className="font-mono text-sm" disabled={form.auto} />
-                  {form.auto && <Button size="sm" variant="outline" onClick={generateNumber} disabled={generating || !form.document_type}>{generating ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Hash className="h-3 w-3 mr-1" />} Generate</Button>}
-                </div>
-              </div>
-            </div>
-            {!editing && form.auto && (
-              <div><Label>Posisi (Booking)</Label><Input type="number" value={form.target_seq} onChange={(e) => setForm({ ...form, target_seq: e.target.value })} placeholder="Kosongkan untuk next" /></div>
-            )}
-            <div><Label>Unit Pengaju</Label>
-              <Select value={form.unit_pengaju} onValueChange={(v) => setForm({ ...form, unit_pengaju: v })}>
-                <SelectTrigger><SelectValue placeholder="Pilih unit" /></SelectTrigger>
-                <SelectContent>
-                  {reference.units?.map((u) => <SelectItem key={u} value={u}>{shortUnit(u)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div><Label>Keterangan</Label><Textarea value={form.keterangan} onChange={(e) => setForm({ ...form, keterangan: e.target.value })} placeholder="Keterangan tambahan..." className="min-h-[60px]" /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setDialogOpen(false)}>Batal</Button>
-            <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Simpan</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2290,13 +1991,6 @@ function SettingsPage({ connStatus }) {
   // Gajamada fields
   const [gjEmail, setGjEmail] = useState('')
   const [gjPass, setGjPass] = useState('')
-  // ASTINA fields
-  const [asEmail, setAsEmail] = useState('')
-  const [asPass, setAsPass] = useState('')
-  const [zimEmail, setZimEmail] = useState('')
-  const [zimPass, setZimPass] = useState('')
-  // AI field
-  const [aiKey, setAiKey] = useState('')
 
   const toggleShow = (k) => setShowPass((p) => ({ ...p, [k]: !p[k] }))
   const PassInput = ({ value, onChange, placeholder, field }) => (
@@ -2312,12 +2006,7 @@ function SettingsPage({ connStatus }) {
     api('/settings').then((r) => {
       setSaved(r)
       if (r.gajamada?.email_set) setGjEmail(r.gajamada.email || '')
-      if (r.astina?.email_set) setAsEmail(r.astina.email || '')
-      if (r.zimbra?.email_set) setZimEmail(r.zimbra.email || '')
     }).catch(() => {}).finally(() => setLoading(false))
-    api('/settings/ai').then((r) => {
-      if (r.opencode_api_key) setAiKey(r.opencode_api_key)
-    }).catch(() => {})
   }, [])
 
   if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin text-blue-800" /></div>
@@ -2330,13 +2019,9 @@ function SettingsPage({ connStatus }) {
     setSaving((p) => ({ ...p, [service]: true }))
     const body = {}
     if (service === 'gajamada') { body.gajamada_email = gjEmail; body.gajamada_password = gjPass }
-    if (service === 'astina') {
-      body.astina_email = asEmail; body.astina_password = asPass
-      body.zimbra_email = zimEmail; body.zimbra_password = zimPass
-    }
     try {
       await api('/user/credentials', { method: 'POST', body: JSON.stringify(body) })
-      toast.success('Kredensial ' + (service === 'gajamada' ? 'Gajamada' : 'ASTINA/Zimbra') + ' disimpan')
+      toast.success('Kredensial Gajamada disimpan')
     } catch (e) {
       toast.error('Gagal menyimpan: ' + (e.message || 'error'))
     } finally {
@@ -2346,13 +2031,10 @@ function SettingsPage({ connStatus }) {
 
   const testLogin = async (service) => {
     setTesting((p) => ({ ...p, [service]: true }))
-    const endpoint = service === 'gajamada' ? '/user/test-gajamada' : '/user/test-astina'
-    const body = service === 'gajamada'
-      ? { email: gjEmail, password: gjPass }
-      : { email: asEmail, password: asPass }
+    const body = { email: gjEmail, password: gjPass }
     try {
-      const r = await api(endpoint, { method: 'POST', body: JSON.stringify(body) })
-      if (r.ok) toast.success('Login ' + (service === 'gajamada' ? 'Gajamada' : 'ASTINA') + ' berhasil')
+      const r = await api('/user/test-gajamada', { method: 'POST', body: JSON.stringify(body) })
+      if (r.ok) toast.success('Login Gajamada berhasil')
       else toast.error('Login gagal: ' + (r.error || 'kredensial salah'))
     } catch (e) {
       toast.error('Test gagal: ' + (e.message || 'error'))
@@ -2364,7 +2046,7 @@ function SettingsPage({ connStatus }) {
   return (
     <div className="space-y-4 max-w-2xl">
       <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><Settings className="h-6 w-6" /> Koneksi Eksternal</h2>
-      <p className="text-sm text-slate-500 -mt-2">Setiap user memiliki kredensial Gajamada dan ASTINA sendiri. Masukkan kredensial akun Anda.</p>
+      <p className="text-sm text-slate-500 -mt-2">Masukkan kredensial akun Gajamada Anda.</p>
 
       {/* Gajamada */}
       <Card>
@@ -2396,45 +2078,92 @@ function SettingsPage({ connStatus }) {
           </div>
         </CardContent>
       </Card>
+    </div>
+  )
+}
 
-      {/* ASTINA */}
+function AstinaInputPage() {
+  const [form, setForm] = useState({
+    perihal: '', pengirim: '', nik: '', nomor_surat: '', tanggal: '', kategori: '', isi: ''
+  })
+  const [saving, setSaving] = useState(false)
+  const [reference, setReference] = useState({ categories: [] })
+
+  useEffect(() => { api('/reference').then((r) => setReference(r)).catch(() => {}) }, [])
+
+  const categories = useMemo(() => [...(reference.categories || []), 'ASTINA'], [reference.categories])
+
+  const handleChange = (field, value) => setForm((prev) => ({ ...prev, [field]: value }))
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!form.perihal.trim()) { toast.error('Perihal wajib diisi'); return }
+    setSaving(true)
+    try {
+      await api('/local-cases', {
+        method: 'POST',
+        body: JSON.stringify({
+          perihal: form.perihal,
+          pengirim: form.pengirim,
+          reporter_nik: form.nik,
+          nomor_surat: form.nomor_surat,
+          tgl_surat: form.tanggal,
+          category: form.kategori,
+          summary: form.isi,
+          source: 'astina',
+          case_type: 'dumas',
+        })
+      })
+      toast.success('Data ASTINA tersimpan')
+      setForm({ perihal: '', pengirim: '', nik: '', nomor_surat: '', tanggal: '', kategori: '', isi: '' })
+    } catch (err) { toast.error('Gagal menyimpan: ' + err.message) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-slate-900">Input Manual ASTINA</h2>
+        <p className="text-sm text-slate-500">Input pengaduan dari sumber ASTINA secara manual.</p>
+      </div>
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Dot ok={connStatus.astina} />
-            <span>ASTINA (e-Office Polri)</span>
-            <Badge variant="outline" className={`text-[10px] ml-auto ${connStatus.astina ? 'text-green-700 border-green-300' : saved?.astina?.email_set ? 'text-green-700 border-green-300' : 'text-red-700 border-red-300'}`}>
-              {connStatus.astina ? 'Session aktif' : saved?.astina?.email_set ? 'Kredensial tersimpan' : 'Belum login'}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs">Email ASTINA</Label>
-              <Input value={asEmail} onChange={(e) => setAsEmail(e.target.value)} placeholder="email@polri" className="h-9 text-sm" />
-            </div>
-            <div>
-              <Label className="text-xs">Password ASTINA</Label>
-              <Input type="password" value={asPass} onChange={(e) => setAsPass(e.target.value)} placeholder="••••••••" className="h-9 text-sm" />
-            </div>
+        <CardContent className="p-6 space-y-4">
+          <div>
+            <Label>Perihal <span className="text-red-500">*</span></Label>
+            <Input value={form.perihal} onChange={(e) => handleChange('perihal', e.target.value)} placeholder="Perihal surat/pengaduan" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs">Email Zimbra (OTP)</Label>
-              <Input value={zimEmail} onChange={(e) => setZimEmail(e.target.value)} placeholder="email@polri.go.id" className="h-9 text-sm" />
-            </div>
-            <div>
-              <Label className="text-xs">Password Zimbra</Label>
-              <Input type="password" value={zimPass} onChange={(e) => setZimPass(e.target.value)} placeholder="••••••••" className="h-9 text-sm" />
-            </div>
+          <div>
+            <Label>Pengirim</Label>
+            <Input value={form.pengirim} onChange={(e) => handleChange('pengirim', e.target.value)} placeholder="Nama pengirim/pelapor" />
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => testLogin('astina')} disabled={testing.astina || !asEmail || !asPass}>
-              {testing.astina ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null} Test Login (Step 1)
-            </Button>
-            <Button size="sm" onClick={() => saveService('astina')} disabled={saving.astina || !asEmail || !asPass}>
-              {saving.astina ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null} Simpan
+          <div>
+            <Label>NIK</Label>
+            <Input value={form.nik} onChange={(e) => handleChange('nik', e.target.value)} placeholder="NIK pelapor" />
+          </div>
+          <div>
+            <Label>Nomor Surat</Label>
+            <Input value={form.nomor_surat} onChange={(e) => handleChange('nomor_surat', e.target.value)} placeholder="Nomor surat" />
+          </div>
+          <div>
+            <Label>Tanggal Surat</Label>
+            <Input type="date" value={form.tanggal} onChange={(e) => handleChange('tanggal', e.target.value)} />
+          </div>
+          <div>
+            <Label>Kategori</Label>
+            <Select value={form.kategori} onValueChange={(v) => handleChange('kategori', v)}>
+              <SelectTrigger><SelectValue placeholder="Pilih kategori" /></SelectTrigger>
+              <SelectContent>
+                {categories.map((cat) => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Isi / Kronologis</Label>
+            <Textarea value={form.isi} onChange={(e) => handleChange('isi', e.target.value)} placeholder="Isi pengaduan..." className="min-h-[120px]" />
+          </div>
+          <div className="pt-2">
+            <Button onClick={submit} disabled={saving} className="bg-blue-800 hover:bg-blue-900">
+              {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Simpan
             </Button>
           </div>
         </CardContent>
@@ -2447,19 +2176,27 @@ function SettingsPage({ connStatus }) {
 function AppShell({ user, onLogout }) {
   const [tab, setTab] = useState('dashboard')
   const [selectedCase, setSelectedCase] = useState(null)
-  const isKasubbid = user.role === 'kasubbid' || user.role === 'admin'
+  const role = user?.role || 'unit'
+  const isKasubbid = role === 'kasubbid' || role === 'admin'
+  const isPropamYanduan = role === 'kabid_propam' || role === 'kasubbag_yanduan'
+  const isSuperAdmin = role === 'super_admin'
+  const canDisposisi = isKasubbid || isPropamYanduan
+  const canAstina = isPropamYanduan
+  const canManageUnits = isKasubbid || isSuperAdmin
+  const canSettings = isKasubbid || isSuperAdmin
+  const canDashboardCases = !isSuperAdmin
   const [disposisiCount, setDisposisiCount] = useState(0)
   const notifiedRef = useRef(false)
-  const [connStatus, setConnStatus] = useState({ astina: false, gajamada: false, ai: false })
+  const [connStatus, setConnStatus] = useState({ gajamada: false })
 
   const refreshDisposisiCount = async () => {
-    if (!isKasubbid) return
+    if (!canDisposisi) return
     try { const r = await api('/disposisi-queue/count'); setDisposisiCount(r.count || 0) } catch (_) { /* ignore */ }
   }
   const refreshConnStatus = async () => {
     try {
       const r = await api('/connection-status')
-      setConnStatus({ astina: !!r.astina?.connected, gajamada: !!r.gajamada?.connected, ai: !!r.ai?.connected })
+      setConnStatus({ gajamada: !!r.gajamada })
     } catch (_) { /* ignore */ }
   }
   useEffect(() => {
@@ -2468,13 +2205,13 @@ function AppShell({ user, onLogout }) {
     return () => clearInterval(interval)
   }, []) // eslint-disable-line
   useEffect(() => {
-    if (!isKasubbid) return
+    if (!canDisposisi) return
     refreshDisposisiCount()
     const interval = setInterval(refreshDisposisiCount, 30000)
     return () => clearInterval(interval)
-  }, [isKasubbid]) // eslint-disable-line
+  }, [canDisposisi]) // eslint-disable-line
   useEffect(() => {
-    if (isKasubbid && disposisiCount > 0 && !notifiedRef.current) {
+    if (canDisposisi && disposisiCount > 0 && !notifiedRef.current) {
       notifiedRef.current = true
       toast.info(`Ada ${disposisiCount} pengaduan belum didisposisi ke unit`, {
         action: { label: 'Lihat', onClick: () => setTab('disposisi') },
@@ -2483,15 +2220,15 @@ function AppShell({ user, onLogout }) {
   }, [disposisiCount]) // eslint-disable-line
 
   const menu = [
-    { id: 'dashboard', label: 'Dashboard ANEV', icon: LayoutDashboard },
-    { id: 'cases', label: 'Daftar Surat', icon: FolderKanban },
-    ...(isKasubbid ? [{ id: 'disposisi', label: 'Disposisi', icon: ArrowRightLeft, badge: disposisiCount }] : []),
-    ...(isKasubbid ? [{ id: 'units', label: 'Master Unit', icon: Building2 }] : []),
-    ...(isKasubbid ? [{ id: 'satker', label: 'Satker/Satwil', icon: MapPin }] : []),
-    ...(isKasubbid ? [{ id: 'register', label: 'Register Dokumen', icon: FileText }] : []),
+    ...(canDashboardCases ? [{ id: 'dashboard', label: 'Dashboard ANEV', icon: LayoutDashboard }] : []),
+    ...(canDashboardCases ? [{ id: 'cases', label: 'Daftar Surat', icon: FolderKanban }] : []),
+    ...(canDisposisi ? [{ id: 'disposisi', label: 'Disposisi', icon: ArrowRightLeft, badge: disposisiCount }] : []),
+    ...(canAstina ? [{ id: 'astina', label: 'ASTINA', icon: FileText }] : []),
+    ...(canManageUnits ? [{ id: 'units', label: 'Master Unit', icon: Building2 }] : []),
+    ...(canManageUnits ? [{ id: 'satker', label: 'Satker/Satwil', icon: MapPin }] : []),
     { id: 'sync', label: 'Log Sync', icon: Send },
     { id: 'audit', label: 'Audit Log', icon: History },
-    { id: 'settings', label: 'Pengaturan', icon: Settings },
+    ...(canSettings ? [{ id: 'settings', label: 'Pengaturan', icon: Settings }] : []),
   ]
 
   return (
@@ -2505,17 +2242,9 @@ function AppShell({ user, onLogout }) {
             </div>
           </div>
           <div className="flex items-center gap-4 mt-3 pt-3 border-t border-white/10">
-            <div className="flex items-center gap-1.5" data-testid="status-astina">
-              <span className={`h-2 w-2 rounded-full ${connStatus.astina ? 'bg-green-400' : 'bg-red-400'} ${connStatus.astina ? 'shadow-[0_0_6px_rgba(74,222,128,0.6)]' : 'shadow-[0_0_6px_rgba(248,113,113,0.6)]'}`} />
-              <span className="text-[10px] text-blue-200">ASTINA</span>
-            </div>
             <div className="flex items-center gap-1.5" data-testid="status-gajamada">
               <span className={`h-2 w-2 rounded-full ${connStatus.gajamada ? 'bg-green-400' : 'bg-red-400'} ${connStatus.gajamada ? 'shadow-[0_0_6px_rgba(74,222,128,0.6)]' : 'shadow-[0_0_6px_rgba(248,113,113,0.6)]'}`} />
               <span className="text-[10px] text-blue-200">GAJAMADA</span>
-            </div>
-            <div className="flex items-center gap-1.5" data-testid="status-ai">
-              <span className={`h-2 w-2 rounded-full ${connStatus.ai ? 'bg-green-400' : 'bg-red-400'} ${connStatus.ai ? 'shadow-[0_0_6px_rgba(74,222,128,0.6)]' : 'shadow-[0_0_6px_rgba(248,113,113,0.6)]'}`} />
-              <span className="text-[10px] text-blue-200">AI</span>
             </div>
           </div>
         </div>
@@ -2550,16 +2279,15 @@ function AppShell({ user, onLogout }) {
 
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-[1600px] mx-auto p-6">
-          {tab === 'dashboard' && <Dashboard user={user} />}
-          {tab === 'cases' && <CasesList user={user} onOpenCase={setSelectedCase} />}
-          {tab === 'disposisi' && isKasubbid && <DisposisiPage user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
-          {tab === 'units' && isKasubbid && <MasterUnitPage user={user} />}
-          {tab === 'satker' && isKasubbid && <SatkerSatwilPage user={user} />}
-          {tab === 'register' && isKasubbid && <DocumentRegisterPage />}
-
+          {tab === 'dashboard' && canDashboardCases && <Dashboard user={user} />}
+          {tab === 'cases' && canDashboardCases && <CasesList user={user} onOpenCase={setSelectedCase} />}
+          {tab === 'disposisi' && canDisposisi && <DisposisiPage user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
+          {tab === 'astina' && canAstina && <AstinaInputPage />}
+          {tab === 'units' && canManageUnits && <MasterUnitPage user={user} />}
+          {tab === 'satker' && canManageUnits && <SatkerSatwilPage user={user} />}
           {tab === 'sync' && <SyncLogsView />}
           {tab === 'audit' && <AuditView />}
-          {tab === 'settings' && <SettingsPage connStatus={connStatus} />}
+          {tab === 'settings' && canSettings && <SettingsPage connStatus={connStatus} />}
         </div>
       </main>
 

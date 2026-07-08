@@ -1,8 +1,8 @@
-// HAR Parser - extract PDFs from ASTINA/Dumas Presisi HAR files
+// HAR Parser - extract PDFs from Dumas Presisi HAR files
 export function parseHar(harJson) {
   const entries = (harJson.log?.entries || []).filter((e) => {
     const url = e.request?.url || ''
-    return url.includes('astina.polri.go.id') && !/\.(js|css|png|jpg|svg|woff|ico|map|gif|ttf)$/.test(url)
+    return !/\.(js|css|png|jpg|svg|woff|ico|map|gif|ttf)$/.test(url)
   })
 
   const pdfs = []

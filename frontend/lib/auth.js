@@ -13,6 +13,9 @@ export const USERS = [
   { username: 'urbinpam', password: 'unit123', name: 'Ur Binpam Paminal Polda Jabar', role: 'unit', unit: 'UR BINPAM SUBBID PAMINAL POLDA JAWA BARAT' },
   { username: 'urlitpers', password: 'unit123', name: 'Ur Litpers Paminal Polda Jabar', role: 'unit', unit: 'UR LITPERS SUBBID PAMINAL POLDA JAWA BARAT' },
   { username: 'urprodok', password: 'unit123', name: 'Ur Prodok Paminal Polda Jabar', role: 'unit', unit: 'UR PRODOK SUBBID PAMINAL POLDA JAWA BARAT' },
+  { username: 'super_admin', password: 'superadmin123', role: 'super_admin' },
+  { username: 'kabid_propam', password: 'kabid123', role: 'kabid_propam' },
+  { username: 'kasubbag_yanduan', password: 'yanduan123', role: 'kasubbag_yanduan' },
 ]
 
 export async function signSession(user) {

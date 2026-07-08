@@ -249,3 +249,118 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
+
+-- ============================================================
+-- Migration: Disposition acceptance tracking (Wave 4, Todo 32)
+-- Adds accepted_at and accepted_by to dispositions so the target
+-- unit can record when a case disposition was received and by whom.
+--
+-- UP:
+--   ALTER TABLE dispositions ADD COLUMN accepted_at TIMESTAMPTZ;
+--   ALTER TABLE dispositions ADD COLUMN accepted_by JSONB DEFAULT '{}';
+--
+-- DOWN:
+--   ALTER TABLE dispositions DROP COLUMN accepted_at;
+--   ALTER TABLE dispositions DROP COLUMN accepted_by;
+-- ============================================================
+ALTER TABLE dispositions ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
+ALTER TABLE dispositions ADD COLUMN IF NOT EXISTS accepted_by JSONB DEFAULT '{}';
+
+-- ============================================================
+-- Migration: Drop ASTINA/document-register/numbering-settings
+--              and align local_cases with new status workflow
+--              (Wave 5, Todo 41)
+-- Removes the ASTINA-side tables and per-user ASTINA/Zimbra
+-- credentials, plus the legacy `synced_to_astina` flag on
+-- local_cases. Adds `status` and `resolusi` columns to
+-- local_cases to back the new workflow constants in
+-- frontend/lib/status.js (Wave 4, Todo 24).
+--
+-- UP:
+--   DROP TABLE IF EXISTS astina_sessions;
+--   DROP TABLE IF EXISTS document_register;
+--   DROP TABLE IF EXISTS numbering_settings;
+--   ALTER TABLE user_credentials
+--     DROP COLUMN IF EXISTS astina_email,
+--     DROP COLUMN IF EXISTS astina_password,
+--     DROP COLUMN IF EXISTS zimbra_email,
+--     DROP COLUMN IF EXISTS zimbra_password;
+--   ALTER TABLE local_cases DROP COLUMN IF EXISTS synced_to_astina;
+--   ALTER TABLE local_cases
+--     ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Surat Masuk Polda Jabar';
+--   ALTER TABLE local_cases
+--     ADD COLUMN IF NOT EXISTS resolusi TEXT;
+--   -- dispositions.accepted_at already added in Wave 4 (Todo 32);
+--   -- IF NOT EXISTS keeps this block idempotent.
+--   ALTER TABLE dispositions
+--     ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
+--
+-- DOWN:
+--   ALTER TABLE dispositions DROP COLUMN IF EXISTS accepted_at;
+--   ALTER TABLE local_cases DROP COLUMN IF EXISTS resolusi;
+--   ALTER TABLE local_cases DROP COLUMN IF EXISTS status;
+--   ALTER TABLE local_cases
+--     ADD COLUMN IF NOT EXISTS synced_to_astina BOOLEAN DEFAULT FALSE;
+--   ALTER TABLE user_credentials
+--     ADD COLUMN IF NOT EXISTS astina_email    TEXT,
+--     ADD COLUMN IF NOT EXISTS astina_password TEXT,
+--     ADD COLUMN IF NOT EXISTS zimbra_email    TEXT,
+--     ADD COLUMN IF NOT EXISTS zimbra_password TEXT;
+--   CREATE TABLE IF NOT EXISTS numbering_settings (
+--     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+--     document_type TEXT UNIQUE NOT NULL,
+--     template TEXT NOT NULL,
+--     next_seq INTEGER DEFAULT 1,
+--     reset_yearly BOOLEAN DEFAULT TRUE,
+--     last_year INTEGER,
+--     updated_at TIMESTAMPTZ DEFAULT NOW()
+--   );
+--   ALTER TABLE numbering_settings ENABLE ROW LEVEL SECURITY;
+--   CREATE TABLE IF NOT EXISTS document_register (
+--     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+--     document_type TEXT NOT NULL,
+--     number TEXT NOT NULL,
+--     date TIMESTAMPTZ,
+--     perihal TEXT DEFAULT '',
+--     requesting_unit TEXT DEFAULT '',
+--     keterangan TEXT DEFAULT '',
+--     is_manual BOOLEAN DEFAULT FALSE,
+--     prepetrator_id TEXT,
+--     created_at TIMESTAMPTZ DEFAULT NOW(),
+--     updated_at TIMESTAMPTZ
+--   );
+--   CREATE INDEX IF NOT EXISTS idx_docreg_type
+--     ON document_register(document_type, created_at DESC);
+--   ALTER TABLE document_register ENABLE ROW LEVEL SECURITY;
+--   CREATE TABLE IF NOT EXISTS astina_sessions (
+--     username TEXT PRIMARY KEY,
+--     access_token TEXT,
+--     email TEXT,
+--     "user" JSONB,
+--     obtained_at BIGINT,
+--     otp_verified BOOLEAN DEFAULT FALSE,
+--     updated_at TIMESTAMPTZ DEFAULT NOW()
+--   );
+--   ALTER TABLE astina_sessions ENABLE ROW LEVEL SECURITY;
+-- ============================================================
+DROP TABLE IF EXISTS astina_sessions;
+DROP TABLE IF EXISTS document_register;
+DROP TABLE IF EXISTS numbering_settings;
+
+ALTER TABLE user_credentials
+  DROP COLUMN IF EXISTS astina_email,
+  DROP COLUMN IF EXISTS astina_password,
+  DROP COLUMN IF EXISTS zimbra_email,
+  DROP COLUMN IF EXISTS zimbra_password;
+
+ALTER TABLE local_cases DROP COLUMN IF EXISTS synced_to_astina;
+
+ALTER TABLE local_cases
+  ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Surat Masuk Polda Jabar';
+ALTER TABLE local_cases
+  ADD COLUMN IF NOT EXISTS resolusi TEXT;
+
+-- accepted_at already exists from Wave 4 (Todo 32); IF NOT EXISTS
+-- keeps this block safe to re-run.
+ALTER TABLE dispositions
+  ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
