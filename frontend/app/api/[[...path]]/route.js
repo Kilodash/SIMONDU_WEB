@@ -271,7 +271,7 @@ async function handleRoute(request, ctx) {
     'SUBBAG REHABPERS': ['REHABPERS'],
     'WASSIDIK': ['WASSIDIK'],
     'SAT BRIMOB': ['BRIMOB'],
-    'POLRES': ['POLRES', 'POLRESTA', 'POLRESTABES']
+    'POLRES': ['POLRES', 'POLRESTA', 'POLRESTABES', 'KASIPROPAM', 'KAUR', 'KANIT']
   }
 
   async function getAllPositions() {

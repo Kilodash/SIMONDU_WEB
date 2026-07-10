@@ -29,12 +29,8 @@ export function simplifyUnit(position) {
   const polrestabesMatch = position.match(/(POLRESTABES\s.*)/i)
   if (polrestabesMatch) return polrestabesMatch[1].toUpperCase()
 
-  if (up.includes('PAMINAL')) return 'SUBBID PAMINAL'
-  if (up.includes('PROVOS')) return 'SUBBID PROVOS'
-  if (up.includes('WABPROF')) return 'SUBBID WABPROF'
-  if (up.includes('YANDUAN')) return 'SUBBAG YANDUAN'
-  if (up.includes('KABID PROPAM')) return 'KABID PROPAM'
-  if (up.includes('REHABPERS')) return 'SUBBAG REHABPERS'
+  const stripped = position.replace(/\s*POLDA JAWA BARAT\s*/i, '').trim()
+  if (stripped) return stripped.toUpperCase()
 
-  return 'SATKER LAIN'
+  return position.toUpperCase()
 }
