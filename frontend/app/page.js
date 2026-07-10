@@ -1485,7 +1485,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
         const checklist = []
         if (saranChecklist.penelaahan) checklist.push('Sudah dilakukan penelaahan')
         if (saranChecklist.kelengkapan) checklist.push('Sudah diperiksa kelengkapan')
-        await api('/saran-yanduan', { method: 'POST', body: JSON.stringify({ pid: current.prepetrator_id, checklist, catatan: note, to_unit: saranUnit }) })
+        await api('/saran-yanduan', { method: 'POST', body: JSON.stringify({ pid: current.prepetrator_id, checklist, catatan: note, to_unit: saranUnit === '__none' ? null : saranUnit }) })
         toast.success('Saran/Masukan berhasil disimpan')
         const newQueue = queue.filter((_, i) => i !== idx)
         setQueue(newQueue)
@@ -1750,7 +1750,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
               <Select value={saranUnit} onValueChange={setSaranUnit}>
                 <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih satker/satwil" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">-- Kosongkan --</SelectItem>
+                  <SelectItem value="__none">-- Kosongkan --</SelectItem>
                   {(reference.all_active_units || []).map((u) => <SelectItem key={typeof u === 'string' ? u : u.id} value={typeof u === 'string' ? u : u.name}>{typeof u === 'string' ? shortUnit(u) : u.name}</SelectItem>)}
                 </SelectContent>
               </Select>
@@ -1801,36 +1801,6 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
             </div>
             )}
 
-            {isSaranMode && canOverride && (
-            <div className="border-t pt-3">
-              <button type="button" onClick={() => setOverrideOpen(!overrideOpen)} className="flex items-center gap-1 text-xs font-medium text-amber-700 hover:text-amber-900">
-                {overrideOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                Distribusi Langsung (Over-ride)
-              </button>
-              {overrideOpen && (
-                <div className="space-y-3 mt-2 p-3 border border-amber-300 rounded-md bg-amber-50/30">
-                  <div>
-                    <Label className="text-xs">Unit Tujuan</Label>
-                    <Select value={overrideUnit} onValueChange={setOverrideUnit}>
-                      <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih unit satker/satwil" /></SelectTrigger>
-                      <SelectContent>
-                        {(reference.all_active_units || []).map((u) => <SelectItem key={typeof u === 'string' ? u : u.id} value={typeof u === 'string' ? u : u.name}>{typeof u === 'string' ? shortUnit(u) : u.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label className="text-xs">Catatan Over-ride</Label>
-                    <Textarea value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)} placeholder="Alasan distribusi langsung..." className="min-h-[50px] text-xs" />
-                  </div>
-                  <Button onClick={submitOverride} disabled={overrideSubmitting || !overrideUnit} className="w-full bg-amber-700 hover:bg-amber-800 text-xs" size="sm">
-                    {overrideSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-2" />}
-                    Distribusi Langsung
-                  </Button>
-                </div>
-              )}
-            </div>
-            )}
-
             <div className="border-t pt-3">
               {editMode ? (
                 <div className="flex gap-2">
@@ -1849,6 +1819,38 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
             </div>
           </div>
         </Card>
+
+        {/* Over-ride Distribusi Langsung (admin/subbag yanduan only) */}
+        {isSaranMode && canOverride && (
+        <Card className="border-2 border-amber-300 bg-amber-50/20">
+          <CardHeader className="pb-2 shrink-0">
+            <CardTitle className="text-sm flex items-center gap-2"><Send className="h-4 w-4 text-amber-700" /> Distribusi Langsung (Over-ride)</CardTitle>
+          </CardHeader>
+          <div className="p-4 space-y-3">
+            <div>
+              <Label className="text-xs">Unit Tujuan (Satker/Satwil)</Label>
+              <Select value={overrideUnit} onValueChange={setOverrideUnit}>
+                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih satker/satwil" /></SelectTrigger>
+                <SelectContent>
+                  {(reference.all_active_units || []).filter((u) => {
+                    const s = typeof u === 'string' ? shortUnit(u) : shortUnit(u.name)
+                    return /^(SUBBID|SUBBAG|KABID|POLRES|POLRESTA|POLRESTABES|SAT |WASSIDIK|SATKER)/i.test(s)
+                  }).map((u) => <SelectItem key={typeof u === 'string' ? u : u.id} value={typeof u === 'string' ? u : u.name}>{typeof u === 'string' ? shortUnit(u) : u.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Catatan Over-ride</Label>
+              <Textarea value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)} placeholder="Alasan distribusi langsung ke satker/satwil..." className="min-h-[60px] text-xs" />
+            </div>
+            <Button onClick={submitOverride} disabled={overrideSubmitting || !overrideUnit} className="w-full bg-amber-700 hover:bg-amber-800" size="sm">
+              {overrideSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+              Distribusi Langsung
+            </Button>
+          </div>
+        </Card>
+        )}
+
       </div>
 
       {/* Navigation bar — below content, above bottom */}
