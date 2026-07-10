@@ -1607,7 +1607,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
       )}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* PANEL 1: Detail + Preview/Kronologi + Timeline (scrollable) */}
-        <Card className="lg:col-span-7 flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 120px)' }}>
+        <Card className="lg:col-span-7 flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 60px)' }}>
           <div className={`${editMode ? 'bg-gradient-to-r from-amber-800 to-amber-900' : 'bg-gradient-to-r from-blue-900 to-indigo-900'} text-white p-3 shrink-0`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
@@ -1715,7 +1715,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
         </Card>
 
         {/* KOLOM KANAN: Lembar Disposisi + Over-ride */}
-        <div className="lg:col-span-5 flex flex-col gap-4" style={{ maxHeight: 'calc(100vh - 120px)' }}>
+        <div className="lg:col-span-5 flex flex-col gap-4" style={{ maxHeight: 'calc(100vh - 60px)' }}>
 
         {/* PANEL 2: Lembar Disposisi */}
         <Card className="flex-1 min-h-0 flex flex-col overflow-hidden border-2 border-blue-300">
@@ -1833,10 +1833,15 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
 
         {/* Over-ride Distribusi Langsung (admin/subbag yanduan only) */}
         {isSaranMode && canOverride && (
-        <Card className="flex-1 min-h-0 flex flex-col overflow-hidden border-2 border-amber-300 bg-amber-50/20">
-          <CardHeader className="pb-2 shrink-0">
-            <CardTitle className="text-sm flex items-center gap-2"><Send className="h-4 w-4 text-amber-700" /> Distribusi Langsung (Over-ride)</CardTitle>
-          </CardHeader>
+         <Card className="flex-none flex flex-col overflow-hidden border-2 border-amber-300 bg-amber-50/20">
+          <button type="button" onClick={() => setOverrideOpen(!overrideOpen)} className="shrink-0 bg-amber-50/60 hover:bg-amber-100/60 transition-colors px-4 py-2.5 border-b border-amber-200 text-left">
+            <CardTitle className="text-sm flex items-center gap-2">
+              {overrideOpen ? <ChevronDown className="h-4 w-4 text-amber-700" /> : <ChevronRight className="h-4 w-4 text-amber-700" />}
+              <Send className="h-4 w-4 text-amber-700" />
+              Distribusi Langsung (Over-ride)
+            </CardTitle>
+          </button>
+          {overrideOpen && (
           <div className="overflow-y-auto p-4 space-y-3">
             <div>
               <Label className="text-xs">Unit Tujuan (Satker/Satwil)</Label>
@@ -1859,15 +1864,16 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
               Distribusi Langsung
             </Button>
           </div>
-        </Card>
-        )}
+          )}
+         </Card>
+         )}
 
         </div>
       </div>
 
       {/* Navigation bar — below content, above bottom */}
       {!editMode && (
-      <div className="bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]" data-testid="bottom-nav">
+      <div className="bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] sticky bottom-0 z-30" data-testid="bottom-nav">
         <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
           <Button variant="outline" size="sm" onClick={goPrev} disabled={idx === 0} className="text-xs min-w-[80px]" data-testid="btn-prev">
             <ChevronLeft className="h-4 w-4 mr-1" /> Prev
