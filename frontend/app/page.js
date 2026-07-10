@@ -1681,7 +1681,6 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
               {timeline.length === 0 ? (
                 <p className="text-xs text-slate-500 italic py-3 text-center" data-testid="timeline-empty">Belum ada timeline untuk surat ini.</p>
               ) : (
-                <div className="max-h-[40vh] overflow-y-auto">
                 <ol className="relative border-l-2 border-slate-200 pl-4 space-y-3">
                   {timeline.map((r, i) => {
                     const title = r.title || r.status_alias || r.status || 'Aktivitas'
@@ -1710,7 +1709,6 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
                     )
                   })}
                 </ol>
-                </div>
               )}
             </section>
           </div>
