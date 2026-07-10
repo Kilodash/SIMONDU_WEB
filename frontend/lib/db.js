@@ -208,7 +208,19 @@ export async function getPolresUnits() {
 export async function getAllActiveUnitNames() {
   const db = await getDb()
   const rows = await db.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
-  return rows.map((r) => r.name)
+
+  const parentMap = {}
+  for (const r of rows) parentMap[r.name] = r.parent || null
+
+  const isJabar = (name, visited = new Set()) => {
+    if (!name || visited.has(name)) return false
+    visited.add(name)
+    const up = name.toUpperCase()
+    if (up.includes('JABAR') || up.includes('JAWA BARAT') || up.includes('BANDUNG')) return true
+    return isJabar(parentMap[name], visited)
+  }
+
+  return rows.filter((r) => isJabar(r.name)).map((r) => r.name)
 }
 
 // Look up Gajamada external_name aliases for the kasubbid unit from unit_mapping.

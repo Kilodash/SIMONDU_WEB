@@ -1714,8 +1714,11 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
           </div>
         </Card>
 
+        {/* KOLOM KANAN: Lembar Disposisi + Over-ride */}
+        <div className="lg:col-span-5 flex flex-col gap-4" style={{ maxHeight: 'calc(100vh - 180px)' }}>
+
         {/* PANEL 2: Lembar Disposisi */}
-        <Card className="lg:col-span-5 flex flex-col overflow-hidden border-2 border-blue-300" style={{ maxHeight: isSaranMode && canOverride ? 'calc(50vh - 90px)' : 'calc(100vh - 180px)' }}>
+        <Card className="flex-1 min-h-0 flex flex-col overflow-hidden border-2 border-blue-300">
           <CardHeader className="pb-2 bg-blue-50/60 border-b shrink-0">
             <CardTitle className="text-sm flex items-center gap-2"><ArrowRightLeft className="h-4 w-4 text-blue-800" /> Lembar Disposisi</CardTitle>
           </CardHeader>
@@ -1830,7 +1833,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
 
         {/* Over-ride Distribusi Langsung (admin/subbag yanduan only) */}
         {isSaranMode && canOverride && (
-        <Card className="lg:col-span-5 flex flex-col overflow-hidden border-2 border-amber-300 bg-amber-50/20" style={{ maxHeight: 'calc(50vh - 90px)' }}>
+        <Card className="flex-1 min-h-0 flex flex-col overflow-hidden border-2 border-amber-300 bg-amber-50/20">
           <CardHeader className="pb-2 shrink-0">
             <CardTitle className="text-sm flex items-center gap-2"><Send className="h-4 w-4 text-amber-700" /> Distribusi Langsung (Over-ride)</CardTitle>
           </CardHeader>
@@ -1859,6 +1862,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
         </Card>
         )}
 
+        </div>
       </div>
 
       {/* Navigation bar — below content, above bottom */}
