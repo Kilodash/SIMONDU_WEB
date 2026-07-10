@@ -510,6 +510,31 @@ async function handleRoute(request, ctx) {
         added++
       }
 
+      // 3. Seed essential Polda Jabar units that may not exist in Gajamada catalog
+      const ESSENTIAL_UNITS = [
+        { name: 'KASUBBID WABPROF POLDA JAWA BARAT', parent: 'BIDPROPAM POLDA JAWA BARAT' },
+        { name: 'UNIT WABPROF', parent: 'KASUBBID WABPROF POLDA JAWA BARAT' },
+        { name: 'SUBBAG REHABPERS', parent: 'BIDPROPAM POLDA JAWA BARAT' },
+        { name: 'SAT BRIMOB', parent: 'BIDPROPAM POLDA JAWA BARAT' },
+        { name: 'WASSIDIK', parent: 'BIDPROPAM POLDA JAWA BARAT' },
+        { name: 'BAG WASSIDIK DITRESKRIM UM', parent: 'WASSIDIK' },
+        { name: 'BAG WASSIDIK DITRESKRIM SUS', parent: 'WASSIDIK' },
+        { name: 'BAG WASSIDIK DITRESNARKOBA', parent: 'WASSIDIK' },
+        { name: 'BAG WASSIDIK DITRESSIBER', parent: 'WASSIDIK' },
+        { name: 'BAG WASSIDIK DITRES PPA/PPO', parent: 'WASSIDIK' },
+      ]
+      for (const eu of ESSENTIAL_UNITS) {
+        const exists = await db.collection('units_master').findOne({ name: eu.name })
+        if (!exists) {
+          await db.collection('units_master').insertOne({
+            id: uuidv4(), name: eu.name, parent: eu.parent || null,
+            is_kasubbid: false, active: true, order: 99, created_at: new Date(), source: 'seed',
+          })
+          added++
+        }
+        total++
+      }
+
       await logAudit(me, 'unit_sync_gajamada', 'catalog', { added, existing, total })
       return ok({ added, existing, total })
     }

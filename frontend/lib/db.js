@@ -2,6 +2,7 @@
 // Translates find/findOne/insertOne/updateOne/deleteOne/countDocuments to PostgREST
 // calls via @supabase/supabase-js. Uses service_role key for full table access.
 import { createClient } from '@supabase/supabase-js'
+import { v4 as uuidv4 } from 'uuid'
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -207,6 +208,30 @@ export async function getPolresUnits() {
 
 export async function getAllActiveUnitNames() {
   const db = await getDb()
+
+  // Seed essential Polda Jabar units if missing
+  const ESSENTIAL = [
+    { name: 'KASUBBID WABPROF POLDA JAWA BARAT', parent: 'BIDPROPAM POLDA JAWA BARAT' },
+    { name: 'UNIT WABPROF', parent: 'KASUBBID WABPROF POLDA JAWA BARAT' },
+    { name: 'SUBBAG REHABPERS', parent: 'BIDPROPAM POLDA JAWA BARAT' },
+    { name: 'SAT BRIMOB', parent: 'BIDPROPAM POLDA JAWA BARAT' },
+    { name: 'WASSIDIK', parent: 'BIDPROPAM POLDA JAWA BARAT' },
+    { name: 'BAG WASSIDIK DITRESKRIM UM', parent: 'WASSIDIK' },
+    { name: 'BAG WASSIDIK DITRESKRIM SUS', parent: 'WASSIDIK' },
+    { name: 'BAG WASSIDIK DITRESNARKOBA', parent: 'WASSIDIK' },
+    { name: 'BAG WASSIDIK DITRESSIBER', parent: 'WASSIDIK' },
+    { name: 'BAG WASSIDIK DITRES PPA/PPO', parent: 'WASSIDIK' },
+  ]
+  for (const eu of ESSENTIAL) {
+    const exists = await db.collection('units_master').findOne({ name: eu.name })
+    if (!exists) {
+      await db.collection('units_master').insertOne({
+        id: uuidv4(), name: eu.name, parent: eu.parent,
+        is_kasubbid: false, active: true, order: 99, created_at: new Date(), source: 'seed',
+      }).catch(() => {})
+    }
+  }
+
   const rows = await db.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
 
   const parentMap = {}
