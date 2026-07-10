@@ -759,8 +759,15 @@ async function handleRoute(request, ctx) {
       if (!isDisposisiRole(me.role)) return fail('Hanya Kasubbid/Admin/Kabid Propam/Kasubbag Yanduan', 403)
       const db = await getDb()
 
-      // Gajamada cases at KASUBBID position, not yet dispositioned
-      const r = await gajamada.listCases({ units: await getKasubbidAliases(), size: 100 }).catch(() => ({ data: [] }))
+      const isYanduan = me.role === 'kasubbag_yanduan'
+      const queueUnits = isYanduan
+        ? (await getAllPositions()).filter((p) => {
+            const up = p.toUpperCase()
+            return up.includes('YANDUAN') && !up.includes('POLRES') && !up.includes('POLRESTA') && !up.includes('POLRESTABES')
+          })
+        : await getKasubbidAliases()
+
+      const r = await gajamada.listCases({ units: queueUnits, size: 100 }).catch(() => ({ data: [] }))
       const pids = r.data.map((c) => c.prepetrator_id)
       const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
       const dispSet = new Set(disp.map((d) => d.prepetrator_id))
@@ -801,13 +808,21 @@ async function handleRoute(request, ctx) {
 // Lightweight count-only endpoint for sidebar notification badge
     if (route === '/disposisi-queue/count' && method === 'GET') {
       if (!isDisposisiRole(me.role)) return ok({ count: 0 })
-      const db = await getDb()
+      const isYanduan = me.role === 'kasubbag_yanduan'
       let count = 0
+
+      const queueUnits = isYanduan
+        ? (await getAllPositions()).filter((p) => {
+            const up = p.toUpperCase()
+            return up.includes('YANDUAN') && !up.includes('POLRES') && !up.includes('POLRESTA') && !up.includes('POLRESTABES')
+          })
+        : await getKasubbidAliases()
 
       // Gajamada undisposed
       try {
-      const r = await gajamada.listCases({ units: await getKasubbidAliases(), size: 100 }).catch(() => ({ data: [] }))
+        const r = await gajamada.listCases({ units: queueUnits, size: 100 }).catch(() => ({ data: [] }))
         const pids = r.data.map((c) => c.prepetrator_id)
+        const db = await getDb()
         const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
         const dispSet = new Set(disp.map((d) => d.prepetrator_id))
         count += r.data.filter((c) => !dispSet.has(c.prepetrator_id)).length
@@ -815,10 +830,11 @@ async function handleRoute(request, ctx) {
 
       // Local cases undisposed
       try {
-        const localCases = await db.collection('local_cases').find({ status: STATUS.SURAT_MASUK_POLDA_JABAR }).toArray()
+        const db2 = await getDb()
+        const localCases = await db2.collection('local_cases').find({ status: STATUS.SURAT_MASUK_POLDA_JABAR }).toArray()
         const localPids = localCases.map((c) => c.prepetrator_id)
         if (localPids.length) {
-          const localDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
+          const localDisp = await db2.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
           const localDispSet = new Set(localDisp.map((d) => d.prepetrator_id))
           count += localCases.filter((c) => !localDispSet.has(c.prepetrator_id)).length
         }
