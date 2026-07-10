@@ -30,7 +30,9 @@ export function simplifyUnit(position) {
   if (polrestabesMatch) return polrestabesMatch[1].toUpperCase()
 
   const stripped = position.replace(/\s*POLDA JAWA BARAT\s*/i, '').trim()
-  if (stripped) return stripped.toUpperCase()
-
-  return position.toUpperCase()
+  let cleaned = stripped || position
+  if (/yanduan/i.test(cleaned)) {
+    cleaned = cleaned.replace(/\bSUBBAG\b\s*/gi, '').trim()
+  }
+  return cleaned.toUpperCase()
 }

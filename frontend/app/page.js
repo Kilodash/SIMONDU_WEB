@@ -1082,11 +1082,6 @@ function CasesList({ user, onOpenCase }) {
               <SelectContent><SelectItem value="__all">Semua Status</SelectItem>
                 {reference.statuses.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
             </Select>
-            <Select value={category || '__all'} onValueChange={handleCategoryChange}>
-              <SelectTrigger className="w-[150px]"><SelectValue placeholder="Semua Kategori" /></SelectTrigger>
-              <SelectContent><SelectItem value="__all">Semua Kategori</SelectItem>
-                {reference.categories.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-            </Select>
             {user.role !== 'unit' && (
               <Select value={unit || '__all'} onValueChange={handleUnitChange}>
                 <SelectTrigger className="w-[220px]"><SelectValue placeholder="Semua Unit" /></SelectTrigger>
