@@ -1717,10 +1717,10 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
         </Card>
 
         {/* KOLOM KANAN: Lembar Disposisi + Over-ride */}
-        <div className="lg:col-span-5 flex flex-col gap-4 overflow-hidden" style={{ height: 'calc(100vh - 60px)' }}>
+        <div className="lg:col-span-5 flex flex-col gap-4 overflow-hidden" style={{ maxHeight: 'calc(100vh - 60px)' }}>
 
         {/* PANEL 2: Lembar Disposisi */}
-        <Card className="flex-1 min-h-0 flex flex-col overflow-hidden border-2 border-blue-300">
+         <Card className="flex flex-col overflow-hidden border-2 border-blue-300" style={{ maxHeight: '65vh' }}>
           <CardHeader className="pb-2 bg-blue-50/60 border-b shrink-0">
             <CardTitle className="text-sm flex items-center gap-2"><ArrowRightLeft className="h-4 w-4 text-blue-800" /> Lembar Disposisi</CardTitle>
           </CardHeader>
