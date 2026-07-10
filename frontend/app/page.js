@@ -1325,6 +1325,13 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
   const [confirmOpen, setConfirmOpen] = useState(false)
   // Saran mode checklist
   const [saranChecklist, setSaranChecklist] = useState({ penelaahan: false, kelengkapan: false })
+  const [saranUnit, setSaranUnit] = useState('')
+  // Over-ride direct distribution (admin/subbag yanduan)
+  const [overrideUnit, setOverrideUnit] = useState('')
+  const [overrideNote, setOverrideNote] = useState('')
+  const [overrideOpen, setOverrideOpen] = useState(false)
+  const [overrideSubmitting, setOverrideSubmitting] = useState(false)
+  const canOverride = user.role === 'kasubbag_yanduan' || user.role === 'admin' || user.role === 'super_admin'
   // Extra details
   const [atts, setAtts] = useState([])
   const [detail, setDetail] = useState(null)
@@ -1335,6 +1342,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
   const resetForm = (ref, item) => {
     setToUnit(''); setNote(''); setIsAtensi(false)
     setSaranChecklist({ penelaahan: false, kelengkapan: false })
+    setSaranUnit('')
     const ct = item?.case_type || ''
     if (ct === 'non_pengaduan' || ct === 'non_dumas') setCaseType('non_dumas')
     else setCaseType('dumas')
@@ -1426,7 +1434,11 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
           api(`/cases/${encodeURIComponent(pid)}/attachments`).catch(() => ({ data: [] })),
           api(`/cases/${encodeURIComponent(pid)}/timeline-all`).catch(() => ({ data: [] })),
         ])
-        if (!cancelled) { setDetail(d.data); setAtts(a.data); setTimeline(t.data || []) }
+        if (!cancelled) {
+          setDetail(d.data); setAtts(a.data); setTimeline(t.data || [])
+          const preUnit = d.data?._saran_yanduan?.to_unit
+          if (preUnit && !isSaranMode) setToUnit(preUnit)
+        }
       } catch (_) { /* ignore */ }
     })()
     if (!editMode) resetForm(null, current)
@@ -1473,7 +1485,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
         const checklist = []
         if (saranChecklist.penelaahan) checklist.push('Sudah dilakukan penelaahan')
         if (saranChecklist.kelengkapan) checklist.push('Sudah diperiksa kelengkapan')
-        await api('/saran-yanduan', { method: 'POST', body: JSON.stringify({ pid: current.prepetrator_id, checklist, catatan: note }) })
+        await api('/saran-yanduan', { method: 'POST', body: JSON.stringify({ pid: current.prepetrator_id, checklist, catatan: note, to_unit: saranUnit }) })
         toast.success('Saran/Masukan berhasil disimpan')
         const newQueue = queue.filter((_, i) => i !== idx)
         setQueue(newQueue)
@@ -1485,6 +1497,26 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
       return
     }
     setConfirmOpen(true)
+  }
+  const submitOverride = async () => {
+    if (!current || !overrideUnit) return toast.error('Pilih unit tujuan over-ride')
+    setOverrideSubmitting(true)
+    try {
+      await api('/disposisi-bulk', { method: 'POST', body: JSON.stringify({
+        items: [current.prepetrator_id], to_unit: overrideUnit, note: overrideNote, is_atensi: false, case_type: caseType,
+        tasks: [],
+      }) })
+      toast.success(`Disposisi over-ride ke ${shortUnit(overrideUnit)} berhasil`)
+      const newQueue = queue.filter((_, i) => i !== idx)
+      setQueue(newQueue)
+      setIdx(Math.min(idx, newQueue.length - 1))
+      setOverrideUnit('')
+      setOverrideNote('')
+      setOverrideOpen(false)
+      resetForm(null, current)
+      onQueueChange?.()
+    } catch (e) { toast.error(e.message) }
+    finally { setOverrideSubmitting(false) }
   }
   const confirmedSubmit = async () => {
     setConfirmOpen(false)
@@ -1699,6 +1731,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
             )}
 
             {isSaranMode ? (
+            <>
             <div>
               <Label className="text-xs">Ceklis Penelaahan</Label>
               <div className="space-y-2 border rounded-md p-3 bg-blue-50/50 mt-1">
@@ -1712,6 +1745,17 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
                 </div>
               </div>
             </div>
+            <div>
+              <Label className="text-xs">Satker/Satwil Tujuan (opsional)</Label>
+              <Select value={saranUnit} onValueChange={setSaranUnit}>
+                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih satker/satwil" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">-- Kosongkan --</SelectItem>
+                  {(reference.all_active_units || []).map((u) => <SelectItem key={typeof u === 'string' ? u : u.id} value={typeof u === 'string' ? u : u.name}>{typeof u === 'string' ? shortUnit(u) : u.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            </>
             ) : (
             <div>
               <Label className="text-xs">Unit Tujuan</Label>
@@ -1757,6 +1801,36 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
             </div>
             )}
 
+            {isSaranMode && canOverride && (
+            <div className="border-t pt-3">
+              <button type="button" onClick={() => setOverrideOpen(!overrideOpen)} className="flex items-center gap-1 text-xs font-medium text-amber-700 hover:text-amber-900">
+                {overrideOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                Distribusi Langsung (Over-ride)
+              </button>
+              {overrideOpen && (
+                <div className="space-y-3 mt-2 p-3 border border-amber-300 rounded-md bg-amber-50/30">
+                  <div>
+                    <Label className="text-xs">Unit Tujuan</Label>
+                    <Select value={overrideUnit} onValueChange={setOverrideUnit}>
+                      <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih unit satker/satwil" /></SelectTrigger>
+                      <SelectContent>
+                        {(reference.all_active_units || []).map((u) => <SelectItem key={typeof u === 'string' ? u : u.id} value={typeof u === 'string' ? u : u.name}>{typeof u === 'string' ? shortUnit(u) : u.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Catatan Over-ride</Label>
+                    <Textarea value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)} placeholder="Alasan distribusi langsung..." className="min-h-[50px] text-xs" />
+                  </div>
+                  <Button onClick={submitOverride} disabled={overrideSubmitting || !overrideUnit} className="w-full bg-amber-700 hover:bg-amber-800 text-xs" size="sm">
+                    {overrideSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-2" />}
+                    Distribusi Langsung
+                  </Button>
+                </div>
+              )}
+            </div>
+            )}
+
             <div className="border-t pt-3">
               {editMode ? (
                 <div className="flex gap-2">
@@ -1767,7 +1841,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
                   </Button>
                 </div>
               ) : (
-                <Button onClick={submitAndNext} disabled={submitting || (!isSaranMode && !toUnit)} className="w-full bg-blue-800 hover:bg-blue-900" data-testid="disposisi-submit">
+                <Button onClick={submitAndNext} disabled={submitting || (!isSaranMode && !toUnit) || (isSaranMode && !(saranChecklist.penelaahan && saranChecklist.kelengkapan))} className="w-full bg-blue-800 hover:bg-blue-900" data-testid="disposisi-submit">
                   {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : isSaranMode ? <FileText className="h-4 w-4 mr-2" /> : <ArrowRightLeft className="h-4 w-4 mr-2" />}
                   {isSaranMode ? 'Simpan Saran & Lanjut' : 'Disposisi & Lanjut'}
                 </Button>
@@ -2084,7 +2158,8 @@ function MasterUnitPage({ user }) {
             <div><Label>Parent Unit (kosongkan utk Satker Induk)</Label><Input value={form.parent} onChange={(e) => setForm({ ...form, parent: e.target.value })} placeholder="Nama unit induk..." /></div>
             <div><Label>Urutan Tampilan</Label><Input type="number" value={form.order} onChange={(e) => setForm({ ...form, order: parseInt(e.target.value || '99', 10) })} /></div>
             {editing && (
-              <div className="border-t pt-3">
+
+            <div className="border-t pt-3">
                 <Label className="text-sm font-semibold mb-2 block">Mapping Nama Gajamada → Unit Ini</Label>
                 <p className="text-xs text-slate-500 mb-2">Nama unit di Gajamada yang dikenali sebagai unit ini saat sinkronisasi balik. Satu per baris.</p>
                 <Textarea className="text-xs font-mono" rows={3} value={gjAliases} onChange={(e) => setGjAliases(e.target.value)}

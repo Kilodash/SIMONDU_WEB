@@ -36,7 +36,7 @@ async function enrichCase(caseObj) {
   if (!caseObj) return null
   const db = await getDb()
   const pid = caseObj.prepetrator_id
-  const [dispositions, timelines, statusHistory, syncLogs, completed, checklistRows, outcome, localCase] = await Promise.all([
+  const [dispositions, timelines, statusHistory, syncLogs, completed, checklistRows, outcome, localCase, saranYanduan] = await Promise.all([
     db.collection('dispositions').find({ prepetrator_id: pid }).sort({ created_at: -1 }).toArray(),
     db.collection('timelines').find({ prepetrator_id: pid }).sort({ created_at: -1 }).toArray(),
     db.collection('status_history').find({ prepetrator_id: pid }).sort({ created_at: -1 }).toArray(),
@@ -45,6 +45,7 @@ async function enrichCase(caseObj) {
     db.collection('followup_checklist').find({ prepetrator_id: pid }).toArray(),
     db.collection('case_outcomes').findOne({ prepetrator_id: pid }),
     db.collection('local_cases').findOne({ prepetrator_id: pid }),
+    db.collection('saran_yanduan').findOne({ prepetrator_id: pid }, { sort: { created_at: -1 } }),
   ])
   const strip = (arr) => arr.map(({ _id, ...rest }) => rest)
   const latestDisp = dispositions[0]
@@ -65,6 +66,7 @@ async function enrichCase(caseObj) {
     resolusi,
     bucket: getBucket(status),
     is_atensi: !!latestDisp?.is_atensi,
+    _saran_yanduan: saranYanduan ? { ...saranYanduan, _id: undefined } : null,
     _sync_status,
     _internal: {
       dispositions: strip(dispositions),
@@ -974,13 +976,14 @@ async function handleRoute(request, ctx) {
     // ---------- SARAN YANDUAN ----------
     if (route === '/saran-yanduan' && method === 'POST') {
       if (me.role !== 'kasubbag_yanduan' && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Kasubbag Yanduan', 403)
-      const { pid, checklist, catatan } = await request.json()
+      const { pid, checklist, catatan, to_unit } = await request.json()
       if (!pid) return fail('pid wajib')
       const db = await getDb()
       const doc = {
         id: uuidv4(), prepetrator_id: pid,
         checklist: checklist || [],
         catatan: catatan || '',
+        to_unit: to_unit || null,
         by: { username: me.username, name: me.name, role: me.role },
         created_at: new Date(),
       }
@@ -994,7 +997,7 @@ async function handleRoute(request, ctx) {
         created_at: new Date(),
       })
       scheduleSync(pid, me, 'saran_yanduan')
-      await logAudit(me, 'saran_yanduan', pid, { checklist, catatan })
+      await logAudit(me, 'saran_yanduan', pid, { checklist, catatan, to_unit: to_unit || null })
       return ok({ data: doc })
     }
 
