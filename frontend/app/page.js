@@ -27,6 +27,7 @@ import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as RTooltip, 
 import { STATUS, RESOLUSI, BUCKET, getBucket } from '../lib/status.js'
 import { FILTER_UNITS } from '../lib/units.js'
 import { getUnitType } from '../lib/checklist.js'
+import { simplifyStatus, simplifyUnit } from '../lib/mapping.js'
 
 const LIMPAS_PATHS = {
   PAMINAL: [
@@ -72,7 +73,7 @@ const fmtDateShort = (d) => {
   if (!n) return '-'
   return new Date(n).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })
 }
-const shortUnit = (u) => (u || '').replace(' SUBBID PAMINAL POLDA JAWA BARAT', ' PAMINAL').replace(' POLDA JAWA BARAT', '')
+const shortUnit = simplifyUnit
 
 const statusColor = (s) => {
   if (!s) return 'bg-slate-100 text-slate-700 border-slate-300'
@@ -82,6 +83,7 @@ const statusColor = (s) => {
   if (/distribusi/i.test(s)) return 'bg-blue-100 text-blue-800 border-blue-300'
   if (/diterima/i.test(s)) return 'bg-amber-100 text-amber-800 border-amber-300'
   if (/perdamaian|restorative|pencabutan/i.test(s)) return 'bg-emerald-100 text-emerald-800 border-emerald-300'
+  if (/sidang/i.test(s)) return 'bg-indigo-100 text-indigo-800 border-indigo-300'
   return 'bg-slate-100 text-slate-700 border-slate-300'
 }
 const sourceColor = (s) => {
@@ -1125,7 +1127,8 @@ function CasesList({ user, onOpenCase }) {
                       <TableHead className="text-sm">Nomor Surat</TableHead>
                       <TableHead className="w-[110px] text-sm">Tgl Surat</TableHead>
                       <TableHead className="text-sm">Pengirim</TableHead>
-                      <TableHead className="text-sm">Sumber</TableHead>
+                      <TableHead className="text-sm">Status</TableHead>
+                      <TableHead className="w-[60px] text-sm">Aksi</TableHead>
                     </TableRow>
                   ) : (
                     <TableRow>
@@ -1137,14 +1140,14 @@ function CasesList({ user, onOpenCase }) {
                       <TableHead className="text-sm">Kategori</TableHead>
                       <TableHead className="min-w-[320px] text-sm">Rangkuman</TableHead>
                       <TableHead className="w-[110px] text-sm">Last Updated</TableHead>
-                      <TableHead className="w-[160px] text-sm">Status</TableHead>
+                      <TableHead className="w-[280px] text-sm">Status & Posisi</TableHead>
                     </TableRow>
                   )}
                 </TableHeader>
                 <TableBody>
                   {sourceFilter ? (
                     cases.length === 0 ? (
-                      <TableRow><TableCell colSpan={6} className="text-center py-12 text-slate-500">
+                      <TableRow><TableCell colSpan={7} className="text-center py-12 text-slate-500">
                         {sourceFilter === 'manual' ? 'Belum ada data. Klik "Tambah" untuk input surat manual.' :
                          sourceFilter === 'laporan_informasi' ? 'Belum ada laporan informasi. Klik "Tambah" untuk input.' :
                          sourceFilter === 'non_dumas' ? 'Belum ada surat non-dumas.' : 'Tidak ada data.'}
@@ -1160,7 +1163,9 @@ function CasesList({ user, onOpenCase }) {
                           <TableCell className="pt-3 text-sm font-mono">{c.nomor_surat || '-'}</TableCell>
                           <TableCell className="pt-3 text-sm">{c.tgl_surat ? fmtDateShort(c.tgl_surat) : fmtDateShort(c.created_date)}</TableCell>
                           <TableCell className="pt-3 text-sm">{c.pengirim || '-'}</TableCell>
-                          <TableCell className="pt-3"><Badge className={statusColor(c.status_label)}>{c.status_label || c.status || '-'}</Badge></TableCell>
+                          <TableCell className="pt-3">
+                            <Badge className={`${statusColor(c.status_label || c.status)} text-[11px]`}>{c.status_label || c.status || '-'}</Badge>
+                          </TableCell>
                           <TableCell className="pt-3"><Button size="sm" variant="ghost" className="h-7 text-xs" onClick={(e) => { e.stopPropagation(); openEditLocal(c) }}>Edit</Button></TableCell>
                         </TableRow>
                       ))
@@ -1196,10 +1201,21 @@ function CasesList({ user, onOpenCase }) {
                           </TableCell>
                           <TableCell className="text-xs pt-3">{fmtDate(c.updated_at)}</TableCell>
                           <TableCell className="pt-3">
-                            <div className="flex flex-col gap-1 items-start">
-                              <Badge className={`${statusColor(c.status_label)} text-xs`}>{c.status_label || c.status || '-'}</Badge>
-                              <Badge variant="outline" className="text-xs font-normal">{shortUnit(c.disposisi_case_position)}</Badge>
-                              {c.is_atensi && <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-xs"><Star className="h-2.5 w-2.5 mr-0.5" />ATENSI</Badge>}
+                            <div className="flex flex-col gap-1 items-start text-xs">
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <Badge className={`${statusColor(c.status_label)} text-[11px]`}>{c.status_label || '-'}</Badge>
+                                <span className="text-slate-400">→</span>
+                                <Badge className={`${statusColor(c._simplified_status)} text-[11px]`}>{c._simplified_status || '-'}</Badge>
+                              </div>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                <Badge variant="outline" className="text-[10px] font-normal text-slate-500">{c.disposisi_case_position || '-'}</Badge>
+                                <span className="text-slate-400 text-[10px]">→</span>
+                                <Badge variant="outline" className="text-[10px] font-medium">{c._simplified_unit || '-'}</Badge>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <SyncBadge status={c._sync_status} />
+                                {c.is_atensi && <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px]"><Star className="h-2.5 w-2.5 mr-0.5" />ATENSI</Badge>}
+                              </div>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -1811,34 +1827,53 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
 }
 
 // ---------------- Master Unit CRUD (Tree View) ----------------
-function UnitGroup({ parent, children, level, isKasubbid, onToggle, onEdit, onRemove, onAddChild }) {
+function UnitGroup({ parent, children, level, isKasubbid, onToggle, onEdit, onRemove, onAddChild, dragId, onDragStart, onDragDrop, onDragEnd, gjMap }) {
   const [open, setOpen] = useState(level === 0)
   const indent = level * 24
+  const isDragging = dragId === parent.id
+  const aliases = gjMap[parent.name] || []
+  const MAX_SHOW = 5
 
   return (
     <div>
-      <div
-        role="button"
-        tabIndex={0}
+      <div role="button" tabIndex={0}
+        draggable={isKasubbid}
+        onDragStart={(e) => { e.dataTransfer.setData('text/plain', parent.id); e.dataTransfer.effectAllowed = 'move'; onDragStart(parent.id) }}
+        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+        onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); onDragDrop(parent.id, id) }}
+        onDragEnd={() => onDragEnd()}
         onClick={() => setOpen(!open)}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(!open) } }}
-        className="w-full flex items-center gap-3 px-4 py-3 bg-blue-50 hover:bg-blue-100 transition-colors text-left cursor-pointer"
+        className={`w-full flex items-center gap-3 px-4 py-3 bg-blue-50 hover:bg-blue-100 transition-colors text-left cursor-pointer ${isDragging ? 'opacity-40' : ''}`}
       >
+        {isKasubbid && <GripVertical className="h-4 w-4 text-blue-400 shrink-0 cursor-grab active:cursor-grabbing" />}
         {children.length > 0 ? (
           open ? <ChevronDown className="h-4 w-4 text-blue-600 shrink-0" /> : <ChevronRight className="h-4 w-4 text-blue-600 shrink-0" />
-        ) : (
-          <div className="w-4 shrink-0" />
-        )}
+        ) : <div className="w-4 shrink-0" />}
         <Building2 className="h-4 w-4 text-blue-800 shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-blue-900 truncate">{parent.name}</div>
-          {!parent.active && <Badge className="text-[10px] bg-red-100 text-red-700 ml-1">Nonaktif</Badge>}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold text-blue-900">{parent.name}</span>
+            {!parent.active && <Badge className="text-[10px] bg-red-100 text-red-700">Nonaktif</Badge>}
+          </div>
+          {aliases.length > 0 && (
+            <div className="mt-1 space-y-0.5">
+              {aliases.slice(0, MAX_SHOW).map((a, i) => (
+                <div key={i} className="flex items-center gap-1">
+                  <span className="text-[10px] text-slate-400 shrink-0">↳</span>
+                  <span className="text-[10px] font-mono text-green-700 bg-green-50 px-1 rounded truncate" title={a}>{a}</span>
+                </div>
+              ))}
+              {aliases.length > MAX_SHOW && <div className="text-[10px] text-slate-400 ml-3">+{aliases.length - MAX_SHOW} lainnya</div>}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <Badge className={`text-[10px] ${level === 0 ? 'bg-blue-800 text-white' : level === 1 ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-700'}`}>
             {level === 0 ? 'SATKER INDUK' : level === 1 ? 'SUB SATKER' : 'UNIT PELAKSANA'}
           </Badge>
           <Badge variant="outline" className="text-[10px]">{children.length} anak</Badge>
+          <span className="text-[10px] text-blue-400 font-mono">#{parent.order}</span>
         </div>
         {isKasubbid && (
           <div className="flex gap-1 shrink-0 ml-2" onClick={(e) => e.stopPropagation()}>
@@ -1847,26 +1882,16 @@ function UnitGroup({ parent, children, level, isKasubbid, onToggle, onEdit, onRe
             </Button>
             <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onEdit(parent)}>Edit</Button>
             <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onAddChild(parent)}>+Anak</Button>
-            {level > 0 && (
-              <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={() => onRemove(parent)}>Hapus</Button>
-            )}
+            {level > 0 && <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={() => onRemove(parent)}>Hapus</Button>}
           </div>
         )}
       </div>
       {open && children.length > 0 && (
         <div style={{ marginLeft: indent + 16 }}>
           {children.map(([child, grandChildren]) => (
-            <UnitGroup
-              key={child.id}
-              parent={child}
-              children={grandChildren}
-              level={level + 1}
-              isKasubbid={isKasubbid}
-              onToggle={onToggle}
-              onEdit={onEdit}
-              onRemove={onRemove}
-              onAddChild={onAddChild}
-            />
+            <UnitGroup key={child.id} parent={child} children={grandChildren} level={level + 1}
+              isKasubbid={isKasubbid} onToggle={onToggle} onEdit={onEdit} onRemove={onRemove} onAddChild={onAddChild}
+              dragId={dragId} onDragStart={onDragStart} onDragDrop={onDragDrop} onDragEnd={onDragEnd} gjMap={gjMap} />
           ))}
         </div>
       )}
@@ -1880,13 +1905,28 @@ function MasterUnitPage({ user }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({ name: '', parent: '', order: 99 })
-  const [syncing, setSyncing] = useState(false)
+  const [allMappings, setAllMappings] = useState([])
+  const [unmappedGj, setUnmappedGj] = useState([])
+  const [gjLoaded, setGjLoaded] = useState(false)
+  const [gjAliases, setGjAliases] = useState('')
+  const [gjSearch, setGjSearch] = useState('')
+  const [dragId, setDragId] = useState(null)
   const isKasubbid = user.role === 'kasubbid' || user.role === 'admin' || user.role === 'kabid_propam' || user.role === 'kasubbag_yanduan' || user.role === 'super_admin'
 
   const load = async () => {
     setLoading(true)
-    try { const r = await api('/units-master'); setUnits(r.data) }
-    catch (e) { toast.error(e.message) }
+    try {
+      const [r, mr, sr] = await Promise.all([
+        api('/units-master'),
+        api('/unit-mapping'),
+        api('/unit-mapping/sync', { method: 'POST' }),
+      ])
+      setUnits((r.data || []).filter((u) => { const up = u.name.toUpperCase(); return !up.includes('MABES') && !up.includes('POLDA LAIN') }))
+      setAllMappings(mr.data || [])
+      const jabar = (sr.unmapped || []).filter((n) => { const up = n.toUpperCase(); return up.includes('JAWA BARAT') || up.includes('JABAR') })
+      setUnmappedGj(jabar)
+      setGjLoaded(true)
+    } catch (e) { toast.error(e.message) }
     finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
@@ -1894,11 +1934,16 @@ function MasterUnitPage({ user }) {
   const openCreate = (parentUnit) => {
     setEditing(null)
     setForm({ name: '', parent: parentUnit ? parentUnit.name : '', order: 99 })
+    setGjAliases('')
+    setGjSearch('')
     setDialogOpen(true)
   }
   const openEdit = (u) => {
     setEditing(u)
     setForm({ name: u.name, parent: u.parent || '', order: u.order || 99, active: u.active })
+    const mine = allMappings.filter((m) => m.internal_unit.toUpperCase() === u.name.toUpperCase())
+    setGjAliases(mine.map((m) => m.external_name).join('\n'))
+    setGjSearch('')
     setDialogOpen(true)
   }
   const save = async () => {
@@ -1906,28 +1951,93 @@ function MasterUnitPage({ user }) {
     try {
       if (editing) {
         await api(`/units-master/${encodeURIComponent(editing.id)}`, { method: 'PUT', body: JSON.stringify(form) })
-        toast.success('Unit diperbarui')
       } else {
         await api('/units-master', { method: 'POST', body: JSON.stringify(form) })
-        toast.success('Unit ditambahkan')
       }
-      setDialogOpen(false); await load()
+      await syncMappings(editing ? editing.name : form.name)
+      toast.success(editing ? 'Unit diperbarui' : 'Unit ditambahkan')
+      setDialogOpen(false)
+      const r = await api('/units-master')
+      setUnits((r.data || []).filter((u) => { const up = u.name.toUpperCase(); return !up.includes('MABES') && !up.includes('POLDA LAIN') }))
+      const mr = await api('/unit-mapping')
+      setAllMappings(mr.data || [])
     } catch (e) { toast.error(e.message) }
+  }
+  const syncMappings = async (unitName) => {
+    const lines = gjAliases.split('\n').map((s) => s.trim()).filter(Boolean)
+    const fresh = await api('/unit-mapping')
+    const oldIds = (fresh.data || []).filter((m) => m.internal_unit.toUpperCase() === unitName.toUpperCase()).map((m) => m.id)
+    for (const id of oldIds) { try { await api(`/unit-mapping/${encodeURIComponent(id)}`, { method: 'DELETE' }) } catch (_) {} }
+    for (const ext of lines) {
+      try { await api('/unit-mapping', { method: 'POST', body: JSON.stringify({ external_name: ext, internal_unit: unitName }) }) }
+      catch (e) { if (!e.message?.includes('sudah ada')) toast.error(`"${ext}": ${e.message}`) }
+    }
   }
   const remove = async (u) => {
     if (!confirm(`Hapus unit "${u.name}"?`)) return
     try { await api(`/units-master/${encodeURIComponent(u.id)}`, { method: 'DELETE' }); toast.success('Unit dihapus'); await load() }
     catch (e) { toast.error(e.message) }
   }
-  const syncGajamada = async () => {
-    setSyncing(true)
-    try { const r = await api('/units-master/sync-gajamada', { method: 'POST' }); toast.success(`Sync dari Gajamada: +${r.added} baru, ${r.existing} sudah ada (total ${r.total})`); await load() }
-    catch (e) { toast.error(e.message) }
-    finally { setSyncing(false) }
-  }
   const toggleActive = async (u) => {
     try { await api(`/units-master/${encodeURIComponent(u.id)}`, { method: 'PATCH', body: JSON.stringify({ active: !u.active }) }); await load() }
     catch (e) { toast.error(e.message) }
+  }
+
+  const addChip = (name) => {
+    const lines = gjAliases.split('\n').map((s) => s.trim()).filter(Boolean)
+    if (lines.includes(name)) return
+    setGjAliases(lines.concat(name).join('\n'))
+  }
+  const handleDragStart = (id) => setDragId(id)
+  const handleDragEnd = () => setDragId(null)
+  const handleDrop = async (targetId, draggedId) => {
+    if (!draggedId || draggedId === targetId) { setDragId(null); return }
+    const siblings = units.filter((u) => {
+      const draggedUnit = units.find((x) => x.id === draggedId)
+      const targetUnit = units.find((x) => x.id === targetId)
+      if (!draggedUnit || !targetUnit) return false
+      return (draggedUnit.parent || '__root__') === (targetUnit.parent || '__root__')
+    }).sort((a, b) => (a.order || 99) - (b.order || 99))
+    const dragged = units.find((u) => u.id === draggedId)
+    if (!dragged || siblings.length < 2) { setDragId(null); return }
+    const idxs = siblings.map((u) => u.id)
+    const from = idxs.indexOf(draggedId)
+    const to = idxs.indexOf(targetId)
+    if (from === -1 || to === -1) { setDragId(null); return }
+    const reordered = [...siblings]
+    reordered.splice(from, 1)
+    reordered.splice(to, 0, dragged)
+    const updates = reordered.map((u, i) => {
+      const newOrder = i * 10 + 10
+      if ((u.order || 99) !== newOrder) return api(`/units-master/${encodeURIComponent(u.id)}`, { method: 'PATCH', body: JSON.stringify({ order: newOrder }) })
+      return null
+    }).filter(Boolean)
+    try { await Promise.all(updates); const r = await api('/units-master'); setUnits((r.data || []).filter((u) => { const up = u.name.toUpperCase(); return !up.includes('MABES') && !up.includes('POLDA LAIN') })) } catch (_) {}
+    setDragId(null)
+  }
+
+  const saveAndNext = async () => {
+    if (!form.name) return toast.error('Nama unit wajib')
+    try {
+      if (editing) await api(`/units-master/${encodeURIComponent(editing.id)}`, { method: 'PUT', body: JSON.stringify(form) })
+      await syncMappings(editing.name)
+      toast.success('Unit disimpan')
+      const [r, mr] = await Promise.all([api('/units-master'), api('/unit-mapping')])
+      setUnits((r.data || []).filter((u) => { const up = u.name.toUpperCase(); return !up.includes('MABES') && !up.includes('POLDA LAIN') }))
+      setAllMappings(mr.data || [])
+      const flat = []
+      const walk = (list) => { for (const u of list) { flat.push(u); if (u.children) walk(u.children) } }
+      for (const [root, kids] of tree) { flat.push(root); walk(kids.map((c) => c[0])) }
+      const idx = flat.findIndex((u) => u.name.toUpperCase() === editing.name.toUpperCase())
+      const next = idx >= 0 ? flat[idx + 1] : null
+      if (next) {
+        setEditing(next)
+        setForm({ name: next.name, parent: next.parent || '', order: next.order || 99, active: next.active })
+        const mine = (mr.data || []).filter((m) => m.internal_unit.toUpperCase() === next.name.toUpperCase())
+        setGjAliases(mine.map((m) => m.external_name).join('\n'))
+        setGjSearch('')
+      } else { setDialogOpen(false); toast.info('Tidak ada unit berikutnya') }
+    } catch (e) { toast.error(e.message) }
   }
 
   const tree = useMemo(() => {
@@ -1947,63 +2057,69 @@ function MasterUnitPage({ user }) {
     return sorted(roots).map((r) => [r, buildChildren(r.name)])
   }, [units])
 
+  const gjMap = useMemo(() => {
+    const m = {}
+    for (const r of allMappings) {
+      if (!m[r.internal_unit]) m[r.internal_unit] = []
+      m[r.internal_unit].push(r.external_name)
+    }
+    return m
+  }, [allMappings])
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-900">Master Unit</h2>
+        <div><h2 className="text-2xl font-bold text-slate-900">Master Unit</h2>
           <p className="text-xs text-slate-500 mt-0.5">Hierarki: Satker Induk — Sub Satker — Unit Pelaksana</p>
         </div>
         {isKasubbid && (
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={syncGajamada} disabled={syncing}>
-              {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />} Sync dari Gajamada
-            </Button>
-            <Button onClick={() => openCreate(null)}><Building2 className="h-4 w-4 mr-2" /> Tambah Satker Induk</Button>
-          </div>
+          <Button onClick={() => openCreate(null)}><Building2 className="h-4 w-4 mr-2" /> Tambah Satker Induk</Button>
         )}
       </div>
 
       {loading ? <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div> :
-        tree.length === 0 ? <Card><CardContent className="py-16 text-center"><p className="text-slate-500">Belum ada unit. Klik "Tambah Satker Induk" atau "Sync dari Gajamada".</p></CardContent></Card> :
+        tree.length === 0 ? <Card><CardContent className="py-16 text-center"><p className="text-slate-500">Belum ada unit.</p></CardContent></Card> :
         <Card className="divide-y">
           {tree.map(([root, children]) => (
-            <UnitGroup
-              key={root.id}
-              parent={root}
-              children={children}
-              level={0}
-              isKasubbid={isKasubbid}
-              onToggle={toggleActive}
-              onEdit={openEdit}
-              onRemove={remove}
+            <UnitGroup key={root.id} parent={root} children={children} level={0}
+              isKasubbid={isKasubbid} onToggle={toggleActive} onEdit={openEdit} onRemove={remove}
               onAddChild={(p) => openCreate(p)}
-            />
+              dragId={dragId} onDragStart={handleDragStart} onDragDrop={handleDrop} onDragEnd={handleDragEnd}
+              gjMap={gjMap} />
           ))}
-        </Card>
-      }
+        </Card>}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editing ? 'Edit Unit' : 'Tambah Unit'}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label>Nama Unit</Label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="mis. KASUBBID PAMINAL POLDA JAWA BARAT" />
-            </div>
-            <div>
-              <Label>Parent Unit (kosongkan untuk Satker Induk)</Label>
-              <Input value={form.parent} onChange={(e) => setForm({ ...form, parent: e.target.value })} placeholder="Nama unit induk..." />
-            </div>
-            <div>
-              <Label>Urutan Tampilan</Label>
-              <Input type="number" value={form.order} onChange={(e) => setForm({ ...form, order: parseInt(e.target.value || '99', 10) })} />
-            </div>
+        <DialogContent className="max-w-xl">
+          <DialogHeader><DialogTitle>{editing ? 'Edit Unit' : 'Tambah Unit'}</DialogTitle></DialogHeader>
+          <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
+            <div><Label>Nama Unit</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="mis. POLRES BOGOR" /></div>
+            <div><Label>Parent Unit (kosongkan utk Satker Induk)</Label><Input value={form.parent} onChange={(e) => setForm({ ...form, parent: e.target.value })} placeholder="Nama unit induk..." /></div>
+            <div><Label>Urutan Tampilan</Label><Input type="number" value={form.order} onChange={(e) => setForm({ ...form, order: parseInt(e.target.value || '99', 10) })} /></div>
+            {editing && (
+              <div className="border-t pt-3">
+                <Label className="text-sm font-semibold mb-2 block">Mapping Nama Gajamada → Unit Ini</Label>
+                <p className="text-xs text-slate-500 mb-2">Nama unit di Gajamada yang dikenali sebagai unit ini saat sinkronisasi balik. Satu per baris.</p>
+                <Textarea className="text-xs font-mono" rows={3} value={gjAliases} onChange={(e) => setGjAliases(e.target.value)}
+                  placeholder="KAUR YANDUAN POLRES BOGOR POLDA JAWA BARAT&#10;KANIT PAMINAL POLRES BOGOR POLDA JAWA BARAT" />
+                <div className="flex items-center gap-1 mt-2 mb-1">
+                  <Input className="h-7 text-xs flex-1" placeholder="Filter suggestion..." value={gjSearch} onChange={(e) => setGjSearch(e.target.value)} />
+                  {gjSearch && <Button size="sm" variant="ghost" className="h-7 text-xs shrink-0" onClick={() => setGjSearch('')}>Reset</Button>}
+                </div>
+                <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                  {unmappedGj.filter((n) => !gjSearch || n.toUpperCase().includes(gjSearch.toUpperCase())).slice(0, 30).map((n) => (
+                    <button key={n} type="button" className="text-[10px] bg-slate-100 hover:bg-blue-100 hover:text-blue-800 px-1.5 py-0.5 rounded cursor-pointer border border-slate-200"
+                      title={n} onClick={() => addChip(n)}>{n.length > 50 ? n.slice(0, 48) + '…' : n}</button>
+                  ))}
+                  {unmappedGj.length === 0 && gjLoaded && <span className="text-[10px] text-slate-400">Semua unit Gajamada sudah dipetakan</span>}
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">{unmappedGj.length} unit Gajamada Jabar tersedia, klik untuk tambah</p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDialogOpen(false)}>Batal</Button>
+            {editing && <Button variant="outline" onClick={saveAndNext} className="mr-auto">Simpan &amp; Next</Button>}
             <Button onClick={save}>Simpan</Button>
           </DialogFooter>
         </DialogContent>
@@ -2163,103 +2279,195 @@ const PassInput = memo(({ value, onChange, placeholder }) => {
 })
 PassInput.displayName = 'PassInput'
 
-function SettingsPage({ connStatus }) {
-  const [saved, setSaved] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState({})
-  const [testing, setTesting] = useState({})
-  const [showPass, setShowPass] = useState({})
-
-  // Gajamada fields
-  const [gjEmail, setGjEmail] = useState('')
-  const [gjPass, setGjPass] = useState('')
-
-  const toggleShow = (k) => setShowPass((p) => ({ ...p, [k]: !p[k] }))
-  const PassInput = ({ value, onChange, placeholder, field }) => (
-    <div className="relative">
-      <Input type={showPass[field] ? 'text' : 'password'} value={value} onChange={onChange} placeholder={placeholder} className="h-9 text-sm pr-8" />
-      <button type="button" onClick={() => toggleShow(field)} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
-        {showPass[field] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-      </button>
-    </div>
-  )
-
-  useEffect(() => {
-    api('/settings').then((r) => {
-      setSaved(r)
-      if (r.gajamada?.email_set) setGjEmail(r.gajamada.email || '')
-    }).catch(() => {}).finally(() => setLoading(false))
-  }, [])
-
-  if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin text-blue-800" /></div>
+function SettingsPage({ connStatus, user }) {
+  const [tab, setTab] = useState('akun')
 
   const Dot = ({ ok }) => (
     <span className={`inline-block h-2.5 w-2.5 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'} ${ok ? 'shadow-[0_0_6px_rgba(74,222,128,0.6)]' : 'shadow-[0_0_6px_rgba(248,113,113,0.6)]'}`} />
   )
 
-  const saveService = async (service) => {
-    setSaving((p) => ({ ...p, [service]: true }))
-    const body = {}
-    if (service === 'gajamada') { body.gajamada_email = gjEmail; body.gajamada_password = gjPass }
-    try {
-      await api('/user/credentials', { method: 'POST', body: JSON.stringify(body) })
-      toast.success('Kredensial Gajamada disimpan')
-    } catch (e) {
-      toast.error('Gagal menyimpan: ' + (e.message || 'error'))
-    } finally {
-      setSaving((p) => ({ ...p, [service]: false }))
-    }
-  }
+  return (
+    <div className="space-y-4">
+      <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><Settings className="h-6 w-6" /> Pengaturan</h2>
 
-  const testLogin = async (service) => {
-    setTesting((p) => ({ ...p, [service]: true }))
-    const body = { email: gjEmail, password: gjPass }
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="akun" className="text-sm">Akun</TabsTrigger>
+          <TabsTrigger value="koneksi" className="text-sm">Koneksi</TabsTrigger>
+        </TabsList>
+
+        <div className="mt-4">
+          {tab === 'akun' && <UserManagementSection user={user} />}
+          {tab === 'koneksi' && (
+            <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Dot ok={connStatus.gajamada} />
+                <span>Gajamada (eBdesk Fusion)</span>
+                <Badge variant="outline" className={`text-[10px] ml-auto ${connStatus.gajamada ? 'text-green-700 border-green-300' : 'text-red-700 border-red-300'}`}>
+                  {connStatus.gajamada ? 'Terhubung' : 'Tidak terhubung'}
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-slate-500">
+                Koneksi Gajamada menggunakan akun shared yang dikonfigurasi via <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">GAJAMADA_USERNAME</code> / <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">GAJAMADA_PASSWORD</code> di environment variable server.
+              </p>
+            </CardContent>
+          </Card>
+          )}
+        </div>
+      </Tabs>
+    </div>
+  )
+}
+
+const ROLES = [
+  { value: 'kasubbid_paminal', label: 'Kasubbid Paminal' },
+  { value: 'kasubbid_provos', label: 'Kasubbid Provos' },
+  { value: 'kasubbid_wabprof', label: 'Kasubbid Wabprof' },
+  { value: 'kabid_propam', label: 'Kabid Propam' },
+  { value: 'kasubbag_yanduan', label: 'Kasubbag Yanduan' },
+  { value: 'kasubbag_rehabpers', label: 'Kasubbag Rehabpers' },
+  { value: 'admin', label: 'Admin/Operator' },
+  { value: 'super_admin', label: 'Super Admin' },
+  { value: 'unit', label: 'Unit' },
+]
+
+function UserManagementSection({ user }) {
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [form, setForm] = useState({ username: '', password: '', name: '', role: 'unit', unit: '', active: true })
+  const [showPass, setShowPass] = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    try { const r = await api('/users'); setRows(r.data || []) }
+    catch (e) { toast.error(e.message) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [])
+
+  const openCreate = () => {
+    setEditing(null)
+    setForm({ username: '', password: '', name: '', role: 'unit', unit: '', active: true })
+    setShowPass(false)
+    setDialogOpen(true)
+  }
+  const openEdit = (u) => {
+    setEditing(u)
+    setForm({ username: u.username, password: '', name: u.name, role: u.role, unit: u.unit || '', active: u.active !== false })
+    setShowPass(false)
+    setDialogOpen(true)
+  }
+  const save = async () => {
+    if (!form.name || !form.role) return toast.error('Nama dan role wajib')
     try {
-      const r = await api('/user/test-gajamada', { method: 'POST', body: JSON.stringify(body) })
-      if (r.ok) toast.success('Login Gajamada berhasil')
-      else toast.error('Login gagal: ' + (r.error || 'kredensial salah'))
-    } catch (e) {
-      toast.error('Test gagal: ' + (e.message || 'error'))
-    } finally {
-      setTesting((p) => ({ ...p, [service]: false }))
-    }
+      if (editing) {
+        if (!form.username) return toast.error('Username wajib')
+        await api(`/users/${encodeURIComponent(form.username)}`, { method: 'PUT', body: JSON.stringify(form) })
+        toast.success('User diperbarui')
+      } else {
+        if (!form.username || !form.password) return toast.error('Username dan password wajib')
+        await api('/users', { method: 'POST', body: JSON.stringify(form) })
+        toast.success('User ditambahkan')
+      }
+      setDialogOpen(false); load()
+    } catch (e) { toast.error(e.message) }
+  }
+  const remove = async (u) => {
+    if (!window.confirm(`Hapus user "${u.name}" (${u.username})?`)) return
+    try { await api(`/users/${encodeURIComponent(u.username)}`, { method: 'DELETE' }); toast.success('Dihapus'); load() }
+    catch (e) { toast.error(e.message) }
   }
 
   return (
-    <div className="space-y-4 max-w-2xl">
-      <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><Settings className="h-6 w-6" /> Koneksi Eksternal</h2>
-      <p className="text-sm text-slate-500 -mt-2">Masukkan kredensial akun Gajamada Anda.</p>
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-sm text-slate-500">Kelola akun pengguna SIMONDU. Password disimpan plaintext — hash nanti.</p>
+        <Button size="sm" onClick={openCreate}>+ Tambah User</Button>
+      </div>
 
-      {/* Gajamada */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Dot ok={connStatus.gajamada} />
-            <span>Gajamada (eBdesk Fusion)</span>
-            <Badge variant="outline" className={`text-[10px] ml-auto ${connStatus.gajamada ? 'text-green-700 border-green-300' : 'text-red-700 border-red-300'}`}>
-              {connStatus.gajamada ? 'Terhubung' : saved?.gajamada?.email_set ? 'Kredensial tersimpan' : 'Belum login'}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div>
-            <Label className="text-xs">Email</Label>
-            <Input value={gjEmail} onChange={(e) => setGjEmail(e.target.value)} placeholder="email@gajamada" className="h-9 text-sm" />
+      {loading ? <div className="flex items-center justify-center h-64"><Loader2 className="h-6 w-6 animate-spin text-blue-800" /></div> :
+        <Card><CardContent className="p-0">
+          <Table><TableHeader className="bg-slate-50"><TableRow>
+            <TableHead>Username</TableHead>
+            <TableHead>Nama</TableHead>
+            <TableHead>Role</TableHead>
+            <TableHead>Unit</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead className="w-24">Aksi</TableHead>
+          </TableRow></TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.username}>
+                  <TableCell className="text-sm font-mono">{r.username}</TableCell>
+                  <TableCell className="text-sm">{r.name}</TableCell>
+                  <TableCell className="text-xs"><Badge variant="outline">{ROLES.find((x) => x.value === r.role)?.label || r.role}</Badge></TableCell>
+                  <TableCell className="text-xs text-slate-500">{r.unit || '-'}</TableCell>
+                  <TableCell><Badge className={r.active !== false ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>{r.active !== false ? 'Aktif' : 'Nonaktif'}</Badge></TableCell>
+                  <TableCell>
+                    <div className="flex gap-1">
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => openEdit(r)}>Edit</Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={() => remove(r)}>Hapus</Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {rows.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-slate-500">Belum ada user.</TableCell></TableRow>}
+            </TableBody></Table>
+        </CardContent></Card>
+      }
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{editing ? 'Edit User' : 'Tambah User'}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Username</Label>
+              <Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} disabled={!!editing} placeholder="nama.user" />
+            </div>
+            <div>
+              <Label>Password {editing && <span className="text-xs text-slate-400">(kosongkan jika tidak diganti)</span>}</Label>
+              <div className="relative">
+                <Input type={showPass ? 'text' : 'password'} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder={editing ? '(tidak diganti)' : '••••••••'} />
+                <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" onClick={() => setShowPass(!showPass)}>
+                  {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+            <div>
+              <Label>Nama Lengkap</Label>
+              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nama pengguna" />
+            </div>
+            <div>
+              <Label>Role</Label>
+              <Select value={form.role} onValueChange={(v) => setForm({ ...form, role: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {ROLES.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            {form.role === 'unit' && (
+              <div>
+                <Label>Unit</Label>
+                <Input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="Nama unit" />
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <Switch id="user-active" checked={form.active} onCheckedChange={(v) => setForm({ ...form, active: v })} />
+              <Label htmlFor="user-active" className="text-sm">Akun aktif</Label>
+            </div>
           </div>
-          <div>
-            <Label className="text-xs">Password</Label>
-            <PassInput value={gjPass} onChange={(e) => setGjPass(e.target.value)} placeholder="••••••••" field="gj" />
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => testLogin('gajamada')} disabled={testing.gajamada || !gjEmail || !gjPass}>
-              {testing.gajamada ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null} Test Login
-            </Button>
-            <Button size="sm" onClick={() => saveService('gajamada')} disabled={saving.gajamada || !gjEmail || !gjPass}>
-              {saving.gajamada ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null} Simpan
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDialogOpen(false)}>Batal</Button>
+            <Button onClick={save}>Simpan</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -2592,7 +2800,7 @@ function AppShell({ user, onLogout }) {
           {tab === 'satker' && canManageUnits && <SatkerSatwilPage user={user} />}
           {tab === 'sync' && <SyncLogsView />}
           {tab === 'audit' && <AuditView />}
-          {tab === 'settings' && canSettings && <SettingsPage connStatus={connStatus} />}
+          {tab === 'settings' && canSettings && <SettingsPage connStatus={connStatus} user={user} />}
         </div>
       </main>
 

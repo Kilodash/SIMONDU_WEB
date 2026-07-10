@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import * as gajamada from '@/lib/gajamada'
 import { getDb, getActiveUnits, getKasubbidName, getKasubbidAliases, getPolresUnits, getAllActiveUnitNames } from '@/lib/db'
-import { authenticate, signSession, getCookieHeader, clearCookieHeader, getUserFromRequest, isDisposisiRole, isAdminRole, isKasubbidRole, isUnitRole } from '@/lib/auth'
-import { CATEGORY_OPTIONS, shortUnit, FILTER_UNITS } from '@/lib/units'
+import { authenticate, signSession, getCookieHeader, clearCookieHeader, getUserFromRequest, isDisposisiRole, isAdminRole, isKasubbidRole, isUnitRole, setDbUsers, getAllUsers } from '@/lib/auth'
+import { CATEGORY_OPTIONS, FILTER_UNITS } from '@/lib/units'
+import { simplifyStatus, simplifyUnit } from '@/lib/mapping'
 import { STAGE_LABELS, NON_DUMAS_STAGE_LABELS, HASIL_LIDIK_OPTIONS, SETTLEMENT_OPTIONS, computeChecklist, getStageOrder, getStageLabels, MINI_CHECKLIST, UNIT_DOC_TYPES, UNIT_DEFAULT_TASKS, getUnitType, getCaseTypeForUnit } from '@/lib/checklist'
 import { STATUS, RESOLUSI, BUCKET, getBucket, canTransition, canResolve } from '@/lib/status'
 
@@ -86,7 +87,7 @@ async function backgroundSync(pid, actor, reason) {
     request_at: new Date(), reason, by: { username: actor?.username, role: actor?.role },
   }
   try {
-    const original = await gajamada.getCase(actor?.username || null, pid)
+    const original = await gajamada.getCase(pid)
     if (!original) { syncLog.status = 'skipped'; syncLog.error = 'getCase returned null'; syncLog.completed_at = new Date(); await db.collection('sync_logs').insertOne(syncLog); return }
     const latestDisp = await db.collection('dispositions').findOne({ prepetrator_id: pid }, { sort: { created_at: -1 } })
     const localCase = await db.collection('local_cases').findOne({ prepetrator_id: pid })
@@ -96,16 +97,28 @@ async function backgroundSync(pid, actor, reason) {
       latestDisp?.note ? latestDisp.note.replace(/^TASKS:\s*[^\n]*\n?/gm, '').trim() : '',
       ...timelines.slice(0, 3).map((t) => (t.description || '').replace(/^TASKS:\s*[^\n]*\n?/gm, '').trim()),
     ].filter(Boolean).join('; ')
+
+    // Resolve case_position: internal unit → Gajamada unit name via unit_mapping
+    // For Polres units: always map to "Kasipropam Polres xxxx Polda Jabar"
+    const internalUnit = latestDisp?.to_unit || ''
+    let casePosition = original.disposisi_case_position || ''
+    if (internalUnit) {
+      const mappings = await db.collection('unit_mapping').find({ internal_unit: internalUnit }).toArray()
+      if (mappings.length > 0) {
+        const kasipropam = mappings.find((m) => m.external_name.toUpperCase().includes('KASIPROPAM'))
+        casePosition = kasipropam?.external_name || mappings[0].external_name
+      }
+    }
     const params = {
       report_id: pid,
       status: toGajamadaStatus(status),
-      case_position: latestDisp?.to_unit || original.disposisi_case_position || '',
+      case_position: casePosition,
       note: combinedNote || 'Disposisi oleh ' + (actor?.name || 'SIMONDU'),
       createdBy: actor?.name || 'SIMONDU',
     }
     syncLog.payload = params
     try {
-      const { status, body } = await gajamada.pushUpdate(actor?.username || null, params)
+      const { status, body } = await gajamada.pushUpdate(params)
       syncLog.response = body; syncLog.http_status = status
       syncLog.status = (status >= 200 && status < 300 && body?.metaData?.status !== false) ? 'success' : 'failed'
     } catch (e) {
@@ -245,20 +258,34 @@ async function handleRoute(request, ctx) {
   const method = request.method
   const url = new URL(request.url)
 
-  // Module-level cache for all-satker-unit names from Gajamada cases
-  if (!handleRoute._satkerCache) { handleRoute._satkerCache = null; handleRoute._satkerCacheTime = 0 }
-  const SATKER_CACHE_TTL = 60000
+  // Module-level cache for all unit names from Gajamada cases
+  if (!handleRoute._allPositions) { handleRoute._allPositions = null; handleRoute._allPositionsTime = 0 }
+  const POSITIONS_CACHE_TTL = 60000
 
-  async function getSatkerUnits() {
-    if (handleRoute._satkerCache && Date.now() - handleRoute._satkerCacheTime < SATKER_CACHE_TTL) return handleRoute._satkerCache
-    const cases = await gajamada.listCases(null, { size: 500 }).catch(() => ({ data: [] }))
-    const [kasubbid, childUnits] = await Promise.all([getKasubbidName(), loadUnitList()])
-    const paminalSet = new Set([kasubbid, ...childUnits].filter(Boolean).map((u) => u.toUpperCase()))
-    handleRoute._satkerCache = [...new Set((cases.data || []).map((c) => c.disposisi_case_position).filter(Boolean))]
-      .filter((u) => !paminalSet.has(u.toUpperCase()))
-      .sort()
-    handleRoute._satkerCacheTime = Date.now()
-    return handleRoute._satkerCache
+  const UNIT_FILTER_PATTERNS = {
+    'KABID PROPAM': ['KABID PROPAM'],
+    'SUBBAG YANDUAN': ['SUBBAG YANDUAN', 'OPERATOR SUBBAG YANDUAN', 'KASUBBAG YANDUAN'],
+    'SUBBID PAMINAL': ['SUBBID PAMINAL', 'KASUBBID PAMINAL', 'UNIT 1 PAMINAL', 'UNIT 2 PAMINAL', 'UNIT 3 PAMINAL', 'UR PRODOK PAMINAL', 'UR BINPAM PAMINAL', 'UR LITPERS PAMINAL', 'KAUR PRODOK', 'KAUR LITPERS', 'KAUR BINPAM'],
+    'SUBBID PROVOS': ['SUBBID PROVOS', 'KASUBBID PROVOS', 'UNIT PROVOS'],
+    'SUBBID WABPROF': ['SUBBID WABPROF', 'KASUBBID WABPROF', 'UNIT WABPROF'],
+    'WASSIDIK': ['WASSIDIK'],
+    'POLRES': ['POLRES', 'POLRESTA', 'POLRESTABES']
+  }
+
+  async function getAllPositions() {
+    if (handleRoute._allPositions && Date.now() - handleRoute._allPositionsTime < POSITIONS_CACHE_TTL) return handleRoute._allPositions
+    const cases = await gajamada.listCases({ size: 500 }).catch(() => ({ data: [] }))
+    handleRoute._allPositions = [...new Set((cases.data || []).map((c) => c.disposisi_case_position).filter(Boolean))].sort()
+    handleRoute._allPositionsTime = Date.now()
+    return handleRoute._allPositions
+  }
+
+  function resolveUnitFilter(filterValue, allPositions) {
+    const patterns = UNIT_FILTER_PATTERNS[filterValue]
+    if (!patterns) return [filterValue]
+    const up = (s) => (s || '').toUpperCase()
+    const matches = allPositions.filter((pos) => patterns.some((p) => up(pos).includes(up(p))))
+    return matches.length > 0 ? matches : [filterValue]
   }
 
   if (!handleRoute._unitListCache) { handleRoute._unitListCache = null; handleRoute._unitListCacheTime = 0 }
@@ -273,10 +300,11 @@ async function handleRoute(request, ctx) {
     return handleRoute._unitListCache
   }
 
-  const SIMPLIFIED_STATUSES = ['DITERIMA', 'DALAM PROSES', 'TERBUKTI', 'TIDAK TERBUKTI', 'PERDAMAIAN']
+  const SIMPLIFIED_STATUSES = ['DITERIMA', 'DALAM PROSES', 'PROSES SIDANG', 'TERBUKTI', 'TIDAK TERBUKTI', 'PERDAMAIAN']
   const STATUS_MAPPING = {
     DITERIMA: ['Laporan Diterima', 'Diterima', 'Laporan Dikirim ke Polda', 'Laporan Diterima Polda'],
-    'DALAM PROSES': ['Didistribusi', 'Proses Lidik', 'Distribusi', 'Lidik', 'Laporan Diterima Kasubbid Paminal', 'Laporan Diterima Kasubbid Provos', 'Laporan Diterima Kasubbid Wabprof', 'Laporan Dikirim ke Polres', 'PUTUSAN SIDANG'],
+    'DALAM PROSES': ['Didistribusi', 'Proses Lidik', 'Distribusi', 'Lidik', 'Laporan Diterima Kasubbid Paminal', 'Laporan Diterima Kasubbid Provos', 'Laporan Diterima Kasubbid Wabprof', 'Laporan Dikirim ke Polres'],
+    'PROSES SIDANG': ['PUTUSAN SIDANG', 'Sidang', 'Sidang Disiplin', 'Sidang KKE'],
     TERBUKTI: ['Selesai', 'Terbukti'],
     'TIDAK TERBUKTI': ['Tidak Terbukti', 'Henti Lidik', 'Tolak', 'Laporan Ditolak Polda', 'Laporan ditolak', 'Pencabutan', 'HENTI LIDIK SEBELUM TERBIT SPRIN'],
     PERDAMAIAN: ['Perdamaian', 'Restorative Justice', 'Restorative', 'Laporan Selesai Restorative Justice', 'Selesai Restorative Justice'],
@@ -341,19 +369,14 @@ async function handleRoute(request, ctx) {
     const me = await requireAuth(request)
     if (!me) return fail('Unauthorized', 401)
 
-    // Load per-user credentials from DB into in-memory Maps on each request
-    async function ensureCreds(username) {
+    // Lazy-load users from DB (once per process)
+    if (!handleRoute._usersLoaded) {
       try {
         const db = await getDb()
-        const creds = await db.collection('user_credentials').findOne({ username })
-        if (!creds) return
-        if (creds.gajamada_email && creds.gajamada_password) {
-          gajamada.setCreds(username, { email: creds.gajamada_email, password: creds.gajamada_password })
-        }
+        const rows = await db.collection('users').find({}).toArray()
+        if (rows.length > 0) setDbUsers(rows)
       } catch (_) {}
-    }
-    if (me.role === 'kasubbag_yanduan' || me.role === 'admin' || me.role === 'super_admin') {
-      await ensureCreds(me.username)
+      handleRoute._usersLoaded = true
     }
 
     // ---------- REFERENCE ----------
@@ -361,8 +384,8 @@ async function handleRoute(request, ctx) {
       const [dynamicUnits, db, gajamadaStatuses, nonPaminal, polresUnits, allActiveUnits] = await Promise.all([
         getActiveUnits(),
         getDb(),
-        gajamada.getStatuses(null).catch(() => []),
-        getSatkerUnits(),
+        gajamada.getStatuses().catch(() => []),
+        getAllPositions(),
         getPolresUnits(),
         getAllActiveUnitNames(),
       ])
@@ -391,6 +414,9 @@ async function handleRoute(request, ctx) {
       ]
       const kasubbid = await getKasubbidName()
       const childUnits = await loadUnitList()
+      const db2 = await getDb()
+      const simonduUnits = await db2.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
+      const unitMappings = await db2.collection('unit_mapping').find({}).toArray()
       return ok({
         units: dynamicUnits.length ? dynamicUnits : childUnits,
         kasubbid,
@@ -410,6 +436,8 @@ async function handleRoute(request, ctx) {
         filter_units: FILTER_UNITS,
         polres_units: polresUnits,
         all_active_units: allActiveUnits,
+        simondu_units: simonduUnits.map(({ _id, ...r }) => r),
+        unit_mappings: unitMappings.map(({ _id, ...r }) => r),
       })
     }
 
@@ -444,7 +472,7 @@ async function handleRoute(request, ctx) {
       let added = 0, existing = 0, total = 0
 
       // 1. Internal Polda Jabar units (catalog_unit_v2 + catalog_kesatuan_terlapor)
-      const allUnits = await gajamada.getPoldaJabarUnits(null).catch(() => [])
+      const allUnits = await gajamada.getPoldaJabarUnits().catch(() => [])
       for (const u of allUnits) {
         if (!u.name) continue
         total++
@@ -458,7 +486,7 @@ async function handleRoute(request, ctx) {
       }
 
       // 2. Also sync from Gajamada cases (parent-based catalog, backward compat)
-      const catalog = await gajamada.getUnitsCatalog(null, await getKasubbidName()).catch(() => [])
+      const catalog = await gajamada.getUnitsCatalog(await getKasubbidName()).catch(() => [])
       for (const c of catalog) {
         if (!c.case_position) continue
         total++
@@ -477,7 +505,7 @@ async function handleRoute(request, ctx) {
     {
       const m = route.match(/^\/units-master\/([^/]+)$/)
       if (m && (method === 'PUT' || method === 'PATCH')) {
-        if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
+        if (!isDisposisiRole(me.role) && !isAdminRole(me.role)) return fail('Hanya Kasubbid/Admin/Kabid Propam/Kasubbag Yanduan', 403)
         const id = m[1]
         const patch = await request.json()
         const db = await getDb()
@@ -489,7 +517,7 @@ async function handleRoute(request, ctx) {
         return ok({ data: clean })
       }
       if (m && method === 'DELETE') {
-        if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
+        if (!isDisposisiRole(me.role) && !isAdminRole(me.role)) return fail('Hanya Kasubbid/Admin/Kabid Propam/Kasubbag Yanduan', 403)
         const id = m[1]
         const db = await getDb()
         await db.collection('units_master').deleteOne({ id })
@@ -592,17 +620,25 @@ async function handleRoute(request, ctx) {
       // Enrich with disposition info
       const pids = paged.map((r) => r.prepator_id || r.prepetrator_id).filter(Boolean)
       if (pids.length > 0) {
-        const dispRows = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).sort({ created_at: -1 }).toArray()
-        const dispBy = {}
+        const [dispRows, syncRows] = await Promise.all([
+          db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).sort({ created_at: -1 }).toArray(),
+          db.collection('sync_logs').find({ prepetrator_id: { $in: pids } }).sort({ request_at: -1 }).toArray(),
+        ])
+        const dispBy = {}; const syncByPid = {}
         for (const d of dispRows) if (!dispBy[d.prepetrator_id]) dispBy[d.prepetrator_id] = d
+        for (const s of syncRows) if (!syncByPid[s.prepetrator_id]) syncByPid[s.prepetrator_id] = s
         for (const r of paged) {
           const pid = r.prepator_id || r.prepetrator_id
           const d = dispBy[pid]
+          const sl = syncByPid[pid]
           r.disposisi_case_position = d?.to_unit || '-'
           r.is_atensi = !!d?.is_atensi
           r._internal_disposisi = !!d
           r.status_label = r.status || STATUS.SURAT_MASUK_POLDA_JABAR
           r.bucket = getBucket(r.status || STATUS.SURAT_MASUK_POLDA_JABAR)
+          r._simplified_status = simplifyStatus(r.status_label)
+          r._simplified_unit = simplifyUnit(d?.to_unit || '-')
+          r._sync_status = sl ? (sl.status === 'success' ? 'synced' : 'pending') : 'unknown'
           r.created_date = r.created_at
           r.pengirim = r.pengirim || '-'
           r.prepetrator_id = pid
@@ -620,34 +656,24 @@ async function handleRoute(request, ctx) {
       if (u.role !== 'kasubbag_yanduan' && u.role !== 'admin' && u.role !== 'super_admin') {
         return fetchCasesLocal(u, opts)
       }
-      let units = opts.units // explicit array override
+      let units = opts.units
       if (u.role === 'unit') {
         units = [u.unit]
       } else if (opts.unit) {
-        const up = opts.unit.toUpperCase()
-        if (['KABID PROPAM', 'SUBBAG YANDUAN', 'SUBBID PAMINAL', 'SUBBID PROVOS', 'SUBBID WABPROF', 'WASSIDIK'].includes(opts.unit)) {
-          const allUnits = await getSatkerUnits()
-          if (up.includes('YANDUAN')) units = allUnits.filter((n) => n.toUpperCase().includes('YANDUAN'))
-          else if (up.includes('PAMINAL')) units = allUnits.filter((n) => n.toUpperCase().includes('PAMINAL'))
-          else if (up.includes('PROVOS')) units = allUnits.filter((n) => n.toUpperCase().includes('PROVOS'))
-          else if (up.includes('WABPROF')) units = allUnits.filter((n) => n.toUpperCase().includes('WABPROF'))
-          else if (up.includes('WASSIDIK')) units = allUnits.filter((n) => n.toUpperCase().includes('WASSIDIK'))
-          else if (up.includes('KABID PROPAM')) units = allUnits.filter((n) => n.toUpperCase().includes('KABID PROPAM'))
-          if (!units || units.length === 0) units = [opts.unit]
-        } else if (opts.unit === 'POLRES') {
-          if (opts.polres) {
-            units = [opts.polres]
-          } else {
-            const allUnits = await getSatkerUnits()
-            units = allUnits.filter((n) => n.toUpperCase().includes('POLRES'))
-            if (!units || units.length === 0) units = [opts.unit]
-          }
+        if (opts.unit === 'POLRES' && opts.polres) {
+          units = [opts.polres]
         } else {
-          units = [opts.unit]
+          const db = await getDb()
+          const mappings = await db.collection('unit_mapping').find({ internal_unit: opts.unit }).toArray()
+          if (mappings.length > 0) {
+            units = mappings.map((m) => m.external_name)
+          } else {
+            const allPositions = await getAllPositions()
+            units = resolveUnitFilter(opts.unit, allPositions)
+          }
         }
       } else if (!units) {
-        const [kasubbid, childUnits, satkerUnits] = await Promise.all([getKasubbidName(), loadUnitList(), getSatkerUnits()])
-        units = [kasubbid, ...(childUnits || []), ...(satkerUnits || [])].filter(Boolean)
+        units = await getAllPositions()
       }
       const params = { ...opts, units }
       delete params.unit
@@ -656,22 +682,24 @@ async function handleRoute(request, ctx) {
         params.statuses = resolveGajamadaStatuses(params.status)
         delete params.status
       }
-      const r = await gajamada.listCases(me.username, params).catch((e) => {
+      const r = await gajamada.listCases(params).catch((e) => {
         if (e.code === 'GAJAMADA_DISABLED') return { data: [], meta: { total: 0, disabled: true } }
         throw e
       })
       // Enrich each with derived info
       const db = await getDb()
       const pids = r.data.map((c) => c.prepetrator_id)
-      const [dispRows, timelineRows, localCaseRows] = await Promise.all([
+      const [dispRows, timelineRows, localCaseRows, syncRows] = await Promise.all([
         db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).sort({ created_at: -1 }).toArray(),
         db.collection('timelines').find({ prepetrator_id: { $in: pids } }).limit(2000).toArray(),
         db.collection('local_cases').find({ prepetrator_id: { $in: pids } }).toArray().catch(() => []),
+        db.collection('sync_logs').find({ prepetrator_id: { $in: pids } }).sort({ request_at: -1 }).toArray(),
       ])
-      const dispBy = {}; const tlByPid = new Set(); const lcByPid = {}
+      const dispBy = {}; const tlByPid = new Set(); const lcByPid = {}; const syncByPid = {}
       for (const d of dispRows) if (!dispBy[d.prepetrator_id]) dispBy[d.prepetrator_id] = d
       for (const t of timelineRows) tlByPid.add(t.prepetrator_id)
       for (const lc of localCaseRows) if (!lcByPid[lc.prepetrator_id]) lcByPid[lc.prepetrator_id] = lc
+      for (const s of syncRows) if (!syncByPid[s.prepetrator_id]) syncByPid[s.prepetrator_id] = s
       const source = r.data.filter((c) => {
         if (opts.case_type) return !lcByPid[c.prepetrator_id]?.case_type || lcByPid[c.prepetrator_id].case_type === opts.case_type
         if (opts.bucket) {
@@ -683,16 +711,21 @@ async function handleRoute(request, ctx) {
       const enriched = source.map((c) => {
         const d = dispBy[c.prepetrator_id]
         const lc = lcByPid[c.prepetrator_id]
+        const sl = syncByPid[c.prepetrator_id]
         const status = lc?.status || STATUS.SURAT_MASUK_POLDA_JABAR
         const resolusi = lc?.resolusi || null
+        const position = d?.to_unit || c.disposisi_case_position
         return {
           ...c,
-          disposisi_case_position: d?.to_unit || c.disposisi_case_position,
+          disposisi_case_position: position,
           _internal_disposisi: !!d,
           is_atensi: !!d?.is_atensi,
           status,
           resolusi,
           bucket: getBucket(status),
+          _simplified_status: simplifyStatus(c.status_label || c.status),
+          _simplified_unit: simplifyUnit(position),
+          _sync_status: sl ? (sl.status === 'success' ? 'synced' : 'pending') : 'unknown',
         }
       })
       return { data: enriched, total: r.total || enriched.length }
@@ -718,7 +751,7 @@ async function handleRoute(request, ctx) {
       const db = await getDb()
 
       // Gajamada cases at KASUBBID position, not yet dispositioned
-      const r = await gajamada.listCases(me.username, { units: await getKasubbidAliases(), size: 100 }).catch(() => ({ data: [] }))
+      const r = await gajamada.listCases({ units: await getKasubbidAliases(), size: 100 }).catch(() => ({ data: [] }))
       const pids = r.data.map((c) => c.prepetrator_id)
       const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
       const dispSet = new Set(disp.map((d) => d.prepetrator_id))
@@ -764,7 +797,7 @@ async function handleRoute(request, ctx) {
 
       // Gajamada undisposed
       try {
-      const r = await gajamada.listCases(me.username, { units: await getKasubbidAliases(), size: 100 }).catch(() => ({ data: [] }))
+      const r = await gajamada.listCases({ units: await getKasubbidAliases(), size: 100 }).catch(() => ({ data: [] }))
         const pids = r.data.map((c) => c.prepetrator_id)
         const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
         const dispSet = new Set(disp.map((d) => d.prepetrator_id))
@@ -859,13 +892,13 @@ async function handleRoute(request, ctx) {
       const caseMap = {}
       if (pids.length > 0) {
         // Gajamada: coba tanpa filter unit dulu (lebih luas)
-        const gData = await gajamada.listCases(me.username, { size: 200 }).catch(() => ({ data: [] }))
+        const gData = await gajamada.listCases({ size: 200 }).catch(() => ({ data: [] }))
         for (const c of gData.data) caseMap[c.prepetrator_id] = { pengirim: c.pengirim || c.prepetrator_name || '-', perihal: c.perihal || c.summary || '-', nomor_surat: c.nomor_surat || '-' }
         // Fallback: getCase untuk PID yang belum ketemu (Gajamada)
         const missingGj = pids.filter((p) => !caseMap[p] && p.length < 30)
         if (missingGj.length > 0) {
           const results = await Promise.all(missingGj.slice(0, 10).map(async (p) => {
-            const c = await gajamada.getCase(me.username, p).catch(() => null)
+            const c = await gajamada.getCase(p).catch(() => null)
             if (c) caseMap[p] = { pengirim: c.pengirim || c.prepetrator_name || '-', perihal: c.perihal || c.summary || '-', nomor_surat: c.nomor_surat || '-' }
           }))
         }
@@ -1023,7 +1056,7 @@ async function handleRoute(request, ctx) {
         ])
         let caseInfo = { prepetrator_id: pid, pengirim: '-', perihal: '-', status: lc?.status || STATUS.SURAT_MASUK_POLDA_JABAR }
         try {
-          const gj = await gajamada.getCase(me.username, pid).catch(() => null)
+          const gj = await gajamada.getCase(pid).catch(() => null)
           if (gj) caseInfo = { ...caseInfo, pengirim: gj.pengirim || gj.prepetrator_name || '-', perihal: gj.perihal || gj.summary || '-', nomor_surat: gj.nomor_surat || '-', disposisi_case_position: gj.disposisi_case_position }
         } catch (_) {}
         result.push(caseInfo)
@@ -1059,7 +1092,7 @@ async function handleRoute(request, ctx) {
       for (const lc of cases) {
         let info = { ...lc, pengirim: lc.pengirim || '-', perihal: lc.perihal || '-' }
         try {
-          const gj = await gajamada.getCase(me.username, lc.prepator_id).catch(() => null)
+          const gj = await gajamada.getCase(lc.prepator_id).catch(() => null)
           if (gj) info = { ...info, pengirim: gj.pengirim || gj.prepetrator_name || '-', perihal: gj.perihal || '-', nomor_surat: gj.nomor_surat || '-', disposisi_case_position: gj.disposisi_case_position }
         } catch (_) {}
         result.push(info)
@@ -1071,7 +1104,7 @@ async function handleRoute(request, ctx) {
     const attMatch = route.match(/^\/cases\/([^/]+)\/attachments$/)
     if (attMatch && method === 'GET') {
       const pid = decodeURIComponent(attMatch[1])
-      const atts = await gajamada.getCaseAttachments(me.username, pid)
+      const atts = await gajamada.getCaseAttachments(pid)
       return ok({ data: atts })
     }
 
@@ -1080,7 +1113,7 @@ async function handleRoute(request, ctx) {
     if (tlAllMatch && method === 'GET') {
       const pid = decodeURIComponent(tlAllMatch[1])
       const [gjEntries, internal] = await Promise.all([
-        gajamada.getTimeline(me.username, pid).catch(() => []),
+        gajamada.getTimeline(pid).catch(() => []),
         (async () => {
           const db = await getDb()
           const rows = await db.collection('timelines').find({ prepetrator_id: pid }).sort({ created_at: -1 }).toArray()
@@ -1294,7 +1327,7 @@ async function handleRoute(request, ctx) {
     const caseMatch = route.match(/^\/cases\/([^/]+)$/)
     if (caseMatch && method === 'GET') {
       const pid = decodeURIComponent(caseMatch[1])
-      const c = await gajamada.getCase(me.username, pid).catch(() => null)
+      const c = await gajamada.getCase(pid).catch(() => null)
       if (c) {
         const enriched = await enrichCase(c)
         return ok({ data: enriched })
@@ -1437,7 +1470,7 @@ async function handleRoute(request, ctx) {
     if (route === '/download' && method === 'GET') {
       const target = url.searchParams.get('url')
       if (!target) return fail('url param required')
-      const res = await gajamada.downloadAttachment(me.username, target)
+      const res = await gajamada.downloadAttachment(target)
       const buffer = await res.arrayBuffer()
       const contentType = res.headers.get('content-type') || 'application/octet-stream'
       const name = url.searchParams.get('name') || target.split('/').pop() || 'file'
@@ -1459,7 +1492,7 @@ async function handleRoute(request, ctx) {
       } else {
         opts.units = undefined
       }
-      const result = await gajamada.listCases(me.username, opts).catch((e) => {
+      const result = await gajamada.listCases(opts).catch((e) => {
         if (e.code === 'GAJAMADA_DISABLED') return { data: [], total: 0, meta: { disabled: true } }
         throw e
       })
@@ -1517,50 +1550,11 @@ async function handleRoute(request, ctx) {
       return ok({ data: rows.map(({ _id, ...r }) => r) })
     }
 
-    // ---------- USER CREDENTIALS (per-user Gajamada) ----------
-    if (route === '/user/credentials' && method === 'GET') {
-      const db = await getDb()
-      const row = await db.collection('user_credentials').findOne({ username: me.username })
-      if (!row) return ok({ gajamada: null })
-      const mask = (s) => !s ? null : s.length <= 6 ? '***' : s.slice(0, 3) + '***' + s.slice(-3)
-      return ok({
-        gajamada: row.gajamada_email ? { email: row.gajamada_email, has_password: true } : null,
-        saved_at: row.saved_at || null,
-      })
-    }
-
-    if (route === '/user/credentials' && method === 'POST') {
-      if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
-      const { gajamada_email, gajamada_password } = await request.json().catch(() => ({}))
-      const db = await getDb()
-      const set = { username: me.username, saved_at: new Date(), updated_at: new Date().toISOString() }
-      if (gajamada_email !== undefined) set.gajamada_email = gajamada_email
-      if (gajamada_password !== undefined) set.gajamada_password = gajamada_password
-      await db.collection('user_credentials').updateOne({ username: me.username }, { $set: { ...set } }, { upsert: true })
-
-      // Load credentials into Gajamada module
-      try {
-        if (gajamada_email && gajamada_password) {
-          gajamada.setCreds(me.username, { email: gajamada_email, password: gajamada_password })
-        }
-      } catch (_) { /* best-effort */ }
-
-      await logAudit(me, 'save_credentials', 'user_credentials', { services: [gajamada_email ? 'gajamada' : null].filter(Boolean) })
-      return ok({ message: 'Kredensial disimpan' })
-    }
-
-    if (route === '/user/test-gajamada' && method === 'POST') {
-      const { email, password } = await request.json().catch(() => ({}))
-      if (!email || !password) return fail('Email dan password wajib')
-      const result = await gajamada.testLogin({ email, password })
-      return ok(result)
-    }
-
     // ---------- CONNECTION STATUS ----------
     if (route === '/connection-status' && method === 'GET') {
       let gajamadaConnected = false
       try {
-        await gajamada.listCases(me.username, { size: 1 })
+        await gajamada.listCases({ size: 1 })
         gajamadaConnected = true
       } catch (e) {
         gajamadaConnected = e.code !== 'GAJAMADA_DISABLED' && !/belum di-set/.test(e.message || '')
@@ -1571,17 +1565,68 @@ async function handleRoute(request, ctx) {
 
     // ---------- SETTINGS ----------
     if (route === '/settings' && method === 'GET') {
-      if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
-      const db = await getDb()
-      const creds = await db.collection('user_credentials').findOne({ username: me.username }).catch(() => null)
       return ok({
         gajamada: {
           base_url: process.env.GAJAMADA_BASE_URL || 'https://gajamada-propam.polri.go.id',
-          email: creds?.gajamada_email || null,
-          has_password: !!creds?.gajamada_password,
-          email_set: !!creds?.gajamada_email,
+          connected: true,
         },
       })
+    }
+
+    // ---------- USERS CRUD (Admin only) ----------
+    if (route === '/users' && method === 'GET') {
+      if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
+      return ok({ data: getAllUsers() })
+    }
+    if (route === '/users/reload' && method === 'POST') {
+      if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
+      try {
+        const db = await getDb()
+        const rows = await db.collection('users').find({}).toArray()
+        setDbUsers(rows)
+        return ok({ count: rows.length })
+      } catch (_) {
+        return ok({ count: 0 })
+      }
+    }
+    if (route === '/users' && method === 'POST') {
+      if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
+      const { username, password, name, role, unit, active } = await request.json().catch(() => ({}))
+      if (!username || !password || !name || !role) return fail('username, password, name, role wajib')
+      const db = await getDb()
+      const exist = await db.collection('users').findOne({ username })
+      if (exist) return fail('Username sudah ada', 409)
+      await db.collection('users').insertOne({
+        username, password, name, role, unit: unit || null,
+        active: active !== false, created_at: new Date(), updated_at: new Date(),
+      })
+      setDbUsers(await db.collection('users').find({}).toArray())
+      await logAudit(me, 'user_create', username)
+      return ok({ message: 'User ditambahkan' })
+    }
+    {
+      const m = route.match(/^\/users\/([^/]+)$/)
+      if (m && method === 'PUT') {
+        if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
+        const { password, name, role, unit, active } = await request.json().catch(() => ({}))
+        if (!name || !role) return fail('name, role wajib')
+        const db = await getDb()
+        const set = { name, role, unit: unit || null, active: active !== false, updated_at: new Date() }
+        if (password) set.password = password
+        const result = await db.collection('users').updateOne({ username: m[1] }, { $set: set })
+        if (result.matchedCount === 0) return fail('User tidak ditemukan', 404)
+        setDbUsers(await db.collection('users').find({}).toArray())
+        await logAudit(me, 'user_update', m[1])
+        return ok({ message: 'User diperbarui' })
+      }
+      if (m && method === 'DELETE') {
+        if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
+        const db = await getDb()
+        await db.collection('users').deleteOne({ username: m[1] })
+        setDbUsers(await db.collection('users').find({}).toArray())
+        await logAudit(me, 'user_delete', m[1])
+        return ok({ message: 'User dihapus' })
+      }
     }
 
     // ---------- ADMIN: DATA MIGRATION ----------
@@ -1806,7 +1851,12 @@ async function handleRoute(request, ctx) {
       if (!external_name || !internal_unit) return fail('Nama eksternal dan internal wajib')
       const db = await getDb()
       const existing = await db.collection('unit_mapping').findOne({ external_name })
-      if (existing) return fail('Mapping dengan nama eksternal tersebut sudah ada', 409)
+      if (existing) {
+        await db.collection('unit_mapping').updateOne({ external_name }, { $set: { internal_unit, updated_at: new Date() } })
+        const row = await db.collection('unit_mapping').findOne({ external_name })
+        const { _id, ...clean } = row
+        return ok({ data: clean })
+      }
       const doc = { id: uuidv4(), external_name, internal_unit, created_at: new Date(), updated_at: new Date() }
       await db.collection('unit_mapping').insertOne(doc)
       const { _id, ...clean } = doc
@@ -1820,19 +1870,35 @@ async function handleRoute(request, ctx) {
         return ok({})
       }
     }
+    {
+      const m = route.match(/^\/unit-mapping\/([^/]+)$/)
+      if (m && method === 'PUT') {
+        if (!isDisposisiRole(me.role)) return fail('Hanya Kasubbid/Admin/Kabid Propam/Kasubbag Yanduan', 403)
+        const { external_name, internal_unit } = await request.json()
+        if (!external_name || !internal_unit) return fail('Nama eksternal dan internal wajib')
+        const db = await getDb()
+        await db.collection('unit_mapping').updateOne({ id: m[1] }, { $set: { external_name, internal_unit, updated_at: new Date() } })
+        await logAudit(me, 'unit_mapping_update', m[1], { external_name, internal_unit })
+        return ok({})
+      }
+    }
 
     if (route === '/unit-mapping/sync' && method === 'POST') {
       if (!isDisposisiRole(me.role)) return fail('Hanya Kasubbid/Admin/Kabid Propam/Kasubbag Yanduan', 403)
       const db = await getDb()
-      const [mappings, gajamadaCases] = await Promise.all([
+      const [mappings, catalogUnits, gajamadaCases, positions] = await Promise.all([
         db.collection('unit_mapping').find({}).toArray(),
-        gajamada.listCases(me.username, { size: 500 }).catch(() => ({ data: [] })),
+        gajamada.getPoldaJabarUnits().catch(() => []),
+        gajamada.listCases({ size: 2000 }).catch(() => ({ data: [] })),
+        getAllPositions().catch(() => []),
       ])
       const mappedExternalNames = new Set(mappings.map((m) => m.external_name.toUpperCase()))
-      const allExternalNames = [...new Set((gajamadaCases.data || []).map((c) => c.disposisi_case_position).filter(Boolean))]
+      const caseNames = (gajamadaCases.data || []).map((c) => c.disposisi_case_position).filter(Boolean)
+      const catalogNames = catalogUnits.map((u) => u.name).filter(Boolean)
+      const allExternalNames = [...new Set([...catalogNames, ...caseNames, ...positions])]
       const unmapped = allExternalNames.filter((name) => !mappedExternalNames.has(name.toUpperCase())).sort()
       const mapped = allExternalNames.filter((name) => mappedExternalNames.has(name.toUpperCase())).sort()
-      return ok({ unmapped, mapped })
+      return ok({ unmapped, mapped, total: allExternalNames.length })
     }
 
     // ---------- FORCE SYNC ----------
@@ -1842,7 +1908,7 @@ async function handleRoute(request, ctx) {
       if (!pid) return fail('pid wajib')
       try {
         const db = await getDb()
-        const originalGj = await gajamada.getCase(me.username, pid).catch(() => null)
+        const originalGj = await gajamada.getCase(pid).catch(() => null)
         const latestDisp = await db.collection('dispositions').findOne({ prepetrator_id: pid }, { sort: { created_at: -1 } })
         if (!originalGj) return fail('Gajamada getCase returned null')
         const params = {
@@ -1852,7 +1918,7 @@ async function handleRoute(request, ctx) {
           note: latestDisp?.note || '',
           createdBy: me.name,
         }
-        const pushResult = await gajamada.pushUpdate(me.username, params)
+        const pushResult = await gajamada.pushUpdate(params)
         return ok({ getCase: !!originalGj, dispTo: latestDisp?.to_unit, pushResult })
       } catch (e) {
         return fail('Sync error: ' + e.message)
@@ -1889,7 +1955,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.__syncRetryScheduled) {
       for (const log of failed) {
         if (!log.payload) continue
         try {
-          const { status, body } = await gajamada.pushUpdate(log.by?.username || null, log.payload)
+          const { status, body } = await gajamada.pushUpdate(log.payload)
           await db.collection('sync_logs').updateOne(
             { id: log.id },
             { $set: {
