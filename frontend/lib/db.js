@@ -217,10 +217,11 @@ export async function getAllActiveUnitNames() {
     visited.add(name)
     const up = name.toUpperCase()
     if (up.includes('JABAR') || up.includes('JAWA BARAT') || up.includes('BANDUNG')) return true
-    if (up.includes('PAMINAL') || up.includes('PROVOS') || up.includes('WABPROF')
-        || up.includes('YANDUAN') || up.includes('WASSIDIK') || up.includes('BRIMOB')
-        || up.includes('REHABPERS') || up.includes('KABID PROPAM')) return true
-    return isJabar(parentMap[name], visited)
+    const parent = parentMap[name]
+    if (!parent) {
+      return /PAMINAL|PROVOS|WABPROF|YANDUAN|WASSIDIK|BRIMOB|REHABPERS|KABID PROPAM/i.test(up)
+    }
+    return isJabar(parent, visited)
   }
 
   return rows.filter((r) => isJabar(r.name)).map((r) => r.name)
