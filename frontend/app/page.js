@@ -1715,7 +1715,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
         </Card>
 
         {/* PANEL 2: Lembar Disposisi */}
-        <Card className="lg:col-span-5 flex flex-col overflow-hidden border-2 border-blue-300" style={{ maxHeight: 'calc(100vh - 180px)' }}>
+        <Card className="lg:col-span-5 flex flex-col overflow-hidden border-2 border-blue-300" style={{ maxHeight: isSaranMode && canOverride ? 'calc(50vh - 90px)' : 'calc(100vh - 180px)' }}>
           <CardHeader className="pb-2 bg-blue-50/60 border-b shrink-0">
             <CardTitle className="text-sm flex items-center gap-2"><ArrowRightLeft className="h-4 w-4 text-blue-800" /> Lembar Disposisi</CardTitle>
           </CardHeader>
@@ -1746,12 +1746,18 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
               </div>
             </div>
             <div>
-              <Label className="text-xs">Satker/Satwil Tujuan (opsional)</Label>
+              <Label className="text-xs">Saran / Masukan</Label>
+              <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Saran untuk Kabid Propam..." className="min-h-[70px] text-xs" data-testid="disposisi-note" />
+            </div>
+            <div>
+              <Label className="text-xs">Satker/Satwil Tujuan</Label>
               <Select value={saranUnit} onValueChange={setSaranUnit}>
                 <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih satker/satwil" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none">-- Kosongkan --</SelectItem>
-                  {(reference.all_active_units || []).map((u) => <SelectItem key={typeof u === 'string' ? u : u.id} value={typeof u === 'string' ? u : u.name}>{typeof u === 'string' ? shortUnit(u) : u.name}</SelectItem>)}
+                  {(reference.all_active_units || []).filter((u) => {
+                    const s = typeof u === 'string' ? shortUnit(u) : shortUnit(u.name)
+                    return /^(SUBBID|SUBBAG|KABID|POLRES|POLRESTA|POLRESTABES|SAT |WASSIDIK|SATKER)/i.test(s)
+                  }).map((u) => <SelectItem key={typeof u === 'string' ? u : u.id} value={typeof u === 'string' ? u : u.name}>{typeof u === 'string' ? shortUnit(u) : u.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -1789,10 +1795,12 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
             </div>
             )}
 
+            {!isSaranMode && (
             <div>
-              <Label className="text-xs">{isSaranMode ? 'Saran / Masukan' : 'Instruksi / Catatan'}</Label>
-              <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder={isSaranMode ? 'Saran untuk Kabid Propam...' : 'Instruksi disposisi...'} className="min-h-[70px] text-xs" data-testid="disposisi-note" />
+              <Label className="text-xs">Instruksi / Catatan</Label>
+              <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Instruksi disposisi..." className="min-h-[70px] text-xs" data-testid="disposisi-note" />
             </div>
+            )}
 
             {!isSaranMode && (
             <div className="flex items-center gap-2 rounded-md border p-2 bg-amber-50/30">
@@ -1822,11 +1830,11 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
 
         {/* Over-ride Distribusi Langsung (admin/subbag yanduan only) */}
         {isSaranMode && canOverride && (
-        <Card className="border-2 border-amber-300 bg-amber-50/20">
+        <Card className="lg:col-span-5 flex flex-col overflow-hidden border-2 border-amber-300 bg-amber-50/20" style={{ maxHeight: 'calc(50vh - 90px)' }}>
           <CardHeader className="pb-2 shrink-0">
             <CardTitle className="text-sm flex items-center gap-2"><Send className="h-4 w-4 text-amber-700" /> Distribusi Langsung (Over-ride)</CardTitle>
           </CardHeader>
-          <div className="p-4 space-y-3">
+          <div className="overflow-y-auto p-4 space-y-3">
             <div>
               <Label className="text-xs">Unit Tujuan (Satker/Satwil)</Label>
               <Select value={overrideUnit} onValueChange={setOverrideUnit}>
