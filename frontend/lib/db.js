@@ -212,15 +212,9 @@ export async function getAllActiveUnitNames() {
   // Seed essential Polda Jabar units if missing
   const ESSENTIAL = [
     { name: 'KASUBBID WABPROF POLDA JAWA BARAT', parent: 'BIDPROPAM POLDA JAWA BARAT' },
-    { name: 'UNIT WABPROF', parent: 'KASUBBID WABPROF POLDA JAWA BARAT' },
     { name: 'SUBBAG REHABPERS', parent: 'BIDPROPAM POLDA JAWA BARAT' },
     { name: 'SAT BRIMOB', parent: 'BIDPROPAM POLDA JAWA BARAT' },
     { name: 'WASSIDIK', parent: 'BIDPROPAM POLDA JAWA BARAT' },
-    { name: 'BAG WASSIDIK DITRESKRIM UM', parent: 'WASSIDIK' },
-    { name: 'BAG WASSIDIK DITRESKRIM SUS', parent: 'WASSIDIK' },
-    { name: 'BAG WASSIDIK DITRESNARKOBA', parent: 'WASSIDIK' },
-    { name: 'BAG WASSIDIK DITRESSIBER', parent: 'WASSIDIK' },
-    { name: 'BAG WASSIDIK DITRES PPA/PPO', parent: 'WASSIDIK' },
   ]
   for (const eu of ESSENTIAL) {
     const exists = await db.collection('units_master').findOne({ name: eu.name })
@@ -231,6 +225,11 @@ export async function getAllActiveUnitNames() {
       }).catch(() => {})
     }
   }
+  // Deactivate old WASSIDIK sub-unit entries (seed cleanup)
+  await db.collection('units_master').updateMany(
+    { source: 'seed', name: /^BAG WASSIDIK|^UNIT WABPROF/i },
+    { $set: { active: false } }
+  ).catch(() => {})
 
   const rows = await db.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
 
