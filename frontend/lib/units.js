@@ -13,8 +13,11 @@ export const FILTER_UNITS = [
   { label: 'SUBBID PAMINAL', value: 'SUBBID PAMINAL', desc: 'Penyelidikan (Laporan Informasi)' },
   { label: 'SUBBID PROVOS', value: 'SUBBID PROVOS', desc: 'GARPLIN / Sidang Disiplin' },
   { label: 'SUBBID WABPROF', value: 'SUBBID WABPROF', desc: 'GAR KEPP / Sidang KKE' },
+  { label: 'SUBBAG REHABPERS', value: 'SUBBAG REHABPERS', desc: 'Rehabilitasi Personel' },
   { label: 'POLRES', value: 'POLRES', desc: 'Lidik / GARPLIN / Sidang Disiplin' },
+  { label: 'SAT BRIMOB', value: 'SAT BRIMOB', desc: 'Brimob' },
   { label: 'WASSIDIK', value: 'WASSIDIK', desc: 'Dilimpahkan (Selesai, monitor)' },
+  { label: 'SATKER LAIN', value: 'SATKER LAIN', desc: 'Satuan Kerja Lainnya' },
 ]
 
 export { getUnitType, getCaseTypeForUnit }

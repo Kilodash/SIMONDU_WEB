@@ -193,7 +193,16 @@ export async function getKasubbidName() {
 export async function getPolresUnits() {
   const db = await getDb()
   const rows = await db.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
-  return rows.filter((r) => r.name && r.name.toUpperCase().includes('POLRES')).map((r) => r.name)
+  return rows
+    .filter((r) => {
+      if (!r.name) return false
+      const up = r.name.toUpperCase()
+      if (!up.includes('POLRES')) return false
+      const parentUp = (r.parent || '').toUpperCase()
+      return up.includes('JABAR') || up.includes('JAWA BARAT') || up.includes('BANDUNG')
+        || parentUp.includes('JABAR') || parentUp.includes('JAWA BARAT') || parentUp.includes('BANDUNG')
+    })
+    .map((r) => r.name)
 }
 
 export async function getAllActiveUnitNames() {

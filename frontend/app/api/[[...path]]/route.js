@@ -268,7 +268,9 @@ async function handleRoute(request, ctx) {
     'SUBBID PAMINAL': ['SUBBID PAMINAL', 'KASUBBID PAMINAL', 'UNIT 1 PAMINAL', 'UNIT 2 PAMINAL', 'UNIT 3 PAMINAL', 'UR PRODOK PAMINAL', 'UR BINPAM PAMINAL', 'UR LITPERS PAMINAL', 'KAUR PRODOK', 'KAUR LITPERS', 'KAUR BINPAM'],
     'SUBBID PROVOS': ['SUBBID PROVOS', 'KASUBBID PROVOS', 'UNIT PROVOS'],
     'SUBBID WABPROF': ['SUBBID WABPROF', 'KASUBBID WABPROF', 'UNIT WABPROF'],
+    'SUBBAG REHABPERS': ['REHABPERS'],
     'WASSIDIK': ['WASSIDIK'],
+    'SAT BRIMOB': ['BRIMOB'],
     'POLRES': ['POLRES', 'POLRESTA', 'POLRESTABES']
   }
 
@@ -281,9 +283,16 @@ async function handleRoute(request, ctx) {
   }
 
   function resolveUnitFilter(filterValue, allPositions) {
+    const up = (s) => (s || '').toUpperCase()
+    if (filterValue === 'SATKER LAIN') {
+      const allPatterns = Object.entries(UNIT_FILTER_PATTERNS)
+        .filter(([k]) => k !== 'SATKER LAIN')
+        .flatMap(([, patterns]) => patterns)
+      const matched = new Set(allPositions.filter((pos) => allPatterns.some((p) => up(pos).includes(up(p)))))
+      return allPositions.filter((pos) => !matched.has(pos))
+    }
     const patterns = UNIT_FILTER_PATTERNS[filterValue]
     if (!patterns) return [filterValue]
-    const up = (s) => (s || '').toUpperCase()
     const matches = allPositions.filter((pos) => patterns.some((p) => up(pos).includes(up(p))))
     return matches.length > 0 ? matches : [filterValue]
   }

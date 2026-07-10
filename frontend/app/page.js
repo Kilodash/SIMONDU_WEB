@@ -1140,7 +1140,7 @@ function CasesList({ user, onOpenCase }) {
                       <TableHead className="text-sm">Kategori</TableHead>
                       <TableHead className="min-w-[320px] text-sm">Rangkuman</TableHead>
                       <TableHead className="w-[110px] text-sm">Last Updated</TableHead>
-                      <TableHead className="w-[280px] text-sm">Status & Posisi</TableHead>
+                      <TableHead className="w-[180px] text-sm">Status</TableHead>
                     </TableRow>
                   )}
                 </TableHeader>
@@ -1201,17 +1201,9 @@ function CasesList({ user, onOpenCase }) {
                           </TableCell>
                           <TableCell className="text-xs pt-3">{fmtDate(c.updated_at)}</TableCell>
                           <TableCell className="pt-3">
-                            <div className="flex flex-col gap-1 items-start text-xs">
-                              <div className="flex items-center gap-1 flex-wrap">
-                                <Badge className={`${statusColor(c.status_label)} text-[11px]`}>{c.status_label || '-'}</Badge>
-                                <span className="text-slate-400">→</span>
-                                <Badge className={`${statusColor(c._simplified_status)} text-[11px]`}>{c._simplified_status || '-'}</Badge>
-                              </div>
-                              <div className="flex items-center gap-1 flex-wrap">
-                                <Badge variant="outline" className="text-[10px] font-normal text-slate-500">{c.disposisi_case_position || '-'}</Badge>
-                                <span className="text-slate-400 text-[10px]">→</span>
-                                <Badge variant="outline" className="text-[10px] font-medium">{c._simplified_unit || '-'}</Badge>
-                              </div>
+                            <div className="flex flex-col gap-1 items-start">
+                              <Badge className={`${statusColor(c._simplified_status)} text-[11px]`}>{c._simplified_status || '-'}</Badge>
+                              <Badge variant="outline" className="text-[10px] font-medium">{c._simplified_unit || '-'}</Badge>
                               <div className="flex items-center gap-1">
                                 <SyncBadge status={c._sync_status} />
                                 {c.is_atensi && <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px]"><Star className="h-2.5 w-2.5 mr-0.5" />ATENSI</Badge>}

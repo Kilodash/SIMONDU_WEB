@@ -1,6 +1,5 @@
 // Gajamada (eBdesk Fusion) API client with session cookie management
-// Manages login session automatically, refreshes on 401.
-// Supports per-user credentials (unit/kasubbid own Gajamada accounts).
+// Single shared account via env vars GAJAMADA_USERNAME / GAJAMADA_PASSWORD
 
 const BASE_URL = process.env.GAJAMADA_BASE_URL || 'https://gajamada-propam.polri.go.id'
 const APP_ID = process.env.GAJAMADA_APP_ID || '1769155096865'
@@ -8,16 +7,11 @@ const CONNECTION_ID = process.env.GAJAMADA_CONNECTION_ID || '245b8fd7c4a763019d5
 const DATABASE = process.env.GAJAMADA_DATABASE || 'divpropam'
 const WIDGET_AKSI_GATEWAY_ID = process.env.GAJAMADA_UPDATE_GATEWAY_ID || 'aa6159ec4d7847e8282943f7dfe87c29'
 
-// Per-user sessions: Map<username, {cookieString, user, loggedInAt}>
-const _sessions = new Map()
-// Per-user credentials: Map<username, {email, password}>
-const _creds = new Map()
-// Global fallback session (env-var based, backward compat)
-let _globalSession = null
+let _session = null
 
-// Simple in-memory cache: key -> { data, expires }
+// Simple in-memory cache
 const _cache = new Map()
-const CACHE_TTL = 30_000 // 30 seconds
+const CACHE_TTL = 30_000
 function cacheGet(key) {
   const e = _cache.get(key)
   if (!e) return null
@@ -39,7 +33,7 @@ function parseSetCookie(setCookieHeader) {
   return cookies.join('; ')
 }
 
-function commonHeaders(session, extra = {}) {
+function commonHeaders(extra = {}) {
   const h = {
     'Accept': 'application/json, text/plain, */*',
     'Content-Type': 'application/json',
@@ -48,48 +42,15 @@ function commonHeaders(session, extra = {}) {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
     ...extra,
   }
-  if (session && session.cookieString) h['Cookie'] = session.cookieString
+  if (_session && _session.cookieString) h['Cookie'] = _session.cookieString
   return h
 }
 
-function _getSession(username) {
-  if (username) return _sessions.get(username) || null
-  return _globalSession
-}
-function _setSession(username, session) {
-  if (username) _sessions.set(username, session)
-  else _globalSession = session
-}
-function _getCreds(username) {
-  if (!username) {
-    const u = process.env.GAJAMADA_USERNAME
-    const p = process.env.GAJAMADA_PASSWORD
-    if (!u || !p) return null
-    return { email: u, password: p }
-  }
-  return _creds.get(username) || null
-}
-
-// --- Public credential management ---
-export function setCreds(username, { email, password }) {
-  _creds.set(username, { email, password })
-  _sessions.delete(username) // clear existing session for this user
-}
-export function hasCreds(username) {
-  if (!username) return !!(process.env.GAJAMADA_USERNAME && process.env.GAJAMADA_PASSWORD)
-  return _creds.has(username)
-}
-export function clearSession(username) {
-  if (username) _sessions.delete(username)
-  else _globalSession = null
-}
-
-async function doLogin(username) {
-  const creds = _getCreds(username)
-  if (!creds || !creds.email || !creds.password) {
-    const err = new Error(username
-      ? `Kredensial Gajamada belum di-set untuk ${username}`
-      : 'Gajamada credentials not set in env (GAJAMADA_USERNAME / GAJAMADA_PASSWORD)')
+async function doLogin() {
+  const email = process.env.GAJAMADA_USERNAME
+  const password = process.env.GAJAMADA_PASSWORD
+  if (!email || !password) {
+    const err = new Error('Gajamada credentials not set in env (GAJAMADA_USERNAME / GAJAMADA_PASSWORD)')
     err.code = 'GAJAMADA_DISABLED'
     throw err
   }
@@ -97,8 +58,8 @@ async function doLogin(username) {
   const url = `${BASE_URL}/api/v1/apps/auth/login`
   const res = await fetch(url, {
     method: 'POST',
-    headers: commonHeaders(null, { 'Cookie': '' }),
-    body: JSON.stringify({ email: creds.email, password: creds.password }),
+    headers: commonHeaders({ 'Cookie': '' }),
+    body: JSON.stringify({ email, password }),
   })
 
   let setCookie = null
@@ -114,50 +75,46 @@ async function doLogin(username) {
     throw new Error(`Gajamada login failed: ${res.status} ${JSON.stringify(body?.metaData || body)}`)
   }
 
-  const session = {
+  _session = {
     cookieString: cookieStr,
     user: body.data?.user || null,
     loggedInAt: Date.now(),
   }
-  _setSession(username, session)
-  return session
+  return _session
 }
 
-async function ensureSession(username) {
-  const sess = _getSession(username)
-  if (!sess || !sess.cookieString) {
-    await doLogin(username)
+async function ensureSession() {
+  if (!_session || !_session.cookieString) {
+    await doLogin()
     return
   }
   try {
     const res = await fetch(`${BASE_URL}/api/v1/apps/auth/validate`, {
       method: 'GET',
-      headers: commonHeaders(sess),
+      headers: commonHeaders(),
     })
     if (res.ok) {
       const j = await res.json().catch(() => null)
       if (j?.data?.status === 'active') return
     }
-  } catch (_) { /* ignore */ }
-  await doLogin(username)
+  } catch (_) {}
+  await doLogin()
 }
 
-async function apiCall(username, path, options = {}, retry = true) {
-  await ensureSession(username)
-  const sess = _getSession(username)
+async function apiCall(path, options = {}, retry = true) {
+  await ensureSession()
   const url = `${BASE_URL}${path}`
   const res = await fetch(url, {
     ...options,
     headers: {
-      ...commonHeaders(sess),
+      ...commonHeaders(),
       ...(options.headers || {}),
     },
   })
   if ((res.status === 401 || res.status === 403) && retry) {
-    _sessions.delete(username)
-    if (!username) _globalSession = null
-    await doLogin(username)
-    return apiCall(username, path, options, false)
+    _session = null
+    await doLogin()
+    return apiCall(path, options, false)
   }
   const body = await res.json().catch(() => null)
   return { status: res.status, body }
@@ -165,17 +122,15 @@ async function apiCall(username, path, options = {}, retry = true) {
 
 // -------------------- Public API --------------------
 
-export async function login(username = null) {
-  return await doLogin(username)
+export function clearSession() {
+  _session = null
 }
 
-export function getSessionUser(username = null) {
-  const sess = _getSession(username)
-  return sess?.user || null
+export function getSessionUser() {
+  return _session?.user || null
 }
 
-// List cases with filters. filters is object: { status, category, disposisi_case_position, search, from, to, page, size, units }
-export async function listCases(username = null, {
+export async function listCases({
   page = 1,
   size = 30,
   order = 'desc',
@@ -270,14 +225,14 @@ export async function listCases(username = null, {
       domain: 'gajamada-propam.polri.go.id',
     },
     filters,
-    ...(search ? { search, search_by: ['prepetrator_name', 'content', 'category'] } : {}),
+    ...(search ? { search, search_by: ['prepetrator_id', 'pengirim', 'prepetrator_name', 'perihal', 'content', 'category'] } : {}),
   }
 
-  const cacheKey = (username || '_') + ':listCases:' + JSON.stringify(payload)
+  const cacheKey = 'listCases:' + JSON.stringify(payload)
   const cached = cacheGet(cacheKey)
   if (cached) return cached
 
-  const { body } = await apiCall(username, '/api/v1/apps/data/management/get-all', {
+  const { body } = await apiCall('/api/v1/apps/data/management/get-all', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -291,7 +246,7 @@ export async function listCases(username = null, {
   return result
 }
 
-export async function getCase(username = null, prepetratorId) {
+export async function getCase(prepetratorId) {
   const payload = {
     connectionId: CONNECTION_ID,
     table: 'gold.report',
@@ -310,14 +265,14 @@ export async function getCase(username = null, prepetratorId) {
       },
     ],
   }
-  const { body } = await apiCall(username, '/api/v1/apps/data/management/get-all', {
+  const { body } = await apiCall('/api/v1/apps/data/management/get-all', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
   return body?.data?.[0] || null
 }
 
-export async function getCaseAttachments(username = null, prepetratorId) {
+export async function getCaseAttachments(prepetratorId) {
   const payload = {
     connectionId: CONNECTION_ID,
     queryId: '4f602f42d1b2b8a6d387b6026c5efba5',
@@ -338,7 +293,7 @@ export async function getCaseAttachments(username = null, prepetratorId) {
       },
     ],
   }
-  const { body } = await apiCall(username, '/api/v2/apps/config/handler', {
+  const { body } = await apiCall('/api/v2/apps/config/handler', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -348,7 +303,7 @@ export async function getCaseAttachments(username = null, prepetratorId) {
   return rows.map((row) => Object.fromEntries(header.map((k, i) => [k, row[i]])))
 }
 
-export async function getCategories(username = null, disposisiCasePosition) {
+export async function getCategories(disposisiCasePosition) {
   const payload = {
     page: 1,
     size: 100,
@@ -376,14 +331,14 @@ export async function getCategories(username = null, disposisiCasePosition) {
       }] : []),
     ],
   }
-  const { body } = await apiCall(username, '/api/v1/apps/data/management/get-all', {
+  const { body } = await apiCall('/api/v1/apps/data/management/get-all', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
   return (body?.data || []).map((r) => r.value).filter(Boolean)
 }
 
-export async function getStatuses(username = null, disposisiCasePosition) {
+export async function getStatuses(disposisiCasePosition) {
   const payload = {
     page: 1,
     size: 100,
@@ -418,14 +373,14 @@ export async function getStatuses(username = null, disposisiCasePosition) {
       }] : []),
     ],
   }
-  const { body } = await apiCall(username, '/api/v1/apps/data/management/get-all', {
+  const { body } = await apiCall('/api/v1/apps/data/management/get-all', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
   return (body?.data || []).map((r) => r.value).filter(Boolean)
 }
 
-export async function getUnitsCatalog(username = null, parentPosition) {
+export async function getUnitsCatalog(parentPosition) {
   const payload = {
     orderBy: '',
     order: 'asc',
@@ -442,14 +397,14 @@ export async function getUnitsCatalog(username = null, parentPosition) {
       value: { is: parentPosition },
     }] : [],
   }
-  const { body } = await apiCall(username, '/api/v1/apps/data/management/get-all', {
+  const { body } = await apiCall('/api/v1/apps/data/management/get-all', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
   return body?.data || []
 }
 
-export async function getTimeline(username = null, prepetratorId) {
+export async function getTimeline(prepetratorId) {
   const payload = {
     connectionId: CONNECTION_ID,
     queryId: '7761377d7802b8a2f07e200d8cde526b',
@@ -468,7 +423,7 @@ export async function getTimeline(username = null, prepetratorId) {
       },
     ],
   }
-  const { body } = await apiCall(username, '/api/v2/apps/config/handler', {
+  const { body } = await apiCall('/api/v2/apps/config/handler', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -478,9 +433,7 @@ export async function getTimeline(username = null, prepetratorId) {
   return rows.map((row) => Object.fromEntries(header.map((k, i) => [k, row[i]])))
 }
 
-// Fetch kesatuan/unit catalog — includes POLRES, MABES, etc.
-// Filterable by polda_name pattern (e.g. contains "JABAR" or "JAWA BARAT")
-export async function getKesatuanCatalog(username = null, nameFilter = '') {
+export async function getKesatuanCatalog(nameFilter = '') {
   const filters = []
   if (nameFilter) {
     filters.push({
@@ -501,7 +454,7 @@ export async function getKesatuanCatalog(username = null, nameFilter = '') {
     database: DATABASE,
     filters,
   }
-  const { body } = await apiCall(username, '/api/v1/apps/data/management/get-all', {
+  const { body } = await apiCall('/api/v1/apps/data/management/get-all', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -512,20 +465,37 @@ export async function getKesatuanCatalog(username = null, nameFilter = '') {
   }))
 }
 
-// Discover internal Polda Jabar unit hierarchy from Gajamada cases
-export async function getPoldaJabarUnits(username = null) {
+export async function getPoldaJabarUnits() {
   const all = []
-  // 1. Internal units via catalog_unit_v2 (case_position, case_position_after)
-  const catalog = await getUnitsCatalog(username, null)
+  const catalog = await getUnitsCatalog(null)
+
+  const isJabarName = (n) => n.includes('JABAR') || n.includes('JAWA BARAT') || n.includes('BANDUNG')
+
   for (const c of catalog) {
     if (!c.case_position) continue
     const name = c.case_position.toUpperCase()
-    if (name.includes('JABAR') || name.includes('JAWA BARAT') || name.includes('BANDUNG') || name.includes('PAMINAL') || name.includes('PROVOS') || name.includes('WABPROF') || name.includes('YANDUAN') || name.includes('WASSIDIK')) {
+    if (isJabarName(name)) {
       all.push({ name: c.case_position, parent: c.case_position_after || null, level: 'INTERNAL', source: 'catalog_unit_v2' })
     }
   }
-  // 2. POLRES jajaran via catalog_kesatuan_terlapor (contains JABAR)
-  const kesatuan = await getKesatuanCatalog(username, 'JABAR')
+
+  const jabarNames = new Set(all.map((a) => a.name.toUpperCase()))
+  for (let added = true; added;) {
+    added = false
+    for (const c of catalog) {
+      if (!c.case_position) continue
+      const name = c.case_position.toUpperCase()
+      if (jabarNames.has(name)) continue
+      const parent = (c.case_position_after || '').toUpperCase()
+      if (jabarNames.has(parent)) {
+        all.push({ name: c.case_position, parent: c.case_position_after || null, level: 'INTERNAL', source: 'catalog_unit_v2' })
+        jabarNames.add(name)
+        added = true
+      }
+    }
+  }
+
+  const kesatuan = await getKesatuanCatalog('JABAR')
   for (const k of kesatuan) {
     if (!all.some((a) => a.name === k.name)) {
       all.push({ name: k.name, parent: null, level: k.level, source: 'catalog_kesatuan_terlapor' })
@@ -534,33 +504,31 @@ export async function getPoldaJabarUnits(username = null) {
   return all
 }
 
-export async function pushUpdate(username = null, params) {
+export async function pushUpdate(params) {
   const payload = {
     client: 'Propam Polri',
     gatewayId: WIDGET_AKSI_GATEWAY_ID,
     params,
     body: {},
   }
-  const { status, body } = await apiCall(username, '/api/v1/apps/api/gateway/execute', {
+  const { status, body } = await apiCall('/api/v1/apps/api/gateway/execute', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
   return { status, body }
 }
 
-export async function downloadAttachment(username = null, url) {
-  await ensureSession(username)
-  const sess = _getSession(username)
+export async function downloadAttachment(url) {
+  await ensureSession()
   let finalUrl = url
   if (url.startsWith('s3://fusion/')) {
     const key = url.substring('s3://fusion/'.length)
     finalUrl = `${BASE_URL}/cdn/media/fusion/${key}`
   }
-  const res = await fetch(finalUrl, { headers: commonHeaders(sess) })
+  const res = await fetch(finalUrl, { headers: commonHeaders() })
   return res
 }
 
-// Test connection with provided credentials (does not store, just validates)
 export async function testLogin({ email, password }) {
   const url = `${BASE_URL}/api/v1/apps/auth/login`
   const res = await fetch(url, {
