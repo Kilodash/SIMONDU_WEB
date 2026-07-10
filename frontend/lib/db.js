@@ -225,11 +225,6 @@ export async function getAllActiveUnitNames() {
       }).catch(() => {})
     }
   }
-  // Deactivate old WASSIDIK sub-unit entries (seed cleanup)
-  await db.collection('units_master').updateMany(
-    { source: 'seed', name: /^BAG WASSIDIK|^UNIT WABPROF/i },
-    { $set: { active: false } }
-  ).catch(() => {})
 
   const rows = await db.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
 
