@@ -1607,7 +1607,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
       )}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* PANEL 1: Detail + Preview/Kronologi + Timeline (scrollable) */}
-        <Card className="lg:col-span-7 flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 180px)' }}>
+        <Card className="lg:col-span-7 flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 120px)' }}>
           <div className={`${editMode ? 'bg-gradient-to-r from-amber-800 to-amber-900' : 'bg-gradient-to-r from-blue-900 to-indigo-900'} text-white p-3 shrink-0`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
@@ -1715,7 +1715,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
         </Card>
 
         {/* KOLOM KANAN: Lembar Disposisi + Over-ride */}
-        <div className="lg:col-span-5 flex flex-col gap-4" style={{ maxHeight: 'calc(100vh - 180px)' }}>
+        <div className="lg:col-span-5 flex flex-col gap-4" style={{ maxHeight: 'calc(100vh - 120px)' }}>
 
         {/* PANEL 2: Lembar Disposisi */}
         <Card className="flex-1 min-h-0 flex flex-col overflow-hidden border-2 border-blue-300">
@@ -1822,7 +1822,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
                   </Button>
                 </div>
               ) : (
-                <Button onClick={submitAndNext} disabled={submitting || (!isSaranMode && !toUnit) || (isSaranMode && !(saranChecklist.penelaahan && saranChecklist.kelengkapan))} className="w-full bg-blue-800 hover:bg-blue-900" data-testid="disposisi-submit">
+                <Button onClick={submitAndNext} disabled={submitting || (!isSaranMode && !toUnit) || (isSaranMode && !(saranChecklist.penelaahan && saranChecklist.kelengkapan && note.trim() && saranUnit))} className="w-full bg-blue-800 hover:bg-blue-900" data-testid="disposisi-submit">
                   {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : isSaranMode ? <FileText className="h-4 w-4 mr-2" /> : <ArrowRightLeft className="h-4 w-4 mr-2" />}
                   {isSaranMode ? 'Simpan Saran & Lanjut' : 'Disposisi & Lanjut'}
                 </Button>
@@ -1854,7 +1854,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
               <Label className="text-xs">Catatan Over-ride</Label>
               <Textarea value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)} placeholder="Alasan distribusi langsung ke satker/satwil..." className="min-h-[60px] text-xs" />
             </div>
-            <Button onClick={submitOverride} disabled={overrideSubmitting || !overrideUnit} className="w-full bg-amber-700 hover:bg-amber-800" size="sm">
+            <Button onClick={submitOverride} disabled={overrideSubmitting || !overrideUnit || !overrideNote.trim()} className="w-full bg-amber-700 hover:bg-amber-800" size="sm">
               {overrideSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
               Distribusi Langsung
             </Button>
