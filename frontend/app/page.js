@@ -1607,7 +1607,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
       )}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* PANEL 1: Detail + Preview/Kronologi + Timeline (scrollable) */}
-        <Card className="lg:col-span-7 flex flex-col overflow-hidden" style={{ maxHeight: 'calc(100vh - 60px)' }}>
+         <Card className="lg:col-span-7 flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 60px)' }}>
           <div className={`${editMode ? 'bg-gradient-to-r from-amber-800 to-amber-900' : 'bg-gradient-to-r from-blue-900 to-indigo-900'} text-white p-3 shrink-0`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
@@ -1681,6 +1681,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
               {timeline.length === 0 ? (
                 <p className="text-xs text-slate-500 italic py-3 text-center" data-testid="timeline-empty">Belum ada timeline untuk surat ini.</p>
               ) : (
+                <div className="max-h-[40vh] overflow-y-auto">
                 <ol className="relative border-l-2 border-slate-200 pl-4 space-y-3">
                   {timeline.map((r, i) => {
                     const title = r.title || r.status_alias || r.status || 'Aktivitas'
@@ -1709,6 +1710,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
                     )
                   })}
                 </ol>
+                </div>
               )}
             </section>
           </div>
@@ -1833,7 +1835,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
 
         {/* Over-ride Distribusi Langsung (admin/subbag yanduan only) */}
         {isSaranMode && canOverride && (
-         <Card className="flex-none flex flex-col overflow-hidden border-2 border-amber-300 bg-amber-50/20">
+         <Card className="flex-none h-fit flex flex-col overflow-hidden border-2 border-amber-300 bg-amber-50/20">
           <div className="shrink-0 bg-amber-50/60 px-4 py-2.5 border-b border-amber-200 flex items-center justify-between">
             <CardTitle className="text-sm flex items-center gap-2">
               <Send className="h-4 w-4 text-amber-700" />
