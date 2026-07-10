@@ -1542,7 +1542,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
 
   if (tab === 'riwayat') {
     return (
-      <div className="space-y-4">
+    <div className="space-y-4 pb-16">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <h2 className="text-2xl font-bold text-slate-900">{isSaranMode ? 'Saran/Masukan' : 'Disposisi'}</h2>
@@ -1834,13 +1834,13 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
         {/* Over-ride Distribusi Langsung (admin/subbag yanduan only) */}
         {isSaranMode && canOverride && (
          <Card className="flex-none flex flex-col overflow-hidden border-2 border-amber-300 bg-amber-50/20">
-          <button type="button" onClick={() => setOverrideOpen(!overrideOpen)} className="shrink-0 bg-amber-50/60 hover:bg-amber-100/60 transition-colors px-4 py-2.5 border-b border-amber-200 text-left">
+          <div className="shrink-0 bg-amber-50/60 px-4 py-2.5 border-b border-amber-200 flex items-center justify-between">
             <CardTitle className="text-sm flex items-center gap-2">
-              {overrideOpen ? <ChevronDown className="h-4 w-4 text-amber-700" /> : <ChevronRight className="h-4 w-4 text-amber-700" />}
               <Send className="h-4 w-4 text-amber-700" />
               Distribusi Langsung (Over-ride)
             </CardTitle>
-          </button>
+            <Switch checked={overrideOpen} onCheckedChange={setOverrideOpen} />
+          </div>
           {overrideOpen && (
           <div className="overflow-y-auto p-4 space-y-3">
             <div>
@@ -1873,7 +1873,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
 
       {/* Navigation bar — below content, above bottom */}
       {!editMode && (
-      <div className="bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] sticky bottom-0 z-30" data-testid="bottom-nav">
+      <div className="bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] fixed bottom-0 left-64 right-0 z-30" data-testid="bottom-nav">
         <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
           <Button variant="outline" size="sm" onClick={goPrev} disabled={idx === 0} className="text-xs min-w-[80px]" data-testid="btn-prev">
             <ChevronLeft className="h-4 w-4 mr-1" /> Prev
