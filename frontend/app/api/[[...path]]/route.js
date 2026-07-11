@@ -995,13 +995,14 @@ async function handleRoute(request, ctx) {
       try {
         const localStatuses = isKabid ? [STATUS.SURAT_MASUK_POLDA_JABAR, STATUS.DISPOSISI_PIMPINAN] : [STATUS.SURAT_MASUK_POLDA_JABAR]
         const localCases = await db.collection('local_cases').find({ status: { $in: localStatuses } }).sort({ created_at: -1 }).limit(50).toArray()
-        const localPids = localCases.map((c) => c.prepator_id)
+        const localPids = localCases.map((c) => c.prepator_id || c.prepetrator_id).filter(Boolean)
         const localDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
         const localDispSet = new Set(localDisp.map((d) => d.prepetrator_id))
         for (const lc of localCases) {
-          if (!localDispSet.has(lc.prepator_id)) {
+          const pid = lc.prepator_id || lc.prepetrator_id
+          if (!pid || !localDispSet.has(pid)) {
             localQueue.push({
-              id: lc.prepator_id, prepetrator_id: lc.prepator_id,
+              id: pid, prepetrator_id: pid,
               prepetrator_name: lc.prepator_name || lc.pengirim || '-',
               category: lc.category || 'NON-DUMAS', source_alias: lc.source_alias || lc.source,
               summary: lc.perihal || lc.summary || '', content: lc.content || '',
@@ -1033,11 +1034,11 @@ async function handleRoute(request, ctx) {
         try {
           const db = await getDb()
           const localCases = await db.collection('local_cases').find({ status: { $in: [STATUS.SURAT_MASUK_POLDA_JABAR, STATUS.DISPOSISI_PIMPINAN] } }).toArray()
-          const localPids = localCases.map((c) => c.prepetrator_id)
+          const localPids = localCases.map((c) => c.prepator_id || c.prepetrator_id).filter(Boolean)
           if (localPids.length) {
             const localDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
             const localDispSet = new Set(localDisp.map((d) => d.prepetrator_id))
-            count = localCases.filter((c) => !localDispSet.has(c.prepetrator_id)).length
+            count = localCases.filter((c) => !localDispSet.has(c.prepator_id || c.prepetrator_id)).length
           }
         } catch (_) {}
         return ok({ count })
