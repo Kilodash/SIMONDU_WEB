@@ -981,25 +981,49 @@ async function handleRoute(request, ctx) {
 
       const r = await gajamada.listCases({ units: queueUnits, size: 100 }).catch(() => ({ data: [] }))
       const pids = r.data.map((c) => c.prepetrator_id)
-      const [disp, saran] = await Promise.all([
-        db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray(),
-        db.collection('saran_yanduan').find({ prepetrator_id: { $in: pids } }).toArray().catch(() => []),
-      ])
+      const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
       const dispSet = new Set(disp.map((d) => d.prepetrator_id))
-      const saranSet = new Set(saran.map((s) => s.prepetrator_id))
-      const gajamadaQueue = r.data.filter((c) => !dispSet.has(c.prepetrator_id) && !saranSet.has(c.prepetrator_id)).map((c) => ({
+      // Check local_cases status to exclude already-submitted saran from Yanduan queue
+      let localStatusMap = new Map()
+      if (isYanduan && pids.length > 0) {
+        try {
+          const lcRows = await db.collection('local_cases').find({ prepetrator_id: { $in: pids } }).toArray().catch(() => [])
+          for (const lc of lcRows) { const lcPid = lc.prepator_id || lc.prepetrator_id; if (lcPid) localStatusMap.set(lcPid, lc.status) }
+        } catch (_) {}
+      }
+      const gajamadaQueue = r.data.filter((c) => {
+        if (dispSet.has(c.prepetrator_id)) return false
+        if (isYanduan) {
+          const lcStatus = localStatusMap.get(c.prepetrator_id)
+          // Exclude if already processed by Yanduan (saran submitted, status changed)
+          if (lcStatus && lcStatus !== STATUS.SURAT_MASUK_POLDA_JABAR && lcStatus !== 'Dikembalikan ke Subbag Yanduan') return false
+        }
+        return true
+      }).map((c) => ({
         ...c,
         summary: c.perihal || c.summary || (c.content ? String(c.content).slice(0, 200) : ''),
         _source: 'gajamada',
         source_alias: c.source_alias || 'GAJAMADA',
       }))
 
-      // Local cases (manual) not yet dispositioned — Kabid: filter to cases needing Kabid
+      // Local cases for queue
       const localQueue = []
       try {
-        const localStatuses = isKabid ? [STATUS.SURAT_MASUK_POLDA_JABAR, STATUS.DISPOSISI_PIMPINAN] : [STATUS.SURAT_MASUK_POLDA_JABAR, 'Dikembalikan ke Subbag Yanduan']
-        const localCases = await db.collection('local_cases').find({ status: { $in: localStatuses } }).toArray()
-        // Sort locally (PostgREST fails if created_at is missing on some docs)
+        let localCases = []
+        if (isKabid) {
+          const [c1, c2] = await Promise.all([
+            db.collection('local_cases').find({ status: STATUS.SURAT_MASUK_POLDA_JABAR }).toArray(),
+            db.collection('local_cases').find({ status: STATUS.DISPOSISI_PIMPINAN }).toArray(),
+          ])
+          localCases = [...c1, ...c2]
+        } else {
+          const [c1, c2] = await Promise.all([
+            db.collection('local_cases').find({ status: STATUS.SURAT_MASUK_POLDA_JABAR }).toArray(),
+            db.collection('local_cases').find({ status: 'Dikembalikan ke Subbag Yanduan' }).toArray(),
+          ])
+          localCases = [...c1, ...c2]
+        }
+        // Sort locally
         localCases.sort((a, b) => new Date(b.created_at || b.updated_at || 0).getTime() - new Date(a.created_at || a.updated_at || 0).getTime())
         const limited = localCases.slice(0, 50)
         const localPids = limited.map((c) => c.prepator_id || c.prepetrator_id).filter(Boolean)
@@ -1037,10 +1061,14 @@ async function handleRoute(request, ctx) {
       let count = 0
 
       if (isKabid) {
-        // Kabid: only count local cases waiting for disposition
+        // Kabid: count local cases waiting for disposition (separate queries, no $in)
         try {
           const db = await getDb()
-          const localCases = await db.collection('local_cases').find({ status: { $in: [STATUS.SURAT_MASUK_POLDA_JABAR, STATUS.DISPOSISI_PIMPINAN] } }).toArray()
+          const [c1, c2] = await Promise.all([
+            db.collection('local_cases').find({ status: STATUS.SURAT_MASUK_POLDA_JABAR }).toArray(),
+            db.collection('local_cases').find({ status: STATUS.DISPOSISI_PIMPINAN }).toArray(),
+          ])
+          const localCases = [...c1, ...c2]
           const localPids = localCases.map((c) => c.prepator_id || c.prepetrator_id).filter(Boolean)
           if (localPids.length) {
             const localDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
@@ -1058,24 +1086,38 @@ async function handleRoute(request, ctx) {
           })
         : await getKasubbidAliases()
 
-      // Gajamada undisposed
+      // Gajamada count: exclude cases already dispositioned or with saran submitted
       try {
         const r = await gajamada.listCases({ units: queueUnits, size: 100 }).catch(() => ({ data: [] }))
         const pids = r.data.map((c) => c.prepetrator_id)
         const db = await getDb()
-        const [disp, saran] = await Promise.all([
-          db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray(),
-          db.collection('saran_yanduan').find({ prepetrator_id: { $in: pids } }).toArray().catch(() => []),
-        ])
+        const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
         const dispSet = new Set(disp.map((d) => d.prepetrator_id))
-        const saranSet = new Set(saran.map((s) => s.prepetrator_id))
-        count += r.data.filter((c) => !dispSet.has(c.prepetrator_id) && !saranSet.has(c.prepetrator_id)).length
+        let localStatusMap = new Map()
+        if (isYanduan && pids.length > 0) {
+          try {
+            const lcRows = await db.collection('local_cases').find({ prepetrator_id: { $in: pids } }).toArray().catch(() => [])
+            for (const lc of lcRows) { const lcPid = lc.prepator_id || lc.prepetrator_id; if (lcPid) localStatusMap.set(lcPid, lc.status) }
+          } catch (_) {}
+        }
+        count += r.data.filter((c) => {
+          if (dispSet.has(c.prepetrator_id)) return false
+          if (isYanduan) {
+            const lcStatus = localStatusMap.get(c.prepetrator_id)
+            if (lcStatus && lcStatus !== STATUS.SURAT_MASUK_POLDA_JABAR && lcStatus !== 'Dikembalikan ke Subbag Yanduan') return false
+          }
+          return true
+        }).length
       } catch (_) {}
 
-      // Local cases undisposed
+      // Local cases count
       try {
         const db2 = await getDb()
-        const localCases = await db2.collection('local_cases').find({ status: { $in: [STATUS.SURAT_MASUK_POLDA_JABAR, 'Dikembalikan ke Subbag Yanduan'] } }).toArray()
+        const [c1, c2] = await Promise.all([
+          db2.collection('local_cases').find({ status: STATUS.SURAT_MASUK_POLDA_JABAR }).toArray(),
+          db2.collection('local_cases').find({ status: 'Dikembalikan ke Subbag Yanduan' }).toArray(),
+        ])
+        const localCases = [...c1, ...c2]
         const localPids = localCases.map((c) => c.prepator_id || c.prepetrator_id).filter(Boolean)
         if (localPids.length) {
           const localDisp = await db2.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()

@@ -1000,8 +1000,9 @@ function CasesList({ user, onOpenCase }) {
     } catch (e) { toast.error(e.message) }
     finally { setLoading(false) }
   }, [page, status, category, unit, polres, search, size, sourceFilter])
-  useEffect(() => { load() }, [page, status, category, unit, polres, search, size, sourceFilter])
+  useEffect(() => { load() }, [page])
   useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
+  useEffect(() => { if (!sourceFilter) load() }, []) // initial load for Gajamada tab
 
   const onSearch = useCallback((e) => { e.preventDefault(); setPage(1); load() }, [load])
   const clearFilter = useCallback(() => { setStatus(''); setCategory(''); setUnit(''); setPolres(''); setSearch(''); setPage(1) }, [])
@@ -1188,8 +1189,8 @@ function CasesList({ user, onOpenCase }) {
       <div className="shrink-0 bg-white border-t py-3 px-4 flex items-center justify-between z-10">
         <p className="text-sm text-slate-600 font-medium">Halaman {page} dari {maxPage} · {size} per halaman · <span className="text-blue-800 font-bold">Total {total.toLocaleString('id-ID')}</span></p>
         <div className="flex items-center gap-1">
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(1)}>Awal</Button>
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Sebelumnya</Button>
+          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page => 1)}>Awal</Button>
+          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page => page - 1)}>Sebelumnya</Button>
           <form onSubmit={(e) => { e.preventDefault(); const v = parseInt(e.target.elements.pageInput.value, 10); if (v >= 1 && v <= maxPage) setPage(v) }} className="flex items-center gap-1">
             <input name="pageInput" type="number" min={1} max={maxPage} defaultValue={page} key={page} className="w-14 h-9 text-center text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
           </form>
