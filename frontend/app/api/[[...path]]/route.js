@@ -1694,18 +1694,23 @@ async function handleRoute(request, ctx) {
     if (route === '/download' && method === 'GET') {
       const target = url.searchParams.get('url')
       if (!target) return fail('url param required')
-      const res = await gajamada.downloadAttachment(target)
-      const buffer = await res.arrayBuffer()
-      const contentType = res.headers.get('content-type') || 'application/octet-stream'
-      const name = url.searchParams.get('name') || target.split('/').pop() || 'file'
-      return new NextResponse(Buffer.from(buffer), {
-        status: 200,
-        headers: {
-          'Content-Type': contentType,
-          'Content-Disposition': `inline; filename="${name}"`,
-          'Cache-Control': 'private, max-age=60',
-        },
-      })
+      try {
+        const res = await gajamada.downloadAttachment(target)
+        const buffer = await res.arrayBuffer()
+        const contentType = res.headers.get('content-type') || 'application/octet-stream'
+        const name = url.searchParams.get('name') || target.split('/').pop() || 'file'
+        return new NextResponse(Buffer.from(buffer), {
+          status: 200,
+          headers: {
+            'Content-Type': contentType,
+            'Content-Disposition': `inline; filename="${name}"`,
+            'Cache-Control': 'private, max-age=60',
+          },
+        })
+      } catch (e) {
+        console.error('download error:', e.message)
+        return fail('Gagal mengunduh dari Gajamada. Sesi mungkin expired.', 502)
+      }
     }
 
     // ---------- ANEV ----------

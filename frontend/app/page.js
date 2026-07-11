@@ -897,13 +897,13 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
             </Dialog>
 
             <Dialog open={dlPreviewOpen} onOpenChange={setDlPreviewOpen}>
-              <DialogContent className="max-w-4xl h-[80vh]">
+              <DialogContent className="max-w-4xl h-[85vh] flex flex-col">
                 <DialogHeader><DialogTitle>Preview Dokumen</DialogTitle></DialogHeader>
-                <div className="flex-1 min-h-0 overflow-hidden">
+                <div className="flex-1 min-h-0 w-full">
                   {dlPreviewUrl && (dlPreviewUrl.toLowerCase().includes('.pdf') || dlPreviewUrl.toLowerCase().includes('type=pdf')) ? (
-                    <iframe src={dlPreviewUrl} className="w-full h-full min-h-[60vh] border-0" title="PDF Preview" />
+                    <embed src={dlPreviewUrl} type="application/pdf" className="w-full h-full min-h-[60vh]" />
                   ) : (
-                    <div className="flex items-center justify-center h-64 bg-slate-100 rounded-lg">
+                    <div className="flex items-center justify-center h-full bg-slate-100 rounded-lg">
                       <img src={dlPreviewUrl} alt="Preview" className="max-w-full max-h-full object-contain" />
                     </div>
                   )}
