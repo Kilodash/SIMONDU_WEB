@@ -568,9 +568,7 @@ export async function getDownloadUrl(url) {
   }
   return url
 }
-  const res = await fetch(finalUrl, { headers: commonHeaders() })
-  return res
-}
+
 
 export async function testLogin({ email, password, baseUrl }) {
   const loginUrl = (baseUrl || getBaseUrl()) + '/api/v1/apps/auth/login'
