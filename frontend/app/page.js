@@ -1000,7 +1000,7 @@ function CasesList({ user, onOpenCase }) {
     } catch (e) { toast.error(e.message) }
     finally { setLoading(false) }
   }, [page, status, category, unit, polres, search, size, sourceFilter])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { if (sourceFilter === 'manual' || sourceFilter === 'non_dumas' || sourceFilter === 'laporan_informasi') return; load() }, [page, status, category, unit, polres, search, size, sourceFilter])
   useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
 
   const onSearch = useCallback((e) => { e.preventDefault(); setPage(1); load() }, [load])
