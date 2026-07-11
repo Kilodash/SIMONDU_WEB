@@ -994,11 +994,14 @@ async function handleRoute(request, ctx) {
       const localQueue = []
       try {
         const localStatuses = isKabid ? [STATUS.SURAT_MASUK_POLDA_JABAR, STATUS.DISPOSISI_PIMPINAN] : [STATUS.SURAT_MASUK_POLDA_JABAR]
-        const localCases = await db.collection('local_cases').find({ status: { $in: localStatuses } }).sort({ created_at: -1 }).limit(50).toArray()
-        const localPids = localCases.map((c) => c.prepator_id || c.prepetrator_id).filter(Boolean)
+        const localCases = await db.collection('local_cases').find({ status: { $in: localStatuses } }).toArray()
+        // Sort locally (PostgREST fails if created_at is missing on some docs)
+        localCases.sort((a, b) => new Date(b.created_at || b.updated_at || 0).getTime() - new Date(a.created_at || a.updated_at || 0).getTime())
+        const limited = localCases.slice(0, 50)
+        const localPids = limited.map((c) => c.prepator_id || c.prepetrator_id).filter(Boolean)
         const localDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
         const localDispSet = new Set(localDisp.map((d) => d.prepetrator_id))
-        for (const lc of localCases) {
+        for (const lc of limited) {
           const pid = lc.prepator_id || lc.prepetrator_id
           if (!pid || !localDispSet.has(pid)) {
             localQueue.push({
@@ -1326,7 +1329,7 @@ async function handleRoute(request, ctx) {
         created_at: new Date(),
       }
       try { await db.collection('saran_yanduan').insertOne(doc) } catch (_) { /* table may not exist */ }
-      await db.collection('local_cases').updateOne({ prepetrator_id: pid }, { $set: { status: STATUS.DISPOSISI_PIMPINAN, updated_at: new Date() } }, { upsert: true })
+      await db.collection('local_cases').updateOne({ prepetrator_id: pid }, { $set: { status: STATUS.DISPOSISI_PIMPINAN, updated_at: new Date() }, $setOnInsert: { prepetrator_id: pid, created_at: new Date() } }, { upsert: true })
       await db.collection('timelines').insertOne({
         id: uuidv4(), prepetrator_id: pid,
         title: 'Saran/Masukan dari Yanduan',
