@@ -1975,29 +1975,40 @@ function UnitGroup({ parent, children, level, isKasubbid, onToggle, onEdit, onRe
 }
 
 function MasterUnitPage({ user }) {
-  const [units, setUnits] = useState([])
+  const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ name: '', parent: '', order: 99 })
-  const [allMappings, setAllMappings] = useState([])
+  const [form, setForm] = useState({ external_name: '', internal_unit: '' })
+  const [gjSearch, setGjSearch] = useState('')
   const [unmappedGj, setUnmappedGj] = useState([])
   const [gjLoaded, setGjLoaded] = useState(false)
-  const [gjAliases, setGjAliases] = useState('')
-  const [gjSearch, setGjSearch] = useState('')
-  const [dragId, setDragId] = useState(null)
-  const isKasubbid = user.role === 'kasubbid' || user.role === 'admin' || user.role === 'kabid_propam' || user.role === 'kasubbag_yanduan' || user.role === 'super_admin'
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin'
 
   const load = async () => {
     setLoading(true)
     try {
-      const [r, mr, sr] = await Promise.all([
-        api('/units-master'),
+      const [mr, sr] = await Promise.all([
         api('/unit-mapping'),
         api('/unit-mapping/sync', { method: 'POST' }),
       ])
-      setUnits((r.data || []).filter((u) => { const up = u.name.toUpperCase(); return !up.includes('MABES') && !up.includes('POLDA LAIN') }))
-      setAllMappings(mr.data || [])
+      const gm = {}
+      for (const m of mr.data || []) {
+        if (!gm[m.internal_unit]) gm[m.internal_unit] = []
+        gm[m.internal_unit].push(m)
+      }
+      const prio = (u) => {
+        const up = u.toUpperCase()
+        if (up.includes('SUBBID')) return 0
+        if (up.includes('SUBBAG')) return 1
+        if (up.includes('POLRESTABES')) return 2
+        if (up.includes('POLRESTA')) return 3
+        if (up.includes('POLRES')) return 4
+        if (up.includes('WASSIDIK')) return 5
+        return 6
+      }
+      const sorted = Object.keys(gm).sort((a, b) => prio(a) - prio(b) || a.localeCompare(b))
+      setGroups(sorted.map((k) => ({ internal_unit: k, mappings: gm[k] })))
       const jabar = (sr.unmapped || []).filter((n) => { const up = n.toUpperCase(); return up.includes('JAWA BARAT') || up.includes('JABAR') })
       setUnmappedGj(jabar)
       setGjLoaded(true)
@@ -2006,196 +2017,79 @@ function MasterUnitPage({ user }) {
   }
   useEffect(() => { load() }, [])
 
-  const openCreate = (parentUnit) => {
-    setEditing(null)
-    setForm({ name: '', parent: parentUnit ? parentUnit.name : '', order: 99 })
-    setGjAliases('')
-    setGjSearch('')
-    setDialogOpen(true)
-  }
-  const openEdit = (u) => {
-    setEditing(u)
-    setForm({ name: u.name, parent: u.parent || '', order: u.order || 99, active: u.active })
-    const mine = allMappings.filter((m) => m.internal_unit.toUpperCase() === u.name.toUpperCase())
-    setGjAliases(mine.map((m) => m.external_name).join('\n'))
-    setGjSearch('')
-    setDialogOpen(true)
-  }
+  const openAdd = (unit) => { setEditing(unit); setForm({ external_name: '', internal_unit: unit }); setGjSearch(''); setDialogOpen(true) }
   const save = async () => {
-    if (!form.name) return toast.error('Nama unit wajib')
+    if (!form.external_name || !form.internal_unit) return toast.error('Nama Gajamada wajib')
     try {
-      if (editing) {
-        await api(`/units-master/${encodeURIComponent(editing.id)}`, { method: 'PUT', body: JSON.stringify(form) })
-      } else {
-        await api('/units-master', { method: 'POST', body: JSON.stringify(form) })
-      }
-      await syncMappings(editing ? editing.name : form.name)
-      toast.success(editing ? 'Unit diperbarui' : 'Unit ditambahkan')
+      await api('/unit-mapping', { method: 'POST', body: JSON.stringify({ external_name: form.external_name, internal_unit: form.internal_unit }) })
+      toast.success('Mapping disimpan')
       setDialogOpen(false)
-      const r = await api('/units-master')
-      setUnits((r.data || []).filter((u) => { const up = u.name.toUpperCase(); return !up.includes('MABES') && !up.includes('POLDA LAIN') }))
-      const mr = await api('/unit-mapping')
-      setAllMappings(mr.data || [])
+      await load()
     } catch (e) { toast.error(e.message) }
   }
-  const syncMappings = async (unitName) => {
-    const lines = gjAliases.split('\n').map((s) => s.trim()).filter(Boolean)
-    const fresh = await api('/unit-mapping')
-    const oldIds = (fresh.data || []).filter((m) => m.internal_unit.toUpperCase() === unitName.toUpperCase()).map((m) => m.id)
-    for (const id of oldIds) { try { await api(`/unit-mapping/${encodeURIComponent(id)}`, { method: 'DELETE' }) } catch (_) {} }
-    for (const ext of lines) {
-      try { await api('/unit-mapping', { method: 'POST', body: JSON.stringify({ external_name: ext, internal_unit: unitName }) }) }
-      catch (e) { if (!e.message?.includes('sudah ada')) toast.error(`"${ext}": ${e.message}`) }
-    }
-  }
-  const remove = async (u) => {
-    if (!confirm(`Hapus unit "${u.name}"?`)) return
-    try { await api(`/units-master/${encodeURIComponent(u.id)}`, { method: 'DELETE' }); toast.success('Unit dihapus'); await load() }
+  const removeMapping = async (m) => {
+    if (!confirm(`Hapus "${m.external_name}"?`)) return
+    try { await api(`/unit-mapping/${encodeURIComponent(m.id)}`, { method: 'DELETE' }); toast.success('Dihapus'); await load() }
     catch (e) { toast.error(e.message) }
   }
-  const toggleActive = async (u) => {
-    try { await api(`/units-master/${encodeURIComponent(u.id)}`, { method: 'PATCH', body: JSON.stringify({ active: !u.active }) }); await load() }
-    catch (e) { toast.error(e.message) }
-  }
-
-  const addChip = (name) => {
-    const lines = gjAliases.split('\n').map((s) => s.trim()).filter(Boolean)
-    if (lines.includes(name)) return
-    setGjAliases(lines.concat(name).join('\n'))
-  }
-  const handleDragStart = (id) => setDragId(id)
-  const handleDragEnd = () => setDragId(null)
-  const handleDrop = async (targetId, draggedId) => {
-    if (!draggedId || draggedId === targetId) { setDragId(null); return }
-    const siblings = units.filter((u) => {
-      const draggedUnit = units.find((x) => x.id === draggedId)
-      const targetUnit = units.find((x) => x.id === targetId)
-      if (!draggedUnit || !targetUnit) return false
-      return (draggedUnit.parent || '__root__') === (targetUnit.parent || '__root__')
-    }).sort((a, b) => (a.order || 99) - (b.order || 99))
-    const dragged = units.find((u) => u.id === draggedId)
-    if (!dragged || siblings.length < 2) { setDragId(null); return }
-    const idxs = siblings.map((u) => u.id)
-    const from = idxs.indexOf(draggedId)
-    const to = idxs.indexOf(targetId)
-    if (from === -1 || to === -1) { setDragId(null); return }
-    const reordered = [...siblings]
-    reordered.splice(from, 1)
-    reordered.splice(to, 0, dragged)
-    const updates = reordered.map((u, i) => {
-      const newOrder = i * 10 + 10
-      if ((u.order || 99) !== newOrder) return api(`/units-master/${encodeURIComponent(u.id)}`, { method: 'PATCH', body: JSON.stringify({ order: newOrder }) })
-      return null
-    }).filter(Boolean)
-    try { await Promise.all(updates); const r = await api('/units-master'); setUnits((r.data || []).filter((u) => { const up = u.name.toUpperCase(); return !up.includes('MABES') && !up.includes('POLDA LAIN') })) } catch (_) {}
-    setDragId(null)
-  }
-
-  const saveAndNext = async () => {
-    if (!form.name) return toast.error('Nama unit wajib')
-    try {
-      if (editing) await api(`/units-master/${encodeURIComponent(editing.id)}`, { method: 'PUT', body: JSON.stringify(form) })
-      await syncMappings(editing.name)
-      toast.success('Unit disimpan')
-      const [r, mr] = await Promise.all([api('/units-master'), api('/unit-mapping')])
-      setUnits((r.data || []).filter((u) => { const up = u.name.toUpperCase(); return !up.includes('MABES') && !up.includes('POLDA LAIN') }))
-      setAllMappings(mr.data || [])
-      const flat = []
-      const walk = (list) => { for (const u of list) { flat.push(u); if (u.children) walk(u.children) } }
-      for (const [root, kids] of tree) { flat.push(root); walk(kids.map((c) => c[0])) }
-      const idx = flat.findIndex((u) => u.name.toUpperCase() === editing.name.toUpperCase())
-      const next = idx >= 0 ? flat[idx + 1] : null
-      if (next) {
-        setEditing(next)
-        setForm({ name: next.name, parent: next.parent || '', order: next.order || 99, active: next.active })
-        const mine = (mr.data || []).filter((m) => m.internal_unit.toUpperCase() === next.name.toUpperCase())
-        setGjAliases(mine.map((m) => m.external_name).join('\n'))
-        setGjSearch('')
-      } else { setDialogOpen(false); toast.info('Tidak ada unit berikutnya') }
-    } catch (e) { toast.error(e.message) }
-  }
-
-  const tree = useMemo(() => {
-    const byParent = {}
-    for (const u of units) {
-      const p = u.parent || '__root__'
-      if (!byParent[p]) byParent[p] = []
-      byParent[p].push(u)
-    }
-    const sorted = (arr) => arr.sort((a, b) => (a.order || 99) - (b.order || 99))
-    for (const k of Object.keys(byParent)) byParent[k] = sorted(byParent[k])
-    const buildChildren = (parentName) => {
-      const children = byParent[parentName] || []
-      return sorted(children).map((c) => [c, buildChildren(c.name)])
-    }
-    const roots = byParent['__root__'] || []
-    return sorted(roots).map((r) => [r, buildChildren(r.name)])
-  }, [units])
-
-  const gjMap = useMemo(() => {
-    const m = {}
-    for (const r of allMappings) {
-      if (!m[r.internal_unit]) m[r.internal_unit] = []
-      m[r.internal_unit].push(r.external_name)
-    }
-    return m
-  }, [allMappings])
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div><h2 className="text-2xl font-bold text-slate-900">Master Unit</h2>
-          <p className="text-xs text-slate-500 mt-0.5">Hierarki: Satker Induk — Sub Satker — Unit Pelaksana</p>
+        <div><h2 className="text-2xl font-bold text-slate-900">Master Unit Mapping</h2>
+          <p className="text-xs text-slate-500 mt-0.5">Mapping nama unit Gajamada ke unit SIMONDU ({groups.length} grup, total {groups.reduce((s, g) => s + g.mappings.length, 0)} entry)</p>
         </div>
-        {isKasubbid && (
-          <Button onClick={() => openCreate(null)}><Building2 className="h-4 w-4 mr-2" /> Tambah Satker Induk</Button>
-        )}
       </div>
 
       {loading ? <div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div> :
-        tree.length === 0 ? <Card><CardContent className="py-16 text-center"><p className="text-slate-500">Belum ada unit.</p></CardContent></Card> :
-        <Card className="divide-y">
-          {tree.map(([root, children]) => (
-            <UnitGroup key={root.id} parent={root} children={children} level={0}
-              isKasubbid={isKasubbid} onToggle={toggleActive} onEdit={openEdit} onRemove={remove}
-              onAddChild={(p) => openCreate(p)}
-              dragId={dragId} onDragStart={handleDragStart} onDragDrop={handleDrop} onDragEnd={handleDragEnd}
-              gjMap={gjMap} />
+        <div className="space-y-2">
+          {groups.map((g) => (
+            <Card key={g.internal_unit}>
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">{g.internal_unit}</CardTitle>
+                  {isAdmin && (
+                    <Button size="sm" variant="ghost" onClick={() => openAdd(g.internal_unit)}>+ Tambah Gajamada</Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-1">
+                  {g.mappings.map((m) => (
+                    <Badge key={m.id} variant="outline" className="bg-slate-50 text-[11px] cursor-pointer hover:bg-red-50 group" onClick={() => isAdmin && removeMapping(m)}>
+                      {m.external_name}
+                      <XCircle className="h-3 w-3 ml-1 text-slate-300 group-hover:text-red-500" />
+                    </Badge>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           ))}
-        </Card>}
+        </div>}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-xl">
-          <DialogHeader><DialogTitle>{editing ? 'Edit Unit' : 'Tambah Unit'}</DialogTitle></DialogHeader>
-          <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
-            <div><Label>Nama Unit</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="mis. POLRES BOGOR" /></div>
-            <div><Label>Parent Unit (kosongkan utk Satker Induk)</Label><Input value={form.parent} onChange={(e) => setForm({ ...form, parent: e.target.value })} placeholder="Nama unit induk..." /></div>
-            <div><Label>Urutan Tampilan</Label><Input type="number" value={form.order} onChange={(e) => setForm({ ...form, order: parseInt(e.target.value || '99', 10) })} /></div>
-            {editing && (
-
-            <div className="border-t pt-3">
-                <Label className="text-sm font-semibold mb-2 block">Mapping Nama Gajamada → Unit Ini</Label>
-                <p className="text-xs text-slate-500 mb-2">Nama unit di Gajamada yang dikenali sebagai unit ini saat sinkronisasi balik. Satu per baris.</p>
-                <Textarea className="text-xs font-mono" rows={3} value={gjAliases} onChange={(e) => setGjAliases(e.target.value)}
-                  placeholder="KAUR YANDUAN POLRES BOGOR POLDA JAWA BARAT&#10;KANIT PAMINAL POLRES BOGOR POLDA JAWA BARAT" />
-                <div className="flex items-center gap-1 mt-2 mb-1">
-                  <Input className="h-7 text-xs flex-1" placeholder="Filter suggestion..." value={gjSearch} onChange={(e) => setGjSearch(e.target.value)} />
-                  {gjSearch && <Button size="sm" variant="ghost" className="h-7 text-xs shrink-0" onClick={() => setGjSearch('')}>Reset</Button>}
-                </div>
+          <DialogHeader><DialogTitle>Tambah Mapping Gajamada → {editing}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Nama Unit di Gajamada</Label>
+              <Input value={form.external_name} onChange={(e) => setForm({ ...form, external_name: e.target.value })} placeholder="mis. KANIT PAMINAL POLRES BOGOR POLDA JAWA BARAT" />
+            </div>
+            {unmappedGj.length > 0 && (
+              <div>
+                <Label className="text-xs text-slate-500 mb-1 block">Saran dari Gajamada (klik untuk isi)</Label>
+                <Input className="h-7 text-xs mb-1" placeholder="Filter..." value={gjSearch} onChange={(e) => setGjSearch(e.target.value)} />
                 <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
-                  {unmappedGj.filter((n) => !gjSearch || n.toUpperCase().includes(gjSearch.toUpperCase())).slice(0, 30).map((n) => (
-                    <button key={n} type="button" className="text-[10px] bg-slate-100 hover:bg-blue-100 hover:text-blue-800 px-1.5 py-0.5 rounded cursor-pointer border border-slate-200"
-                      title={n} onClick={() => addChip(n)}>{n.length > 50 ? n.slice(0, 48) + '…' : n}</button>
+                  {unmappedGj.filter((n) => !gjSearch || n.toUpperCase().includes(gjSearch.toUpperCase())).slice(0, 20).map((n) => (
+                    <button key={n} type="button" className="text-[10px] bg-slate-100 hover:bg-blue-100 hover:text-blue-800 px-1.5 py-0.5 rounded cursor-pointer border border-slate-200 text-left"
+                      onClick={() => setForm({ ...form, external_name: n })}>{n.length > 55 ? n.slice(0, 53) + '…' : n}</button>
                   ))}
-                  {unmappedGj.length === 0 && gjLoaded && <span className="text-[10px] text-slate-400">Semua unit Gajamada sudah dipetakan</span>}
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1">{unmappedGj.length} unit Gajamada Jabar tersedia, klik untuk tambah</p>
               </div>
             )}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDialogOpen(false)}>Batal</Button>
-            {editing && <Button variant="outline" onClick={saveAndNext} className="mr-auto">Simpan &amp; Next</Button>}
             <Button onClick={save}>Simpan</Button>
           </DialogFooter>
         </DialogContent>
