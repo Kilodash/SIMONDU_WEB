@@ -993,7 +993,7 @@ async function handleRoute(request, ctx) {
       // Local cases (manual) not yet dispositioned — Kabid: filter to cases needing Kabid
       const localQueue = []
       try {
-        const localStatuses = isKabid ? [STATUS.SURAT_MASUK_POLDA_JABAR, STATUS.DISPOSISI_PIMPINAN] : [STATUS.SURAT_MASUK_POLDA_JABAR]
+        const localStatuses = isKabid ? [STATUS.SURAT_MASUK_POLDA_JABAR, STATUS.DISPOSISI_PIMPINAN] : [STATUS.SURAT_MASUK_POLDA_JABAR, 'Dikembalikan ke Subbag Yanduan']
         const localCases = await db.collection('local_cases').find({ status: { $in: localStatuses } }).toArray()
         // Sort locally (PostgREST fails if created_at is missing on some docs)
         localCases.sort((a, b) => new Date(b.created_at || b.updated_at || 0).getTime() - new Date(a.created_at || a.updated_at || 0).getTime())
@@ -1067,12 +1067,12 @@ async function handleRoute(request, ctx) {
       // Local cases undisposed
       try {
         const db2 = await getDb()
-        const localCases = await db2.collection('local_cases').find({ status: STATUS.SURAT_MASUK_POLDA_JABAR }).toArray()
-        const localPids = localCases.map((c) => c.prepetrator_id)
+        const localCases = await db2.collection('local_cases').find({ status: { $in: [STATUS.SURAT_MASUK_POLDA_JABAR, 'Dikembalikan ke Subbag Yanduan'] } }).toArray()
+        const localPids = localCases.map((c) => c.prepator_id || c.prepetrator_id).filter(Boolean)
         if (localPids.length) {
           const localDisp = await db2.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
           const localDispSet = new Set(localDisp.map((d) => d.prepetrator_id))
-          count += localCases.filter((c) => !localDispSet.has(c.prepetrator_id)).length
+          count += localCases.filter((c) => !localDispSet.has(c.prepator_id || c.prepetrator_id)).length
         }
       } catch (_) {}
 
