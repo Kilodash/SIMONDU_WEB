@@ -310,6 +310,8 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const [wassidikSaving, setWassidikSaving] = useState(false)
   const [terimaLoading, setTerimaLoading] = useState(false)
   const [showFullChronology, setShowFullChronology] = useState(false)
+  const [dlPreviewUrl, setDlPreviewUrl] = useState('')
+  const [dlPreviewOpen, setDlPreviewOpen] = useState(false)
   const [mergedTimeline, setMergedTimeline] = useState([])
   const [reference, setReference] = useState({ hasil_lidik_options: [], settlement_options: [], mapped_units: [], units: [] })
   const [notingItem, setNotingItem] = useState(null)
@@ -525,7 +527,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
               <Tabs defaultValue="info">
                 <TabsList className="grid grid-cols-5 w-full">
                   <TabsTrigger value="info">Info</TabsTrigger>
-                  <TabsTrigger value="attach">Sumber ({atts.length})</TabsTrigger>
+                  <TabsTrigger value="attach">Dokumen ({atts.length})</TabsTrigger>
                   <TabsTrigger value="docs">Tindak Lanjut</TabsTrigger>
                   <TabsTrigger value="timeline">Timeline ({mergedTimeline.length})</TabsTrigger>
                   <TabsTrigger value="sync">Sync ({data._internal?.sync_logs?.length || 0})</TabsTrigger>
@@ -584,22 +586,68 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
 
                 <TabsContent value="attach" className="mt-4">
                   <Card><CardHeader className="pb-2">
-                    <CardTitle className="text-sm">Dokumen Sumber Pengaduan (Gajamada)</CardTitle>
-</CardHeader>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm">Dokumen Sumber Pengaduan (Gajamada)</CardTitle>
+                      {atts.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <Button size="sm" variant="outline" onClick={() => {
+                            atts.forEach((a) => {
+                              const dlUrl = `/api/download?url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.file_name + '.' + a.file_type)}`
+                              window.open(dlUrl, '_blank')
+                            })
+                          }}>
+                            <Download className="h-4 w-4 mr-1" /> Download Semua ({atts.length})
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </CardHeader>
                     <CardContent>
                       {atts.length === 0 ? <p className="text-sm text-slate-500">Tidak ada lampiran.</p> :
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          {atts.map((a, i) => (
-                            <a key={i} href={`/api/download?url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.file_name + '.' + a.file_type)}`} target="_blank" rel="noreferrer"
-                              className="flex items-center gap-3 p-3 border rounded-lg hover:bg-slate-50 transition-colors group">
-                              <div className="h-10 w-10 rounded bg-blue-100 text-blue-800 flex items-center justify-center flex-shrink-0"><Paperclip className="h-5 w-5" /></div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium truncate">{a.file_name}</p>
-                                <p className="text-xs text-slate-500">{(a.file_type || '').toUpperCase()} · {fmtDateShort(a.created_at)}</p>
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                          {atts.map((a, i) => {
+                            const dlUrl = `/api/download?url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.file_name + '.' + a.file_type)}`
+                            const ext = (a.file_type || '').toLowerCase()
+                            const isImage = /^(jpg|jpeg|png|gif|webp|bmp)$/i.test(ext)
+                            const isPdf = ext === 'pdf'
+                            return (
+                              <div key={i} className="border rounded-lg overflow-hidden hover:shadow-md transition-shadow group">
+                                <a href={dlUrl} target="_blank" rel="noreferrer" className="block">
+                                  {isImage ? (
+                                    <div className="aspect-[4/3] bg-slate-100 flex items-center justify-center overflow-hidden">
+                                      <img src={dlUrl} alt={a.file_name} className="w-full h-full object-cover" loading="lazy" />
+                                    </div>
+                                  ) : isPdf ? (
+                                    <div className="aspect-[4/3] bg-red-50 flex flex-col items-center justify-center gap-1">
+                                      <FileText className="h-10 w-10 text-red-500" />
+                                      <span className="text-[10px] text-red-600 font-bold">PDF</span>
+                                    </div>
+                                  ) : (
+                                    <div className="aspect-[4/3] bg-slate-100 flex flex-col items-center justify-center gap-1">
+                                      <Paperclip className="h-10 w-10 text-slate-400" />
+                                      <span className="text-[10px] text-slate-500 font-bold">{ext.toUpperCase() || 'FILE'}</span>
+                                    </div>
+                                  )}
+                                </a>
+                                <div className="p-2 space-y-1">
+                                  <p className="text-xs font-medium truncate" title={a.file_name}>{a.file_name}</p>
+                                  <p className="text-[10px] text-slate-400">{ext.toUpperCase()} · {fmtDateShort(a.created_at)}</p>
+                                  <div className="flex gap-1">
+                                    <a href={dlUrl} target="_blank" rel="noreferrer"
+                                      className="flex-1 inline-flex items-center justify-center gap-1 text-[10px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1 transition-colors">
+                                      <Download className="h-3 w-3" /> Unduh
+                                    </a>
+                                    {(isImage || isPdf) ? (
+                                      <button onClick={(e) => { e.preventDefault(); setDlPreviewUrl(dlUrl); setDlPreviewOpen(true) }}
+                                        className="flex-1 inline-flex items-center justify-center gap-1 text-[10px] text-slate-600 hover:bg-slate-100 rounded px-2 py-1 transition-colors">
+                                        <Eye className="h-3 w-3" /> Preview
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </div>
                               </div>
-                              <Download className="h-4 w-4 text-slate-400 group-hover:text-blue-800" />
-                            </a>
-                          ))}
+                            )
+                          })}
                         </div>}
                     </CardContent>
                   </Card>
@@ -844,6 +892,27 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                 <DialogFooter>
                   <Button variant="ghost" onClick={() => setWassidikOpen(false)}>Batal</Button>
                   <Button onClick={doWassidik} disabled={wassidikSaving || !wassidikCatatan}>{wassidikSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Limpahkan ke Wassidik</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={dlPreviewOpen} onOpenChange={setDlPreviewOpen}>
+              <DialogContent className="max-w-4xl h-[80vh]">
+                <DialogHeader><DialogTitle>Preview Dokumen</DialogTitle></DialogHeader>
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  {dlPreviewUrl && (dlPreviewUrl.toLowerCase().includes('.pdf') || dlPreviewUrl.toLowerCase().includes('type=pdf')) ? (
+                    <iframe src={dlPreviewUrl} className="w-full h-full min-h-[60vh] border-0" title="PDF Preview" />
+                  ) : (
+                    <div className="flex items-center justify-center h-64 bg-slate-100 rounded-lg">
+                      <img src={dlPreviewUrl} alt="Preview" className="max-w-full max-h-full object-contain" />
+                    </div>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button variant="ghost" onClick={() => setDlPreviewOpen(false)}>Tutup</Button>
+                  <a href={dlPreviewUrl} target="_blank" rel="noreferrer">
+                    <Button variant="outline"><Download className="h-4 w-4 mr-1" /> Unduh</Button>
+                  </a>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
