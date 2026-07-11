@@ -1,8 +1,8 @@
 ---
 slug: stack
-title: Tech stack
+title: Tech stack & architecture
 role: tech-stack choices
-updated: "2026-07-04T19:02:49"
+updated: "2026-07-11"
 ---
 
 # Tech stack
@@ -26,9 +26,7 @@ updated: "2026-07-04T19:02:49"
 | Date handling | date-fns 4 + dayjs 1 | Server and client date formatting |
 | Motion | Framer Motion 11 | Carousel animations (embla-carousel-react) |
 | Toast notifications | Sonner 2 | Lightweight toast library |
-| File upload | Supabase Storage + Gajamada upload API | Dual upload to both systems |
 | Package manager | Yarn 1.22 | Locked via packageManager field |
-| Testing | Python (backend_test.py via emergent framework) | Minimal; manual API testing only |
 | Deployment | Standalone Node.js output | output: 'standalone' in next.config.js |
 
 ## Environment variables
@@ -36,16 +34,116 @@ updated: "2026-07-04T19:02:49"
 | Variable | Purpose |
 |---|---|
 | GAJAMADA_BASE_URL | eBdesk Fusion API base (default: gajamada-propam.polri.go.id) |
-| GAJAMADA_USERNAME / GAJAMADA_PASSWORD | Service account for Gajamada login |
+| GAJAMADA_USERNAME / GAJAMADA_PASSWORD | Service account for Gajamada login (env vars + DB override) |
 | GAJAMADA_APP_ID / GAJAMADA_CONNECTION_ID / GAJAMADA_DATABASE | Gajamada dashboard/connection identifiers |
 | GAJAMADA_UPDATE_GATEWAY_ID / GAJAMADA_ATTACH_GATEWAY_ID | Gajamada gateway endpoints for push updates and file attachments |
-| NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY | Supabase project URL and admin key |
+| SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY | Supabase project URL and admin key |
 | APP_JWT_SECRET | JWT signing secret (defaults to dev placeholder) |
-| CORS_ORIGINS | Allowed CORS origins for file downloads |
 
 ## Database schema
 
-13 tables in Supabase PostgreSQL (see supabase_migration.sql):
-dispositions, status_history, 	imelines, ollowup_documents, sync_logs, udit_logs, units_master, completions, ollowup_checklist, case_outcomes, satker_satwil, 
-umbering_settings.
-All tables use prepetrator_id (Gajamada composite key) as the foreign reference ? no internal auto-increment PK coupling.
+Tables in Supabase PostgreSQL (see supabase_migration.sql):
+
+| Table | Purpose |
+|---|---|
+| dispositions | Distribusi kasus dari Kabid/Yanduan ke unit |
+| status_history | Perubahan status dari Gajamada |
+| timelines | Catatan tindak lanjut internal |
+| sync_logs | Log sinkronisasi ke Gajamada (success/failed) |
+| audit_logs | Audit trail semua aksi user |
+| units_master | Katalog unit dari Gajamada + manual |
+| completions | Kasus yang ditandai selesai |
+| followup_checklist | Checklist dokumen wajib per kasus |
+| case_outcomes | Hasil lidik, pelimpahan, resolusi |
+| satker_satwil | DEPRECATED - digantikan unit_mapping |
+| local_cases | Kasus input manual/laporan informasi |
+| unit_mapping | Mapping Gajamada external_name → SIMONDU internal_unit |
+| saran_yanduan | Saran/masukan dari Yanduan ke Kabid |
+| status_mapping | Mapping eksplisit Gajamada status → SIMONDU display |
+| app_settings | Key-value runtime config (Gajamada credentials, etc.) |
+| users | Akun pengguna (username, password plaintext, role) |
+
+## Architecture
+
+### Status Flow
+
+#### Pull (Gajamada → SIMONDU)
+`deriveStatus()` — lookup `STATUS_LOOKUP` (17 exact matches) + fallback substring matching for dynamic statuses.
+
+| Gajamada Label | SIMONDU Display |
+|---|---|
+| Laporan Diterima / Laporan Masuk | Diterima |
+| Laporan Diterima Kasubbid Paminal | Proses Subbid Paminal |
+| Laporan Dikirim ke Polres | Dilimpahkan ke Polres |
+| Gelar Perkara | Gelar Perkara Paminal |
+| Hasil Sidang Disiplin | Hasil Sidang Disiplin |
+| Selesai / Terbukti / Tidak Terbukti | Selesai |
+| Perdamaian / Restorative Justice | Perdamaian |
+| Lidik | Dalam Proses |
+
+#### Push (SIMONDU → Gajamada)
+`toGajamadaStatus(internalStatus, casePosition)` — maps internal status + case_position to Gajamada label dynamically.
+
+Contoh: `PENYELIDIKAN_PAMINAL` + `KASIPROPAM POLRES KARAWANG...` → `Laporan Diterima KASIPROPAM POLRES KARAWANG POLDA JAWA BARAT`
+
+### Unit Mapping
+
+`unit_mapping` collection (150 entries): Gajamada `external_name` → SIMONDU `internal_unit`.
+
+| Grup | Entries |
+|---|---|
+| SUBBID PAMINAL | 7 (KASUBBID, UNIT 1-3, UR BINPAM/PRODOK/LITPERS) |
+| SUBBID PROVOS | 2 (KASUBBID, UNIT 2) |
+| SUBBID WABPROF | 1 (KASUBBID) |
+| SUBBAG YANDUAN | 2 (KASUBBAG, OPERATOR) |
+| SUBBAG REHABPERS | 1 (KASUBBAG) |
+| SAT BRIMOB | 3 (KASIPROVOS, OPERATOR SIPROVOS, SATBRIMOB POLDA) |
+| WASSIDIK | 5 (DITRESKRIM UM/SUS, DITRESNARKOBA, DITRESSIBER, DITRES PPA/PPO) |
+| DIVPROPAM | 1 |
+| SATKER LAIN | 1 (DITLANTAS) |
+| 23 Polres | 5 sub-unit each (KASIPROPAM, KANIT PAMINAL/PROVOS/WABPROF, KAUR YANDUAN) |
+
+**Resolve priority (push):** KASUBBID/KASUBBAG > KASIPROPAM > first mapping
+
+**Normalization:** KAUR BINPAM/PRODOK/LITPERS → UR equivalents (common PAMINAL naming variants in Gajamada)
+
+### Disposisi Flow (Sync-First)
+
+1. User pilih unit + isi catatan → confirm dialog (tampil case_position + fallback alternatif)
+2. Klik "Ya" → backend push ke Gajamada dulu
+3. Sukses → save ke local DB (dispositions, timelines, local_cases, sync_logs)
+4. Gagal → return fallback list → frontend tampil retry dialog
+5. DB tidak tersentuh sampai sync sukses
+
+### Role-Based Menu
+
+| Role | Menu |
+|---|---|
+| ADMIN | Dashboard, Daftar Surat, Riwayat, Master Unit, Log Sync, Audit Log, Pengaturan |
+| SUBBAG YANDUAN | Dashboard, Daftar Surat, Saran/Masukan, Input Manual, Riwayat, Ubah Password |
+| KABID PROPAM | Dashboard, Daftar Surat, Disposisi, Riwayat, Ubah Password |
+| KASUBBID (PAMINAL/PROVOS/WABPROF) | Dashboard, Daftar Surat, Disposisi, Riwayat, Ubah Password |
+| SUBBAG REHABPERS | Dashboard, Daftar Surat, Riwayat, Ubah Password |
+| POLRES/BRIMOB/WASSIDIK | Dashboard, Daftar Surat, Riwayat, Ubah Password |
+
+**Notes:**
+- Tab Tindak Lanjut dihapus untuk KABID PROPAM (akan di-rebuild dari awal)
+- KABID disposisi ke WASSIDIK via combobox reguler (bukan tombol khusus)
+- Istilah "Limpa(s)" sudah dikoreksi menjadi "Limpah" di seluruh kode
+- KABID melihat semua surat Polda Jabar di Daftar Surat
+- KABID disposisi queue hanya tampil local cases (SURAT_MASUK + DISPOSISI_PIMPINAN)
+
+### Attachment/Download
+
+- **Thumbnail**: `mode=redirect` → redirect ke Gajamada CDN (0 RAM server)
+- **Preview**: server fetch-and-stream dengan embed/iframe
+- **Unduh per file**: `inline=0` → attachment disposition
+- **Download semua**: open per-file via hidden link (300ms stagger)
+- Session validation throttle: 30 detik cache
+
+### Gajamada Settings
+
+- `app_settings` table (Supabase) — runtime override untuk GAJAMADA_USERNAME/PASSWORD
+- Admin bisa set via Pengaturan → Koneksi
+- Fallback: environment variables
+- `getBaseUrl()` — konsisten untuk semua Gajamada endpoints
