@@ -98,8 +98,11 @@ async function doLogin() {
 }
 
 async function ensureSession() {
+  const now = Date.now()
+  if (_session && _session.cookieString && (now - (_session._lastValidated || 0) < 30000)) return
   if (!_session || !_session.cookieString) {
     await doLogin()
+    if (_session) _session._lastValidated = Date.now()
     return
   }
   try {
@@ -109,10 +112,14 @@ async function ensureSession() {
     })
     if (res.ok) {
       const j = await res.json().catch(() => null)
-      if (j?.data?.status === 'active') return
+      if (j?.data?.status === 'active') {
+        _session._lastValidated = Date.now()
+        return
+      }
     }
   } catch (_) {}
   await doLogin()
+  if (_session) _session._lastValidated = Date.now()
 }
 
 async function apiCall(path, options = {}, retry = true) {
@@ -539,11 +546,28 @@ export async function downloadAttachment(url) {
     const key = url.substring('s3://fusion/'.length)
     finalUrl = `${getBaseUrl()}/cdn/media/fusion/${key}`
   } else if (url.includes('/fusion/')) {
-    // Convert direct S3/CDN URLs to Gajamada CDN proxy
     const idx = url.indexOf('/fusion/')
-    const path = url.substring(idx + 1) // fusion/agent/...
+    const path = url.substring(idx + 1)
     finalUrl = `${getBaseUrl()}/cdn/media/${path}`
   }
+  const res = await fetch(finalUrl, { headers: commonHeaders() })
+  return res
+}
+
+// Lightweight download — returns URL only, no fetch. For thumbnails/preview.
+export async function getDownloadUrl(url) {
+  await ensureSession()
+  if (url.startsWith('s3://fusion/')) {
+    const key = url.substring('s3://fusion/'.length)
+    return `${getBaseUrl()}/cdn/media/fusion/${key}`
+  }
+  if (url.includes('/fusion/')) {
+    const idx = url.indexOf('/fusion/')
+    const path = url.substring(idx + 1)
+    return `${getBaseUrl()}/cdn/media/${path}`
+  }
+  return url
+}
   const res = await fetch(finalUrl, { headers: commonHeaders() })
   return res
 }

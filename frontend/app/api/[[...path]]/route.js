@@ -1761,6 +1761,15 @@ async function handleRoute(request, ctx) {
       const target = url.searchParams.get('url')
       if (!target) return fail('url param required')
       const inline = url.searchParams.get('inline') !== '0'
+      const mode = url.searchParams.get('mode') || '' // 'redirect' for lightweight thumbnail
+      if (mode === 'redirect') {
+        try {
+          const directUrl = await gajamada.getDownloadUrl(target)
+          return NextResponse.redirect(directUrl)
+        } catch (e) {
+          return fail('Gagal mengunduh dari Gajamada', 502)
+        }
+      }
       try {
         const res = await gajamada.downloadAttachment(target)
         const buffer = await res.arrayBuffer()

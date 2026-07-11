@@ -607,6 +607,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                           {atts.map((a, i) => {
                             const dlUrl = `/api/download?url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.file_name + '.' + a.file_type)}`
+                            const thumbUrl = dlUrl + '&mode=redirect'
                             const ulUrl = dlUrl + '&inline=0'
                             const ext = (a.file_type || '').toLowerCase()
                             const isImage = /^(jpg|jpeg|png|gif|webp|bmp)$/i.test(ext)
@@ -616,7 +617,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                                 <a href={dlUrl} target="_blank" rel="noreferrer" className="block">
                                   {isImage ? (
                                     <div className="aspect-[4/3] bg-slate-100 flex items-center justify-center overflow-hidden">
-                                      <img src={dlUrl} alt={a.file_name} className="w-full h-full object-cover" loading="lazy" />
+                                      <img src={thumbUrl} alt={a.file_name} className="w-full h-full object-cover" loading="lazy" />
                                     </div>
                                   ) : isPdf ? (
                                     <div className="aspect-[4/3] bg-red-50 flex flex-col items-center justify-center gap-1">
