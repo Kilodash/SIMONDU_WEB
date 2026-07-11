@@ -865,8 +865,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
               </DialogContent>
             </Dialog>
 
-            </Dialog>
-
             <Dialog open={dlPreviewOpen} onOpenChange={setDlPreviewOpen}>
               <DialogContent className="max-w-4xl h-[85vh] flex flex-col">
                 <DialogHeader><DialogTitle>Preview Dokumen</DialogTitle></DialogHeader>
