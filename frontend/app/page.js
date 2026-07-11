@@ -1305,7 +1305,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
   const [editOpen, setEditOpen] = useState(false)
   const [editMode, setEditMode] = useState(null)
   const [editQueueItem, setEditQueueItem] = useState(null)
-  const [reference, setReference] = useState({ units: [], mapped_units: [], default_disposisi_tasks: [], unit_default_tasks: {} })
+  const [reference, setReference] = useState({ units: [], mapped_units: [], unit_mappings: [], default_disposisi_tasks: [], unit_default_tasks: {} })
   // Form state
   const [toUnit, setToUnit] = useState('')
   const [note, setNote] = useState('')
@@ -1314,6 +1314,12 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
   const [caseType, setCaseType] = useState('dumas')
   const [submitting, setSubmitting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [resolvedCasePos, setResolvedCasePos] = useState('')
+  const [fallbackPositions, setFallbackPositions] = useState([])
+  const [selectedCasePos, setSelectedCasePos] = useState('')
+  const [syncFallbackOpen, setSyncFallbackOpen] = useState(false)
+  const [syncFallbackPid, setSyncFallbackPid] = useState('')
+  const [syncFallbackOptions, setSyncFallbackOptions] = useState([])
   // Saran mode checklist
   const [saranChecklist, setSaranChecklist] = useState({ penelaahan: false, kelengkapan: false })
   const [saranUnit, setSaranUnit] = useState('')
@@ -1487,6 +1493,16 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
       finally { setSubmitting(false) }
       return
     }
+    // Resolve primary case_position from unit_mappings
+    const mappings = (reference.unit_mappings || []).filter((m) => m.internal_unit === toUnit)
+    const up = (s) => (s || '').toUpperCase()
+    const head = mappings.find((m) => up(m.external_name).includes('KASUBBID') || up(m.external_name).includes('KASUBBAG'))
+        || mappings.find((m) => up(m.external_name).includes('KASIPROPAM'))
+    const primary = head?.external_name || (mappings.length > 0 ? mappings[0].external_name : toUnit)
+    const fallback = mappings.map((m) => m.external_name).filter((p) => p !== primary)
+    setResolvedCasePos(primary)
+    setFallbackPositions(fallback)
+    setSelectedCasePos(primary)
     setConfirmOpen(true)
   }
   const submitOverride = async () => {
@@ -1513,15 +1529,48 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
     setConfirmOpen(false)
     setSubmitting(true)
     try {
-      await api('/disposisi-bulk', { method: 'POST', body: JSON.stringify({
+      const r = await api('/disposisi-bulk', { method: 'POST', body: JSON.stringify({
         items: [current.prepetrator_id], to_unit: toUnit, note, is_atensi: isAtensi, case_type: caseType,
         tasks: tasks.filter((t) => t.checked && t.label),
+        case_position: selectedCasePos || resolvedCasePos,
       }) })
+      const result = (r.data || [])[0]
+      if (result.status === 'sync_failed') {
+        // Show fallback dialog
+        setSyncFallbackPid(result.pid || current.prepetrator_id)
+        setSyncFallbackOptions(result.fallback_positions || [])
+        setSyncFallbackOpen(true)
+        return
+      }
       toast.success(`Disposisi ke ${shortUnit(toUnit)} berhasil`)
       const newQueue = queue.filter((_, i) => i !== idx)
       setQueue(newQueue)
       setIdx(Math.min(idx, newQueue.length - 1))
-    resetForm(null, current)
+      resetForm(null, current)
+      onQueueChange?.()
+    } catch (e) { toast.error(e.message) }
+    finally { setSubmitting(false) }
+  }
+  const retrySyncFallback = async () => {
+    if (!syncFallbackPid || !selectedCasePos) return
+    setSyncFallbackOpen(false)
+    setSubmitting(true)
+    try {
+      const r = await api('/disposisi-bulk', { method: 'POST', body: JSON.stringify({
+        items: [syncFallbackPid], to_unit: toUnit, note, is_atensi: isAtensi, case_type: caseType,
+        tasks: tasks.filter((t) => t.checked && t.label),
+        case_position: selectedCasePos || syncFallbackOptions[0],
+      }) })
+      const result = (r.data || [])[0]
+      if (result.status === 'sync_failed') {
+        toast.error(result.error || 'Gagal sync')
+        return
+      }
+      toast.success(`Disposisi ke ${shortUnit(toUnit)} berhasil`)
+      const newQueue = queue.filter((_, i) => i !== idx)
+      setQueue(newQueue)
+      setIdx(Math.min(idx, newQueue.length - 1))
+      resetForm(null, current)
       onQueueChange?.()
     } catch (e) { toast.error(e.message) }
     finally { setSubmitting(false) }
@@ -1876,14 +1925,53 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
       </>
       )}
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Konfirmasi Disposisi</DialogTitle><DialogDescription>
-            Disposisi ke unit <strong>{shortUnit(toUnit)}</strong>{isAtensi ? ' (ATENSI)' : ''}?
+            Disposisi ke <strong>{shortUnit(toUnit)}</strong>{isAtensi ? ' (ATENSI)' : ''}
           </DialogDescription></DialogHeader>
+          <div className="space-y-2">
+            <div className="rounded-lg border bg-slate-50 p-3">
+              <p className="text-xs text-slate-500">Posisi Kasus di Gajamada:</p>
+              <p className="text-sm font-mono font-bold text-blue-800 break-all">{selectedCasePos || resolvedCasePos}</p>
+            </div>
+            {fallbackPositions.length > 0 && (
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Alternatif (klik untuk ganti):</p>
+                <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                  {fallbackPositions.map((p) => (
+                    <Badge key={p} variant="outline"
+                      className={`cursor-pointer text-[10px] ${selectedCasePos === p ? 'bg-blue-800 text-white border-blue-800' : 'bg-white hover:bg-blue-50'}`}
+                      onClick={() => setSelectedCasePos(p)}>{p}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirmOpen(false)}>Batal</Button>
             <Button onClick={confirmedSubmit} className="bg-blue-800 hover:bg-blue-900">
               Ya, Disposisi
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={syncFallbackOpen} onOpenChange={setSyncFallbackOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Sync Gagal — Pilih Alternatif</DialogTitle><DialogDescription>
+            Gagal sync ke <strong>{selectedCasePos || syncFallbackOptions[0]}</strong>. Pilih posisi alternatif:
+          </DialogDescription></DialogHeader>
+          <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
+            {syncFallbackOptions.map((p) => (
+              <Badge key={p} variant="outline"
+                className={`cursor-pointer text-[11px] ${selectedCasePos === p ? 'bg-blue-800 text-white border-blue-800' : 'bg-white hover:bg-blue-50'}`}
+                onClick={() => setSelectedCasePos(p)}>{p}</Badge>
+            ))}
+            {syncFallbackOptions.length === 0 && <p className="text-sm text-red-500">Tidak ada alternatif. Hubungi admin.</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => { setSyncFallbackOpen(false); setSelectedCasePos(resolvedCasePos) }}>Batal</Button>
+            <Button onClick={retrySyncFallback} disabled={!selectedCasePos} className="bg-amber-700 hover:bg-amber-800">
+              Coba Lagi
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -987,7 +987,7 @@ async function handleRoute(request, ctx) {
     // Bulk disposisi
     if (route === '/disposisi-bulk' && method === 'POST') {
       if (!isDisposisiRole(me.role)) return fail('Hanya Kasubbid/Admin/Kabid Propam/Kasubbag Yanduan', 403)
-      const { items, to_unit, note, is_atensi, case_type, tasks } = await request.json()
+      const { items, to_unit, note, is_atensi, case_type, tasks, case_position } = await request.json()
       if (!Array.isArray(items) || items.length === 0) return fail('items wajib')
       const allUnits = await getAllActiveUnitNames()
       if (!to_unit || !allUnits.includes(to_unit)) return fail('Unit tujuan tidak valid')
@@ -1001,6 +1001,56 @@ async function handleRoute(request, ctx) {
         const itemSource = typeof item === 'string' ? 'gajamada' : (item.source || 'gajamada')
         const exists = await db.collection('dispositions').findOne({ prepetrator_id: pid, to_unit })
         if (exists) { results.push({ pid, status: 'skipped', reason: 'Sudah didisposisi ke unit ini' }); continue }
+
+        // Resolve case_position: use provided or resolve from unit_mapping
+        let resolvedCasePosition = case_position
+        let fallbackPositions = []
+        if (!resolvedCasePosition) {
+          const mappings = await db.collection('unit_mapping').find({ internal_unit: to_unit }).toArray()
+          if (mappings.length > 0) {
+            const up = (s) => (s || '').toUpperCase()
+            const head = mappings.find((m) => up(m.external_name).includes('KASUBBID') || up(m.external_name).includes('KASUBBAG'))
+                || mappings.find((m) => up(m.external_name).includes('KASIPROPAM'))
+            resolvedCasePosition = head?.external_name || mappings[0].external_name
+            fallbackPositions = mappings.map((m) => m.external_name)
+          }
+        }
+
+        // Push to Gajamada FIRST
+        let syncError = null
+        if (resolvedCasePosition) {
+          try {
+            const original = await gajamada.getCase(pid)
+            const status = me.role === 'kabid_propam'
+              ? (unitType === 'PAMINAL' || unitType === 'POLRES' ? STATUS.PENYELIDIKAN_PAMINAL : STATUS.PENYELIDIKAN_PROVOS)
+              : STATUS.DISPOSISI_PIMPINAN
+            const params = {
+              report_id: pid,
+              status: toGajamadaStatus(status, resolvedCasePosition),
+              case_position: resolvedCasePosition,
+              note: (note || 'Disposisi oleh ' + me.name),
+              createdBy: me.name || 'SIMONDU',
+            }
+            const { status: httpStatus, body } = await gajamada.pushUpdate(params)
+            if (httpStatus < 200 || httpStatus >= 300 || body?.metaData?.status === false) {
+              syncError = body?.metaData?.message || body?.message || `HTTP ${httpStatus}`
+            }
+          } catch (e) {
+            syncError = e.message || 'Gagal sync ke Gajamada'
+          }
+        }
+
+        // If sync failed, return error with fallback options (don't save)
+        if (syncError) {
+          results.push({
+            pid, status: 'sync_failed', error: syncError,
+            case_position_attempted: resolvedCasePosition,
+            fallback_positions: fallbackPositions.filter((p) => p !== resolvedCasePosition),
+          })
+          continue
+        }
+
+        // Sync succeeded — save to local DB
         const taskLabels = Array.isArray(tasks) ? tasks.filter((t) => t.checked && t.label).map((t) => t.label) : []
         const taskNote = taskLabels.length ? `TASKS: ${taskLabels.join(', ')}\n` : ''
         const disp = {
@@ -1012,7 +1062,7 @@ async function handleRoute(request, ctx) {
           is_atensi: !!is_atensi,
           by: { username: me.username, name: me.name, role: me.role },
           created_at: new Date(),
-          synced_to_gajamada: false,
+          synced_to_gajamada: true,
         }
         await db.collection('dispositions').insertOne(disp)
         try {
@@ -1042,7 +1092,14 @@ async function handleRoute(request, ctx) {
           by: { username: me.username, name: me.name, role: me.role },
           created_at: new Date(),
         })
-        scheduleSync(pid, me, 'disposisi')
+        // Record sync log
+        await db.collection('sync_logs').insertOne({
+          id: uuidv4(), prepetrator_id: pid,
+          payload: { case_position: resolvedCasePosition, status: toGajamadaStatus(newStatus, resolvedCasePosition) },
+          status: 'success', reason: 'disposisi',
+          request_at: new Date(), completed_at: new Date(),
+          by: { username: me.username, role: me.role },
+        })
         await logAudit(me, 'disposisi', pid, { to_unit, is_atensi: !!is_atensi })
         results.push({ pid, ok: true })
       }
