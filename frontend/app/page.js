@@ -2350,27 +2350,79 @@ function SettingsPage({ connStatus, user }) {
 
         <div className="mt-4">
           {tab === 'akun' && <UserManagementSection user={user} />}
-          {tab === 'koneksi' && (
-            <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Dot ok={connStatus.gajamada} />
-                <span>Gajamada (eBdesk Fusion)</span>
-                <Badge variant="outline" className={`text-[10px] ml-auto ${connStatus.gajamada ? 'text-green-700 border-green-300' : 'text-red-700 border-red-300'}`}>
-                  {connStatus.gajamada ? 'Terhubung' : 'Tidak terhubung'}
-                </Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-slate-500">
-                Koneksi Gajamada menggunakan akun shared yang dikonfigurasi via <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">GAJAMADA_USERNAME</code> / <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">GAJAMADA_PASSWORD</code> di environment variable server.
-              </p>
-            </CardContent>
-          </Card>
-          )}
+          {tab === 'koneksi' && <GajamadaConnectionSettings />}
         </div>
       </Tabs>
     </div>
+  )
+}
+
+function GajamadaConnectionSettings() {
+  const [form, setForm] = useState({ username: '', password: '', base_url: '' })
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState(null)
+
+  const load = async () => {
+    setLoading(true)
+    try { const r = await api('/settings-gajamada'); setForm({ username: r.username, password: '', base_url: r.base_url }) }
+    catch (e) { toast.error(e.message) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [])
+
+  const save = async () => {
+    if (!form.username) return toast.error('Username Gajamada wajib')
+    setSaving(true)
+    try {
+      await api('/settings-gajamada', { method: 'POST', body: JSON.stringify(form) })
+      toast.success('Pengaturan Gajamada disimpan')
+      load()
+    } catch (e) { toast.error(e.message) }
+    finally { setSaving(false) }
+  }
+
+  const test = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const r = await api('/settings-gajamada/test', { method: 'POST', body: JSON.stringify(form) })
+      setTestResult(r)
+    } catch (e) { setTestResult({ success: false, error: e.message }) }
+    finally { setTesting(false) }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm">Koneksi Gajamada (eBdesk Fusion)</CardTitle>
+        <CardDescription>Konfigurasi akun Gajamada untuk sinkronisasi data. Disimpan di database.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {loading ? <Loader2 className="h-6 w-6 animate-spin text-blue-800" /> : (
+          <>
+            <div><Label>Username / Email Gajamada</Label>
+              <Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="polda_jabar" /></div>
+            <div><Label>Password Gajamada</Label>
+              <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Kosongkan jika tidak diubah" /></div>
+            <div><Label>Base URL (opsional)</Label>
+              <Input value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} placeholder="https://gajamada-propam.polri.go.id" /></div>
+
+            {testResult && (
+              <div className={`rounded-lg border p-3 text-sm ${testResult.success ? 'border-green-300 bg-green-50 text-green-800' : 'border-red-300 bg-red-50 text-red-800'}`}>
+                {testResult.success ? 'Koneksi berhasil! Akun valid.' : `Gagal: ${testResult.error || 'Tidak diketahui'}`}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Button onClick={save} disabled={saving} className="flex-1">{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Simpan</Button>
+              <Button onClick={test} disabled={testing} variant="outline">{testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Test Koneksi</Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 

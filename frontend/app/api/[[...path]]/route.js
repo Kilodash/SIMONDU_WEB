@@ -5,6 +5,25 @@ import { getDb, getActiveUnits, getKasubbidName, getKasubbidAliases, getPolresUn
 import { authenticate, signSession, getCookieHeader, clearCookieHeader, getUserFromRequest, isDisposisiRole, isAdminRole, isKasubbidRole, isUnitRole, setDbUsers, getAllUsers, changePassword } from '@/lib/auth'
 import { CATEGORY_OPTIONS, FILTER_UNITS } from '@/lib/units'
 import { simplifyStatus, simplifyUnit } from '@/lib/mapping'
+
+// Lazy-init Gajamada credentials from DB settings (once per process)
+let _gajamadaCredsLoaded = false
+async function initGajamadaCreds() {
+  if (_gajamadaCredsLoaded) return
+  _gajamadaCredsLoaded = true
+  try {
+    const db = await getDb()
+    const [un, pw, bu] = await Promise.all([
+      db.collection('app_settings').findOne({ key: 'gajamada_username' }).catch(() => null),
+      db.collection('app_settings').findOne({ key: 'gajamada_password' }).catch(() => null),
+      db.collection('app_settings').findOne({ key: 'gajamada_base_url' }).catch(() => null),
+    ])
+    if (un?.value && pw?.value) {
+      gajamada.setGajamadaCredentials(un.value, pw.value, bu?.value || null)
+      console.log('[init] Gajamada credentials loaded from DB')
+    }
+  } catch (_) {}
+}
 import { STAGE_LABELS, NON_DUMAS_STAGE_LABELS, HASIL_LIDIK_OPTIONS, SETTLEMENT_OPTIONS, computeChecklist, getStageOrder, getStageLabels, MINI_CHECKLIST, UNIT_DOC_TYPES, UNIT_DEFAULT_TASKS, getUnitType, getCaseTypeForUnit } from '@/lib/checklist'
 import { STATUS, RESOLUSI, BUCKET, getBucket, canTransition, canResolve } from '@/lib/status'
 
@@ -254,6 +273,7 @@ async function migrateLocalCasesStatus() {
 }
 
 async function handleRoute(request, ctx) {
+  await initGajamadaCreds()
   const params = await ctx.params
   const path = params?.path || []
   const route = '/' + path.join('/')
@@ -1688,6 +1708,45 @@ async function handleRoute(request, ctx) {
       })
       await logAudit(me, 'resolusi', pid, { resolusi: newResolusi })
       return ok({ data: { prepetrator_id: pid, resolusi: newResolusi } })
+    }
+
+    // ---------- SETTINGS ----------
+    if (route === '/settings-gajamada' && method === 'GET') {
+      if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
+      const db = await getDb()
+      const [username, password, baseUrl] = await Promise.all([
+        db.collection('app_settings').findOne({ key: 'gajamada_username' }).catch(() => null),
+        db.collection('app_settings').findOne({ key: 'gajamada_password' }).catch(() => null),
+        db.collection('app_settings').findOne({ key: 'gajamada_base_url' }).catch(() => null),
+      ])
+      return ok({
+        username: username?.value || '',
+        password: password?.value ? '********' : '',
+        base_url: baseUrl?.value || '',
+        is_set: !!(username?.value && password?.value),
+      })
+    }
+    if (route === '/settings-gajamada' && method === 'POST') {
+      if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
+      const { username, password, base_url } = await request.json()
+      const db = await getDb()
+      if (username) await db.collection('app_settings').updateOne({ key: 'gajamada_username' }, { $set: { value: username, updated_at: new Date() } }, { upsert: true })
+      if (password) await db.collection('app_settings').updateOne({ key: 'gajamada_password' }, { $set: { value: password, updated_at: new Date() } }, { upsert: true })
+      if (base_url) await db.collection('app_settings').updateOne({ key: 'gajamada_base_url' }, { $set: { value: base_url, updated_at: new Date() } }, { upsert: true })
+      // Update runtime credentials
+      gajamada.setGajamadaCredentials(username, password, base_url || null)
+      await logAudit(me, 'settings_gajamada', 'config')
+      return ok({})
+    }
+    if (route === '/settings-gajamada/test' && method === 'POST') {
+      if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
+      const { username, password, base_url } = await request.json()
+      try {
+        const result = await gajamada.testLogin({ email: username, password, baseUrl: base_url || process.env.GAJAMADA_BASE_URL })
+        return ok({ success: !!result })
+      } catch (e) {
+        return ok({ success: false, error: e.message })
+      }
     }
 
     // ---------- DOWNLOAD PROXY ----------

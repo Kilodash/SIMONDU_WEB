@@ -46,16 +46,28 @@ function commonHeaders(extra = {}) {
   return h
 }
 
+let _overrideUsername = null
+let _overridePassword = null
+let _overrideBaseUrl = null
+
+export function setGajamadaCredentials(username, password, baseUrl) {
+  _overrideUsername = username || null
+  _overridePassword = password || null
+  _overrideBaseUrl = baseUrl || null
+  _session = null
+}
+
 async function doLogin() {
-  const email = process.env.GAJAMADA_USERNAME
-  const password = process.env.GAJAMADA_PASSWORD
+  const email = _overrideUsername || process.env.GAJAMADA_USERNAME
+  const password = _overridePassword || process.env.GAJAMADA_PASSWORD
+  const loginBaseUrl = _overrideBaseUrl || BASE_URL
   if (!email || !password) {
     const err = new Error('Gajamada credentials not set in env (GAJAMADA_USERNAME / GAJAMADA_PASSWORD)')
     err.code = 'GAJAMADA_DISABLED'
     throw err
   }
 
-  const url = `${BASE_URL}/api/v1/apps/auth/login`
+  const url = `${loginBaseUrl}/api/v1/apps/auth/login`
   const res = await fetch(url, {
     method: 'POST',
     headers: commonHeaders({ 'Cookie': '' }),
@@ -529,9 +541,9 @@ export async function downloadAttachment(url) {
   return res
 }
 
-export async function testLogin({ email, password }) {
-  const url = `${BASE_URL}/api/v1/apps/auth/login`
-  const res = await fetch(url, {
+export async function testLogin({ email, password, baseUrl }) {
+  const loginUrl = (baseUrl || _overrideBaseUrl || BASE_URL) + '/api/v1/apps/auth/login'
+  const res = await fetch(loginUrl, {
     method: 'POST',
     headers: {
       'Accept': 'application/json, text/plain, */*',
