@@ -740,10 +740,6 @@ async function handleRoute(request, ctx) {
     async function fetchCasesLocal(u, opts) {
       const db = await getDb()
       let rows = await db.collection('local_cases').find({}).sort({ created_at: -1 }).toArray()
-      // Kabid: default show only cases waiting for disposition (unless unit filter selected)
-      if (u.role === 'kabid_propam' && !opts.unit) {
-        rows = rows.filter((r) => r.status === STATUS.DISPOSISI_PIMPINAN || r.status === STATUS.SURAT_MASUK_POLDA_JABAR)
-      }
       if (opts.case_type) rows = rows.filter((r) => r.case_type === opts.case_type || (!r.case_type && opts.case_type === 'dumas'))
       if (opts.bucket) {
         const statuses = BUCKET[opts.bucket] || []
@@ -827,7 +823,7 @@ async function handleRoute(request, ctx) {
     }
 
     async function fetchCasesForUser(u, opts) {
-      if (u.role !== 'kasubbag_yanduan' && u.role !== 'admin' && u.role !== 'super_admin') {
+      if (u.role !== 'kasubbag_yanduan' && u.role !== 'admin' && u.role !== 'super_admin' && u.role !== 'kabid_propam') {
         return fetchCasesLocal(u, opts)
       }
       let units = opts.units
@@ -949,10 +945,11 @@ async function handleRoute(request, ctx) {
         source_alias: c.source_alias || 'GAJAMADA',
       }))
 
-      // Local cases (manual) not yet dispositioned
+      // Local cases (manual) not yet dispositioned — Kabid: filter to cases needing Kabid
       const localQueue = []
       try {
-        const localCases = await db.collection('local_cases').find({ status: STATUS.SURAT_MASUK_POLDA_JABAR }).sort({ created_at: -1 }).limit(50).toArray()
+        const localStatuses = isKabid ? [STATUS.SURAT_MASUK_POLDA_JABAR, STATUS.DISPOSISI_PIMPINAN] : [STATUS.SURAT_MASUK_POLDA_JABAR]
+        const localCases = await db.collection('local_cases').find({ status: { $in: localStatuses } }).sort({ created_at: -1 }).limit(50).toArray()
         const localPids = localCases.map((c) => c.prepator_id)
         const localDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
         const localDispSet = new Set(localDisp.map((d) => d.prepetrator_id))
