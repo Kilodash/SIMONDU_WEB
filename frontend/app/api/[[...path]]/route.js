@@ -981,9 +981,13 @@ async function handleRoute(request, ctx) {
 
       const r = await gajamada.listCases({ units: queueUnits, size: 100 }).catch(() => ({ data: [] }))
       const pids = r.data.map((c) => c.prepetrator_id)
-      const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
+      const [disp, saran] = await Promise.all([
+        db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray(),
+        db.collection('saran_yanduan').find({ prepetrator_id: { $in: pids } }).toArray().catch(() => []),
+      ])
       const dispSet = new Set(disp.map((d) => d.prepetrator_id))
-      const gajamadaQueue = r.data.filter((c) => !dispSet.has(c.prepetrator_id)).map((c) => ({
+      const saranSet = new Set(saran.map((s) => s.prepetrator_id))
+      const gajamadaQueue = r.data.filter((c) => !dispSet.has(c.prepetrator_id) && !saranSet.has(c.prepetrator_id)).map((c) => ({
         ...c,
         summary: c.perihal || c.summary || (c.content ? String(c.content).slice(0, 200) : ''),
         _source: 'gajamada',
@@ -1059,9 +1063,13 @@ async function handleRoute(request, ctx) {
         const r = await gajamada.listCases({ units: queueUnits, size: 100 }).catch(() => ({ data: [] }))
         const pids = r.data.map((c) => c.prepetrator_id)
         const db = await getDb()
-        const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
+        const [disp, saran] = await Promise.all([
+          db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray(),
+          db.collection('saran_yanduan').find({ prepetrator_id: { $in: pids } }).toArray().catch(() => []),
+        ])
         const dispSet = new Set(disp.map((d) => d.prepetrator_id))
-        count += r.data.filter((c) => !dispSet.has(c.prepetrator_id)).length
+        const saranSet = new Set(saran.map((s) => s.prepetrator_id))
+        count += r.data.filter((c) => !dispSet.has(c.prepetrator_id) && !saranSet.has(c.prepetrator_id)).length
       } catch (_) {}
 
       // Local cases undisposed
