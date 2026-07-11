@@ -18,7 +18,7 @@ import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import {
   Shield, LayoutDashboard, FolderKanban, Send, ClipboardList, LogOut, Search,
-  Loader2, FileText, RefreshCw, ChevronDown, ChevronLeft, ChevronRight, Download, Paperclip,
+   Loader2, FileText, RefreshCw, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Download, Paperclip,
   Building2, User, Calendar, Tag, CheckCircle2, XCircle, Clock,
   AlertCircle, ArrowRightLeft, History, Star, QrCode, Mail, Phone, MapPin,
   Bell, Hash, Ban, Scale, Settings, Eye, EyeOff, GripVertical,
@@ -106,8 +106,8 @@ const SyncBadge = memo(function SyncBadge({ status }) {
 
 // ---------------- Login ----------------
 function LoginPage({ onSuccess }) {
-    const [username, setUsername] = useState('kasubbid')
-    const [password, setPassword] = useState('kasubbid123')
+    const [username, setUsername] = useState('')
+    const [password, setPassword] = useState('')
     const [loading, setLoading] = useState(false)
     const [showPw, setShowPw] = useState(false)
 
@@ -211,7 +211,7 @@ function Dashboard({ user }) {
       </div>
 
       {anev.kpi.totalAtensi > 0 && (
-        <div className="rounded-lg border-2 border-amber-300 bg-amber-50 p-4 flex items-center gap-3">
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 flex items-center gap-3">
           <Star className="h-6 w-6 text-amber-600 fill-amber-500" />
           <div>
             <p className="font-semibold text-amber-900">{anev.kpi.totalAtensi} kasus ATENSI</p>
@@ -462,7 +462,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
       <SheetContent side="right" className="w-full sm:max-w-4xl overflow-y-auto p-0">
         <VisuallyHidden>
           <SheetTitle>Detail Kasus {pid}</SheetTitle>
-
+          <SheetDescription>Detail lengkap informasi, dokumen, tindak lanjut, timeline, dan log sinkronisasi untuk kasus {pid}</SheetDescription>
         </VisuallyHidden>
         {loading || !data ? (
           <div className="flex items-center justify-center h-96"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div>
@@ -498,7 +498,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                   </Button>
                 )}
                 {canTolak && (
-                  <Button size="sm" variant="secondary" onClick={() => { setTolakAlasan(''); setTolakOpen(true) }}>
+                  <Button size="sm" variant="outline" className="border-red-300 text-red-700 hover:bg-red-50" onClick={() => { setTolakAlasan(''); setTolakOpen(true) }}>
                     <Ban className="h-4 w-4 mr-1" /> Tolak / Kembalikan
                   </Button>
                 )}
@@ -526,7 +526,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                 <TabsList className="grid grid-cols-5 w-full">
                   <TabsTrigger value="info">Info</TabsTrigger>
                   <TabsTrigger value="attach">Sumber ({atts.length})</TabsTrigger>
-                  <TabsTrigger value="docs">Tindak Lanjut {checklist ? `(${checklist.requiredProgress.completed}/${checklist.requiredProgress.total})` : ''}</TabsTrigger>
+                  <TabsTrigger value="docs">Tindak Lanjut</TabsTrigger>
                   <TabsTrigger value="timeline">Timeline ({mergedTimeline.length})</TabsTrigger>
                   <TabsTrigger value="sync">Sync ({data._internal?.sync_logs?.length || 0})</TabsTrigger>
                 </TabsList>
@@ -536,7 +536,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                     <CardContent className="text-sm space-y-2 grid grid-cols-1 md:grid-cols-2 gap-2">
                       <InfoRow icon={<Tag className="h-4 w-4" />} label="Kategori" value={data.category} />
                       <InfoRow icon={<Building2 className="h-4 w-4" />} label="Unit Penanganan Saat Ini" value={data.disposisi_case_position} />
-                      <InfoRow icon={<User className="h-4 w-4" />} label="Terlapor" value={data.prepetrator_name} />
+                      <InfoRow icon={<Shield className="h-4 w-4" />} label="Terlapor" value={data.prepetrator_name} />
                       <InfoRow icon={<User className="h-4 w-4" />} label="Pelapor" value={`${data.pengirim || '-'}${data.reporter_nik ? ` · NIK ${data.reporter_nik}` : ''}`} />
                       <InfoRow icon={<Phone className="h-4 w-4" />} label="Telp Pelapor" value={data.phone_no} />
                       <InfoRow icon={<Mail className="h-4 w-4" />} label="Email" value={data.email} />
@@ -1150,7 +1150,7 @@ function CasesList({ user, onOpenCase }) {
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(1)}>Awal</Button>
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Sebelumnya</Button>
           <form onSubmit={(e) => { e.preventDefault(); const v = parseInt(e.target.elements.pageInput.value, 10); if (v >= 1 && v <= maxPage) setPage(v) }} className="flex items-center gap-1">
-            <input name="pageInput" type="number" min={1} max={maxPage} defaultValue={page} key={page} className="w-12 h-8 text-center text-sm border rounded-md" />
+            <input name="pageInput" type="number" min={1} max={maxPage} defaultValue={page} key={page} className="w-14 h-9 text-center text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
           </form>
           <Button variant="outline" size="sm" disabled={cases.length < size} onClick={() => setPage(page + 1)}>Selanjutnya</Button>
           <Button variant="outline" size="sm" disabled={cases.length < size} onClick={() => setPage(maxPage)}>Akhir</Button>
@@ -1760,9 +1760,9 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
                   <div key={i} className="flex items-center gap-1.5">
                     <Checkbox checked={t.checked} onCheckedChange={() => toggleTask(i)} />
                     <Input value={t.label} onChange={(e) => setTaskLabel(i, e.target.value)} placeholder="Nama tugas..." className="h-7 text-xs" />
-                    <button type="button" onClick={() => moveTask(i, -1)} disabled={i === 0} className="text-slate-400 hover:text-slate-800 disabled:opacity-30 text-xs">▲</button>
-                    <button type="button" onClick={() => moveTask(i, 1)} disabled={i === tasks.length - 1} className="text-slate-400 hover:text-slate-800 disabled:opacity-30 text-xs">▼</button>
-                    <button type="button" onClick={() => removeTask(i)} className="text-red-400 hover:text-red-600 text-xs">✕</button>
+                    <button type="button" onClick={() => moveTask(i, -1)} disabled={i === 0} className="text-slate-400 hover:text-slate-800 disabled:opacity-20"><ChevronUp className="h-3.5 w-3.5" /></button>
+                    <button type="button" onClick={() => moveTask(i, 1)} disabled={i === tasks.length - 1} className="text-slate-400 hover:text-slate-800 disabled:opacity-20"><ChevronDown className="h-3.5 w-3.5" /></button>
+                    <button type="button" onClick={() => removeTask(i)} className="text-red-400 hover:text-red-600"><XCircle className="h-3.5 w-3.5" /></button>
                   </div>
                 ))}
               </div>
@@ -1777,7 +1777,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
             )}
 
             {!isSaranMode && (
-            <div className="flex items-center gap-2 rounded-md border p-2 bg-amber-50/30">
+            <div className="flex items-center gap-2 rounded-md border border-amber-200 p-2 bg-amber-50">
               <Checkbox id="atensi-single" checked={isAtensi} onCheckedChange={setIsAtensi} />
               <Label htmlFor="atensi-single" className="cursor-pointer flex items-center gap-1 text-xs"><Star className="h-3.5 w-3.5 text-amber-500" /> ATENSI (prioritas)</Label>
             </div>
@@ -1804,7 +1804,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
 
         {/* Over-ride Distribusi Langsung (admin/subbag yanduan only) */}
         {isSaranMode && canOverride && (
-         <Card className="flex-none h-fit flex flex-col overflow-hidden border-2 border-amber-300 bg-amber-50/20">
+          <Card className="flex-none h-fit flex flex-col overflow-hidden border border-amber-300 bg-amber-50">
           <div className="shrink-0 bg-amber-50/60 px-4 py-2.5 border-b border-amber-200 flex items-center justify-between">
             <CardTitle className="text-sm flex items-center gap-2">
               <Send className="h-4 w-4 text-amber-700" />
@@ -1841,7 +1841,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
 
       {/* Navigation bar — below content, above bottom */}
       {!editMode && (
-      <div className="bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] fixed bottom-0 left-64 right-0 z-30" data-testid="bottom-nav">
+      <div className="bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] sticky bottom-0 z-30" data-testid="bottom-nav">
         <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
           <Button variant="outline" size="sm" onClick={goPrev} disabled={idx === 0} className="text-xs min-w-[80px]" data-testid="btn-prev">
             <ChevronLeft className="h-4 w-4 mr-1" /> Prev
@@ -2741,10 +2741,9 @@ function AppShell({ user, onLogout }) {
         <nav className="flex-1 p-3 space-y-1">
           {menu.map((m) => (
             <button key={m.id} onClick={() => setTab(m.id)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors relative ${tab === m.id ? 'bg-white/15 text-white shadow-sm' : 'text-blue-200 hover:bg-white/5 hover:text-white'}`}>
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors relative ${tab === m.id ? 'bg-white/15 text-white shadow-sm' : 'text-blue-200 hover:bg-white/10 hover:text-white'}`}>
               <span className="relative">
                 <m.icon className="h-4 w-4" />
-                {!!m.badge && <span className="absolute -top-1.5 -right-1.5 h-2 w-2 rounded-full bg-red-500 animate-pulse" />}
               </span>
               <span className="flex-1 text-left">{m.label}</span>
               {!!m.badge && <Badge className="bg-red-600 text-white text-[10px] h-5 min-w-5 px-1.5 justify-center">{m.badge}</Badge>}
@@ -2753,7 +2752,7 @@ function AppShell({ user, onLogout }) {
         </nav>
         <div className="p-3 border-t border-white/10">
           <div className="flex items-center gap-3 px-2 py-2">
-            <div className="h-9 w-9 rounded-full bg-white/10 flex items-center justify-center text-sm font-bold">
+            <div className="h-9 w-9 rounded-full bg-white/25 flex items-center justify-center text-sm font-bold">
               {(user.name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
@@ -2793,8 +2792,9 @@ function PasswordPage({ user }) {
   const [newPw, setNewPw] = useState('')
   const [confirmPw, setConfirmPw] = useState('')
   const [saving, setSaving] = useState(false)
-  const [showOld, setShowOld] = useState(false)
-  const [showNew, setShowNew] = useState(false)
+    const [showOld, setShowOld] = useState(false)
+    const [showNew, setShowNew] = useState(false)
+    const [showConfirm, setShowConfirm] = useState(false)
 
   const submit = async (e) => {
     e.preventDefault()
@@ -2832,7 +2832,10 @@ function PasswordPage({ user }) {
             </div>
             <div>
               <Label htmlFor="cpw">Konfirmasi Password Baru</Label>
-              <Input id="cpw" type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} required />
+              <div className="relative">
+                <Input id="cpw" type={showConfirm ? 'text' : 'password'} value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} required className="pr-10" />
+                <button type="button" onClick={() => setShowConfirm(!showConfirm)} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">{showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+              </div>
             </div>
             <Button type="submit" disabled={saving} className="w-full">{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null} Simpan</Button>
           </form>
