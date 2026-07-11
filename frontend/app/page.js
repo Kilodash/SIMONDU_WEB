@@ -1130,7 +1130,7 @@ function CasesList({ user, onOpenCase }) {
                     <>
                       {cases.map((c, idx) => (
                         <TableRow key={`${c._source || 'gajamada'}-${c.prepetrator_id || idx}`} className="cursor-pointer hover:bg-blue-50/40 align-top" onClick={() => onOpenCase(c.prepetrator_id)}>
-                          <TableCell className="text-sm text-slate-500 pt-3">{(page - 1) * size + idx + 1}</TableCell>
+                          <TableCell className="text-sm text-slate-500 pt-3">{idx + 1}</TableCell>
                           <TableCell className="pt-3">
                             <p className="text-sm font-mono font-semibold">{c.id}</p>
                             <p className="text-xs text-slate-500 mt-0.5">{fmtDate(c.created_date)}</p>
@@ -1179,8 +1179,6 @@ function CasesList({ user, onOpenCase }) {
           )}
         </CardContent>
       </Card>
-
-      </div>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
