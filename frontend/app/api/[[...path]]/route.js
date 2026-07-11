@@ -740,6 +740,10 @@ async function handleRoute(request, ctx) {
     async function fetchCasesLocal(u, opts) {
       const db = await getDb()
       let rows = await db.collection('local_cases').find({}).sort({ created_at: -1 }).toArray()
+      // Kabid: default show only cases waiting for disposition (unless unit filter selected)
+      if (u.role === 'kabid_propam' && !opts.unit) {
+        rows = rows.filter((r) => r.status === STATUS.DISPOSISI_PIMPINAN || r.status === STATUS.SURAT_MASUK_POLDA_JABAR)
+      }
       if (opts.case_type) rows = rows.filter((r) => r.case_type === opts.case_type || (!r.case_type && opts.case_type === 'dumas'))
       if (opts.bucket) {
         const statuses = BUCKET[opts.bucket] || []
@@ -921,12 +925,18 @@ async function handleRoute(request, ctx) {
       const db = await getDb()
 
       const isYanduan = me.role === 'kasubbag_yanduan'
+      const isKabid = me.role === 'kabid_propam'
       const queueUnits = isYanduan
         ? (await getAllPositions()).filter((p) => {
             const up = p.toUpperCase()
             return up.includes('YANDUAN') && !up.includes('POLRES') && !up.includes('POLRESTA') && !up.includes('POLRESTABES')
           })
-        : await getKasubbidAliases()
+        : isKabid
+          ? (await getAllPositions()).filter((p) => {
+              const up = p.toUpperCase()
+              return up.includes('KABID PROPAM')
+            })
+          : await getKasubbidAliases()
 
       const r = await gajamada.listCases({ units: queueUnits, size: 100 }).catch(() => ({ data: [] }))
       const pids = r.data.map((c) => c.prepetrator_id)
@@ -970,6 +980,7 @@ async function handleRoute(request, ctx) {
     if (route === '/disposisi-queue/count' && method === 'GET') {
       if (!isDisposisiRole(me.role)) return ok({ count: 0 })
       const isYanduan = me.role === 'kasubbag_yanduan'
+      const isKabid = me.role === 'kabid_propam'
       let count = 0
 
       const queueUnits = isYanduan
@@ -977,7 +988,12 @@ async function handleRoute(request, ctx) {
             const up = p.toUpperCase()
             return up.includes('YANDUAN') && !up.includes('POLRES') && !up.includes('POLRESTA') && !up.includes('POLRESTABES')
           })
-        : await getKasubbidAliases()
+        : isKabid
+          ? (await getAllPositions()).filter((p) => {
+              const up = p.toUpperCase()
+              return up.includes('KABID PROPAM')
+            })
+          : await getKasubbidAliases()
 
       // Gajamada undisposed
       try {
