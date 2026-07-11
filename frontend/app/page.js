@@ -34,6 +34,7 @@ const LIMPAH_PATHS = {
     { to: 'PROVOS', label: 'Subbid Provos', desc: 'Terbukti pelanggaran disiplin → Sidang Disiplin' },
     { to: 'WABPROF', label: 'Subbid Wabprof', desc: 'Terbukti pelanggaran kode etik → Sidang KKE' },
     { to: 'POLRES', label: 'Polres', desc: 'Terbukti pelanggaran disiplin → Sidang Disiplin Polres' },
+    { to: 'SAT BRIMOB', label: 'Sat Brimob', desc: 'Anggota Brimob terbukti → Sidang Disiplin Brimob' },
   ],
   PROVOS: [
     { to: 'POLRES', label: 'Polres', desc: 'Berkas pelanggaran disiplin → Sidang Disiplin Polres' },
@@ -442,7 +443,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const currentUnitType = getUnitType(data?.disposisi_case_position)
   const limpahTargets = LIMPAH_PATHS[currentUnitType] || []
   const canKembali = (isKasubbidRole || isKabidRole || (user.role === 'unit' && data?._internal?.dispositions)) && data?.status !== STATUS.SELESAI && getBucket(data?.status) !== 'SURAT_MASUK'
-  const canLimpah = isKasubbidRole && data?.status !== STATUS.SELESAI && limpahTargets.length > 0
+  const canLimpah = (isKasubbidRole || (user.role === 'unit' && limpahTargets.length > 0)) && data?.status !== STATUS.SELESAI && limpahTargets.length > 0
 
   return (
     <Sheet open={!!pid} onOpenChange={(v) => !v && onClose()}>
