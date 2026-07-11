@@ -335,6 +335,14 @@ async function handleRoute(request, ctx) {
     return handleRoute._unitListCache
   }
 
+  // Quick cache for mapped unit names (for validation)
+  async function getMappedUnitNames() {
+    if (handleRoute._mappedNames && Date.now() - (handleRoute._mappedNamesTime || 0) < UNIT_LIST_CACHE_TTL) return handleRoute._mappedNames
+    handleRoute._mappedNames = await loadUnitList()
+    handleRoute._mappedNamesTime = Date.now()
+    return handleRoute._mappedNames
+  }
+
   const SIMPLIFIED_STATUSES = [
     'Diterima',
     'Diterima Bag Rehabpers',
@@ -1056,7 +1064,7 @@ async function handleRoute(request, ctx) {
       const { items, to_unit, note, is_atensi, case_type, tasks, case_position } = await request.json()
       if (!Array.isArray(items) || items.length === 0) return fail('items wajib')
       const allUnits = await getAllActiveUnitNames()
-      if (!to_unit || !allUnits.includes(to_unit)) return fail('Unit tujuan tidak valid')
+      if (!to_unit || !(allUnits.includes(to_unit) || (await getMappedUnitNames()).includes(to_unit))) return fail('Unit tujuan tidak valid')
       const db = await getDb()
       const results = []
       const unitType = getUnitType(to_unit)
@@ -1261,25 +1269,6 @@ async function handleRoute(request, ctx) {
       scheduleSync(pid, me, 'saran_yanduan')
       await logAudit(me, 'saran_yanduan', pid, { checklist, catatan, to_unit: to_unit || null })
       return ok({ data: doc })
-    }
-
-    // ---------- LIMPAH WASSIDIK ----------
-    if (route === '/limpah-wassidik' && method === 'POST') {
-      if (me.role !== 'kabid_propam' && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Kabid Propam', 403)
-      const { pid, catatan } = await request.json()
-      if (!pid) return fail('pid wajib')
-      const db = await getDb()
-      await db.collection('local_cases').updateOne({ prepetrator_id: pid }, { $set: { status: STATUS.SELESAI, limpah_wassidik: true, limpah_wassidik_at: new Date(), updated_at: new Date() } }, { upsert: true })
-      await db.collection('timelines').insertOne({
-        id: uuidv4(), prepetrator_id: pid,
-        title: 'Dilimpahkan ke Wassidik',
-        description: catatan || 'Dilimpahkan oleh Kabid',
-        by: { username: me.username, name: me.name, role: me.role },
-        created_at: new Date(),
-      })
-      scheduleSync(pid, me, 'limpah_wassidik')
-      await logAudit(me, 'limpah_wassidik', pid, { catatan })
-      return ok({ data: { pid, status: STATUS.SELESAI } })
     }
 
     // ---------- TOLAK (Unit kembalikan ke Kabid) ----------
@@ -1508,7 +1497,7 @@ async function handleRoute(request, ctx) {
       const pid = decodeURIComponent(dispMatch[1])
       const { to_unit, note, is_atensi } = await request.json()
       const allUnits = await getAllActiveUnitNames()
-      if (!to_unit || !allUnits.includes(to_unit)) return fail('Unit tujuan tidak valid')
+      if (!to_unit || !(allUnits.includes(to_unit) || (await getMappedUnitNames()).includes(to_unit))) return fail('Unit tujuan tidak valid')
       const db = await getDb()
       const fromUnit = me.role === 'kabid_propam' ? 'KABID PROPAM' : 'SUBBAG YANDUAN'
       const disp = {

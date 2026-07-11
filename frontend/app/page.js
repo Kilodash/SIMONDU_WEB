@@ -305,9 +305,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const [limpahUnit, setLimpahUnit] = useState('')
   const [limpahAlasan, setLimpahAlasan] = useState('')
   const [limpahSaving, setLimpahSaving] = useState(false)
-  const [wassidikOpen, setWassidikOpen] = useState(false)
-  const [wassidikCatatan, setWassidikCatatan] = useState('')
-  const [wassidikSaving, setWassidikSaving] = useState(false)
   const [terimaLoading, setTerimaLoading] = useState(false)
   const [showFullChronology, setShowFullChronology] = useState(false)
   const [dlPreviewUrl, setDlPreviewUrl] = useState('')
@@ -433,17 +430,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
     } catch (e) { toast.error(e.message) }
     finally { setLimpahSaving(false) }
   }
-  const doWassidik = async () => {
-    if (!wassidikCatatan) return toast.error('Catatan pelimpahan wajib diisi')
-    setWassidikSaving(true)
-    try {
-      await api('/limpah-wassidik', { method: 'POST', body: JSON.stringify({ pid, catatan: wassidikCatatan }) })
-      toast.success('Dilimpahkan ke Wassidik, status Selesai')
-      setWassidikOpen(false)
-      await load(); onChanged?.()
-    } catch (e) { toast.error(e.message) }
-    finally { setWassidikSaving(false) }
-  }
 
   if (!pid) return null
   const checklist = data?._internal?.checklist
@@ -457,7 +443,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const limpahTargets = LIMPAH_PATHS[currentUnitType] || []
   const canTolak = isKasubbidRole && data?.status !== STATUS.SELESAI && getBucket(data?.status) !== 'SURAT_MASUK'
   const canLimpah = isKasubbidRole && data?.status !== STATUS.SELESAI && limpahTargets.length > 0
-  const canWassidik = isKabidRole && data?.status !== STATUS.SELESAI
 
   return (
     <Sheet open={!!pid} onOpenChange={(v) => !v && onClose()}>
@@ -509,11 +494,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                     <ArrowRightLeft className="h-4 w-4 mr-1" /> Limpahkan
                   </Button>
                 )}
-                {canWassidik && (
-                  <Button size="sm" variant="secondary" onClick={() => { setWassidikCatatan(''); setWassidikOpen(true) }}>
-                    <Send className="h-4 w-4 mr-1" /> Limpah Wassidik
-                  </Button>
-                )}
                 {canComplete && (
                   <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={doComplete} disabled={completing}>
                     {completing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />} Tandai Selesai
@@ -525,10 +505,10 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
 
             <div className="p-6">
               <Tabs defaultValue="info">
-                <TabsList className="grid grid-cols-5 w-full">
+                <TabsList className={`grid ${isKabidRole ? 'grid-cols-4' : 'grid-cols-5'} w-full`}>
                   <TabsTrigger value="info">Info</TabsTrigger>
                   <TabsTrigger value="attach">Dokumen ({atts.length})</TabsTrigger>
-                  <TabsTrigger value="docs">Tindak Lanjut</TabsTrigger>
+                  {!isKabidRole && <TabsTrigger value="docs">Tindak Lanjut</TabsTrigger>}
                   <TabsTrigger value="timeline">Timeline ({mergedTimeline.length})</TabsTrigger>
                   <TabsTrigger value="sync">Sync ({data._internal?.sync_logs?.length || 0})</TabsTrigger>
                 </TabsList>
@@ -885,17 +865,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
               </DialogContent>
             </Dialog>
 
-            <Dialog open={wassidikOpen} onOpenChange={setWassidikOpen}>
-              <DialogContent><DialogHeader><DialogTitle>Limpahkan ke Wassidik</DialogTitle><DialogDescription>Pelimpahan ke Wassidik. Status akan menjadi Selesai (monitor only).</DialogDescription></DialogHeader>
-                <div className="space-y-3">
-                  <Label>Catatan pelimpahan</Label>
-                  <Textarea value={wassidikCatatan} onChange={(e) => setWassidikCatatan(e.target.value)} placeholder="Alasan dilimpahkan ke Wassidik..." />
-                </div>
-                <DialogFooter>
-                  <Button variant="ghost" onClick={() => setWassidikOpen(false)}>Batal</Button>
-                  <Button onClick={doWassidik} disabled={wassidikSaving || !wassidikCatatan}>{wassidikSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Limpahkan ke Wassidik</Button>
-                </DialogFooter>
-              </DialogContent>
             </Dialog>
 
             <Dialog open={dlPreviewOpen} onOpenChange={setDlPreviewOpen}>
