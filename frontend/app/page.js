@@ -1122,6 +1122,8 @@ function CasesList({ user, onOpenCase }) {
                           <TableCell className="pt-3 text-sm">{c.tgl_surat ? fmtDateShort(c.tgl_surat) : fmtDateShort(c.created_date)}</TableCell>
                           <TableCell className="pt-3 text-sm">{c.pengirim || '-'}</TableCell>
                           <TableCell className="pt-3">
+                            {c.returned_from && <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] mb-1">🔄 {c.returned_from}</Badge>}
+                            {c.returned_from_divpropam && <Badge className="bg-purple-100 text-purple-800 border-purple-300 text-[10px] mb-1">Divpropam</Badge>}
                             <Badge className={`${statusColor(c.status_label || c.status)} text-[11px]`}>{c.status_label || c.status || '-'}</Badge>
                           </TableCell>
                           <TableCell className="pt-3"><Button size="sm" variant="ghost" className="h-7 text-xs" onClick={(e) => { e.stopPropagation(); openEditLocal(c) }}>Edit</Button></TableCell>

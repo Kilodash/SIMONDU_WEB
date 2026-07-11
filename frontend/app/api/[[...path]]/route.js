@@ -77,6 +77,20 @@ async function enrichCase(caseObj) {
   })()
   const cleanOutcome = outcome ? { ...outcome, _id: undefined } : null
   const checklist = computeChecklist(cleanOutcome, strip(checklistRows))
+  // Auto-detect: case returned from Divpropam back to Polda Jabar
+  if (localCase?.returned_to_divpropam && localCase?.returned_divpropam_note) {
+    const currentPos = (caseObj.disposisi_case_position || '').toUpperCase()
+    if (currentPos.includes('JABAR') || currentPos.includes('JAWA BARAT') || currentPos.includes('BANDUNG') || currentPos.includes('YANDUAN')) {
+      if (localCase.status === 'Dikembalikan ke Divpropam') {
+        try {
+          await db.collection('local_cases').updateOne(
+            { prepetrator_id: pid },
+            { $set: { status: STATUS.SURAT_MASUK_POLDA_JABAR, returned_from_divpropam: true, updated_at: new Date() } }
+          )
+        } catch (_) {}
+      }
+    }
+  }
   return {
     ...caseObj,
     summary: caseObj.perihal || caseObj.summary || (caseObj.content ? String(caseObj.content).slice(0, 200) : ''),
@@ -995,6 +1009,9 @@ async function handleRoute(request, ctx) {
               status_label: lc.status, perihal: lc.perihal, nomor_surat: lc.nomor_surat,
               tgl_surat: lc.tgl_surat, case_type: lc.case_type, jenis_surat: lc.jenis_surat,
               pdf_url: lc.pdf_url, _source: lc.source, _is_local: true,
+              returned_from: lc.returned_from || null,
+              returned_note: lc.returned_note || null,
+              returned_from_divpropam: lc.returned_from_divpropam || false,
             })
           }
         }
@@ -1321,7 +1338,31 @@ async function handleRoute(request, ctx) {
       return ok({ data: doc })
     }
 
-    // ---------- KEMBALIKAN (Unit→Kasubbid, Kasubbid/Kabid/Polres→Yanduan) ----------
+    // ---------- KEMBALIKAN DIVPROPAM (Yanduan→Divpropam) ----------
+    if (route === '/kembalikan-divpropam' && method === 'POST') {
+      if (me.role !== 'kasubbag_yanduan' && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Kasubbag Yanduan', 403)
+      const { pid, catatan, target_position } = await request.json()
+      if (!pid) return fail('pid wajib')
+      const db = await getDb()
+      const casePos = target_position || 'DIV PROPAM MABES POLRI'
+      await db.collection('local_cases').updateOne(
+        { prepetrator_id: pid },
+        { $set: { status: 'Dikembalikan ke Divpropam', returned_to_divpropam: true, returned_divpropam_at: new Date(), returned_divpropam_note: catatan || '', updated_at: new Date() }, $setOnInsert: { prepetrator_id: pid } },
+        { upsert: true }
+      )
+      await db.collection('timelines').insertOne({
+        id: uuidv4(), prepetrator_id: pid,
+        title: 'Dikembalikan ke Divpropam',
+        description: catatan || 'Dikembalikan oleh Subbag Yanduan ke Divpropam',
+        by: { username: me.username, name: me.name, role: me.role },
+        created_at: new Date(),
+      })
+      scheduleSync(pid, me, 'kembalikan_divpropam')
+      await logAudit(me, 'kembalikan_divpropam', pid, { catatan, target: casePos })
+      return ok({ data: { pid, status: 'Dikembalikan ke Divpropam' } })
+    }
+
+    // ---------- KEMBALIKAN ----------
     if (route === '/kembalikan' && method === 'POST') {
       const { pid, alasan } = await request.json()
       if (!pid) return fail('pid wajib')
