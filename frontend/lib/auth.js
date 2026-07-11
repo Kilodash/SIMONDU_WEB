@@ -4,13 +4,13 @@ const SECRET = new TextEncoder().encode(process.env.APP_JWT_SECRET || 'dev-secre
 const COOKIE_NAME = 'simondu_session'
 
 export const USERS = [
-  { username: 'kasubbid', password: 'kasubbid123', name: 'Kasubbid Paminal Polda Jabar', role: 'kasubbid_paminal', unit: null },
-  { username: 'kasubbid_paminal', password: 'paminal123', name: 'Kasubbid Paminal Polda Jabar', role: 'kasubbid_paminal', unit: null },
-  { username: 'kasubbid_provos', password: 'provos123', name: 'Kasubbid Provos Polda Jabar', role: 'kasubbid_provos', unit: null },
-  { username: 'kasubbid_wabprof', password: 'wabprof123', name: 'Kasubbid Wabprof Polda Jabar', role: 'kasubbid_wabprof', unit: null },
-  { username: 'kabid_propam', password: 'kabid123', name: 'Kabid Propam Polda Jabar', role: 'kabid_propam', unit: null },
-  { username: 'kasubbag_yanduan', password: 'yanduan123', name: 'Kasubbag Yanduan Polda Jabar', role: 'kasubbag_yanduan', unit: null },
-  { username: 'kasubbag_rehabpers', password: 'rehabpers123', name: 'Kasubbag Rehabpers Polda Jabar', role: 'kasubbag_rehabpers', unit: null },
+  { username: 'kasubbid', password: 'kasubbid123', name: 'KASUBBID PAMINAL POLDA JAWA BARAT', role: 'kasubbid_paminal', unit: null },
+  { username: 'kasubbid_paminal', password: 'paminal123', name: 'KASUBBID PAMINAL POLDA JAWA BARAT', role: 'kasubbid_paminal', unit: null },
+  { username: 'kasubbid_provos', password: 'provos123', name: 'KASUBBID PROVOS POLDA JAWA BARAT', role: 'kasubbid_provos', unit: null },
+  { username: 'kasubbid_wabprof', password: 'wabprof123', name: 'KASUBBID WABPROF POLDA JAWA BARAT', role: 'kasubbid_wabprof', unit: null },
+  { username: 'kabid_propam', password: 'kabid123', name: 'KABID PROPAM POLDA JAWA BARAT', role: 'kabid_propam', unit: null },
+  { username: 'kasubbag_yanduan', password: 'yanduan123', name: 'KASUBBAG YANDUAN POLDA JAWA BARAT', role: 'kasubbag_yanduan', unit: null },
+  { username: 'kasubbag_rehabpers', password: 'rehabpers123', name: 'KASUBBAG REHABPERS POLDA JAWA BARAT', role: 'kasubbag_rehabpers', unit: null },
   { username: 'admin', password: 'admin123', name: 'Admin/Operator Propam', role: 'admin', unit: null },
   { username: 'super_admin', password: 'superadmin123', name: 'Super Admin', role: 'super_admin', unit: null },
   { username: 'unit1', password: 'unit123', name: 'Kanit 1 Paminal Polda Jabar', role: 'unit', unit: 'UNIT 1 SUBBID PAMINAL POLDA JAWA BARAT' },

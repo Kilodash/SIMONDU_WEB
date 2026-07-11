@@ -311,7 +311,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const [terimaLoading, setTerimaLoading] = useState(false)
   const [showFullChronology, setShowFullChronology] = useState(false)
   const [mergedTimeline, setMergedTimeline] = useState([])
-  const [reference, setReference] = useState({ hasil_lidik_options: [], settlement_options: [], satker_satwil: [], all_active_units: [], units: [] })
+  const [reference, setReference] = useState({ hasil_lidik_options: [], settlement_options: [], satker_satwil: [], mapped_units: [], units: [] })
   const [notingItem, setNotingItem] = useState(null)
   const [noteDraft, setNoteDraft] = useState('')
   const [perdamaianOpen, setPerdamaianOpen] = useState(false)
@@ -419,7 +419,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
     if (!limpasUnit || !limpasAlasan) return toast.error('Unit tujuan dan alasan wajib diisi')
     setLimpasSaving(true)
     try {
-      const allUnits = reference.all_active_units || reference.units || []
+      const allUnits = reference.mapped_units || reference.units || []
       const targetUnit = allUnits.find((u) => (typeof u === 'string' ? u : u.name || '').toUpperCase().includes(limpasUnit))
       const toUnitName = typeof targetUnit === 'string' ? targetUnit : targetUnit?.name || limpasUnit
       const path = LIMPAS_PATHS[currentUnitType]?.find((p) => p.to === limpasUnit)
@@ -1314,7 +1314,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
   const [editOpen, setEditOpen] = useState(false)
   const [editMode, setEditMode] = useState(null)
   const [editQueueItem, setEditQueueItem] = useState(null)
-  const [reference, setReference] = useState({ units: [], all_active_units: [], default_disposisi_tasks: [], unit_default_tasks: {} })
+  const [reference, setReference] = useState({ units: [], mapped_units: [], default_disposisi_tasks: [], unit_default_tasks: {} })
   // Form state
   const [toUnit, setToUnit] = useState('')
   const [note, setNote] = useState('')
@@ -1400,7 +1400,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
   }
   const cancelEdit = () => { setEditMode(null); setEditQueueItem(null); setTab('riwayat'); loadRiwayat() }
   const saveEdit = async () => {
-    if (!toUnit || !reference.units?.includes(toUnit)) return toast.error('Pilih unit tujuan')
+    if (!toUnit || !(reference.mapped_units || []).includes(toUnit)) return toast.error('Pilih unit tujuan')
     setSubmitting(true)
     try {
       const checkedTasks = tasks.filter((t) => t.checked && t.label).map((t) => t.label)
@@ -1757,10 +1757,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
               <Select value={saranUnit} onValueChange={setSaranUnit}>
                 <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih satker/satwil" /></SelectTrigger>
                 <SelectContent>
-                  {(reference.all_active_units || []).filter((u) => {
-                    const s = typeof u === 'string' ? shortUnit(u) : shortUnit(u.name)
-                    return /^(SUBBID|SUBBAG|KABID|POLRES|POLRESTA|POLRESTABES|SAT |WASSIDIK|SATKER)/i.test(s)
-                  }).map((u) => <SelectItem key={typeof u === 'string' ? u : u.id} value={typeof u === 'string' ? u : u.name}>{typeof u === 'string' ? shortUnit(u) : u.name}</SelectItem>)}
+                  {(reference.mapped_units || []).map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -1771,7 +1768,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
               <Select value={toUnit} onValueChange={setToUnit}>
                 <SelectTrigger data-testid="disposisi-unit-select" className="h-9"><SelectValue placeholder="Pilih unit" /></SelectTrigger>
                 <SelectContent>
-                  {(reference.all_active_units || reference.units || []).map((u) => <SelectItem key={typeof u === 'string' ? u : u.id} value={typeof u === 'string' ? u : u.name}>{typeof u === 'string' ? shortUnit(u) : u.name}</SelectItem>)}
+                  {(reference.mapped_units || reference.units || []).map((u) => <SelectItem key={u} value={u}>{typeof u === 'string' ? u : u.name || u}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -1848,10 +1845,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
               <Select value={overrideUnit} onValueChange={setOverrideUnit}>
                 <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih satker/satwil" /></SelectTrigger>
                 <SelectContent>
-                  {(reference.all_active_units || []).filter((u) => {
-                    const s = typeof u === 'string' ? shortUnit(u) : shortUnit(u.name)
-                    return /^(SUBBID|SUBBAG|KABID|POLRES|POLRESTA|POLRESTABES|SAT |WASSIDIK|SATKER)/i.test(s)
-                  }).map((u) => <SelectItem key={typeof u === 'string' ? u : u.id} value={typeof u === 'string' ? u : u.name}>{typeof u === 'string' ? shortUnit(u) : u.name}</SelectItem>)}
+                  {(reference.mapped_units || []).map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

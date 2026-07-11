@@ -176,10 +176,18 @@ export async function getDb() {
   return wrapper
 }
 
+function isPoldaJabar(name, parent) {
+  const up = (name || '').toUpperCase()
+  const parentUp = (parent || '').toUpperCase()
+  return up.includes('JABAR') || up.includes('JAWA BARAT') || up.includes('BANDUNG')
+    || parentUp.includes('JABAR') || parentUp.includes('JAWA BARAT') || parentUp.includes('BANDUNG')
+    || /PAMINAL|PROVOS|WABPROF|YANDUAN|WASSIDIK|BRIMOB|REHABPERS|KABID PROPAM/i.test(up)
+}
+
 export async function getActiveUnits() {
   const db = await getDb()
   const rows = await db.collection('units_master').find({ active: true, is_kasubbid: false }).sort({ order: 1 }).toArray()
-  return rows.map((r) => r.name)
+  return rows.filter((r) => isPoldaJabar(r.name, r.parent)).map((r) => r.name)
 }
 
 // Look up the kasubbid unit name from units_master.
@@ -208,7 +216,7 @@ export async function getPolresUnits() {
 export async function getAllActiveUnitNames() {
   const db = await getDb()
   const rows = await db.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
-  return rows.map((r) => r.name)
+  return rows.filter((r) => isPoldaJabar(r.name, r.parent)).map((r) => r.name)
 }
 
 // Look up Gajamada external_name aliases for the kasubbid unit from unit_mapping.
