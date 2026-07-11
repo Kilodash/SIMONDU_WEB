@@ -403,12 +403,12 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
     } catch (e) { toast.error(e.message) }
     finally { setTerimaLoading(false) }
   }
-  const doTolak = async () => {
-    if (!tolakAlasan) return toast.error('Alasan penolakan wajib diisi')
+  const doKembalikan = async () => {
+    if (!tolakAlasan) return toast.error('Alasan pengembalian wajib diisi')
     setTolakSaving(true)
     try {
-      await api('/tolak', { method: 'POST', body: JSON.stringify({ pid, alasan: tolakAlasan }) })
-      toast.success('Kasus dikembalikan ke Kabid Propam')
+      const r = await api('/kembalikan', { method: 'POST', body: JSON.stringify({ pid, alasan: tolakAlasan }) })
+      toast.success(`Dikembalikan ke ${r.return_to || 'unit sebelumnya'}`)
       setTolakOpen(false); setTolakAlasan('')
       await load(); onChanged?.()
     } catch (e) { toast.error(e.message) }
@@ -441,7 +441,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const isKabidRole = user.role === 'kabid_propam'
   const currentUnitType = getUnitType(data?.disposisi_case_position)
   const limpahTargets = LIMPAH_PATHS[currentUnitType] || []
-  const canTolak = isKasubbidRole && data?.status !== STATUS.SELESAI && getBucket(data?.status) !== 'SURAT_MASUK'
+  const canKembali = (isKasubbidRole || isKabidRole || (user.role === 'unit' && data?._internal?.dispositions)) && data?.status !== STATUS.SELESAI && getBucket(data?.status) !== 'SURAT_MASUK'
   const canLimpah = isKasubbidRole && data?.status !== STATUS.SELESAI && limpahTargets.length > 0
 
   return (
@@ -484,9 +484,9 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                     {terimaLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />} Terima
                   </Button>
                 )}
-                {canTolak && (
+                {canKembali && (
                   <Button size="sm" variant="outline" className="border-red-300 text-red-700 hover:bg-red-50" onClick={() => { setTolakAlasan(''); setTolakOpen(true) }}>
-                    <Ban className="h-4 w-4 mr-1" /> Tolak / Kembalikan
+                    <Ban className="h-4 w-4 mr-1" /> Kembalikan
                   </Button>
                 )}
                 {canLimpah && (
@@ -824,14 +824,14 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
       </Dialog>
 
             <Dialog open={tolakOpen} onOpenChange={setTolakOpen}>
-              <DialogContent><DialogHeader><DialogTitle>Tolak / Kembalikan ke Kabid</DialogTitle></DialogHeader>
+              <DialogContent><DialogHeader><DialogTitle>Kembalikan Surat</DialogTitle><DialogDescription>Masukkan alasan pengembalian.</DialogDescription></DialogHeader>
                 <div className="space-y-3">
-                  <Label>Alasan penolakan</Label>
-                  <Textarea value={tolakAlasan} onChange={(e) => setTolakAlasan(e.target.value)} placeholder="Alasan dikembalikan ke Kabid Propam..." />
+                  <Label>Alasan</Label>
+                  <Textarea value={tolakAlasan} onChange={(e) => setTolakAlasan(e.target.value)} placeholder="Alasan dikembalikan..." />
                 </div>
                 <DialogFooter>
                   <Button variant="ghost" onClick={() => setTolakOpen(false)}>Batal</Button>
-                  <Button onClick={doTolak} disabled={tolakSaving || !tolakAlasan}>{tolakSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Kembalikan</Button>
+                  <Button onClick={doKembalikan} disabled={tolakSaving || !tolakAlasan}>{tolakSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Kembalikan</Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
@@ -2810,6 +2810,7 @@ function AppShell({ user, onLogout }) {
     ...(canSaranMasukan ? [{ id: 'saran-masukan', label: 'Saran/Masukan', icon: FileText, badge: disposisiCount }] : []),
     ...(canDisposisi ? [{ id: 'disposisi', label: 'Disposisi', icon: ArrowRightLeft, badge: disposisiCount }] : []),
     ...(canInputManual ? [{ id: 'input-manual', label: 'Input Manual', icon: FileText }] : []),
+    ...(isYanduan || isAdmin ? [{ id: 'wassidik-tracking', label: 'Surat Manual Wassidik', icon: Send }] : []),
     ...(canRiwayat ? [{ id: 'riwayat-saya', label: 'Riwayat Saya', icon: History }] : []),
     ...(canManageUnits ? [{ id: 'units', label: 'Master Unit', icon: Building2 }] : []),
     ...(isAdmin ? [{ id: 'sync', label: 'Log Sync', icon: Send }] : []),
@@ -2869,6 +2870,7 @@ function AppShell({ user, onLogout }) {
           {tab === 'saran-masukan' && canSaranMasukan && <DisposisiPage mode="saran" user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
           {tab === 'disposisi' && canDisposisi && <DisposisiPage mode="disposisi" user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
           {tab === 'input-manual' && canInputManual && <AstinaInputPage />}
+          {tab === 'wassidik-tracking' && (isYanduan || isAdmin) && <WassidikTrackingPage user={user} />}
           {tab === 'riwayat-saya' && canRiwayat && <RiwayatSayaPage user={user} onOpenCase={setSelectedCase} />}
           {tab === 'units' && canManageUnits && <MasterUnitPage user={user} />}
           {tab === 'sync' && isAdmin && <SyncLogsView />}
@@ -2879,6 +2881,58 @@ function AppShell({ user, onLogout }) {
       </main>
 
       <CaseDetail pid={selectedCase} user={user} onClose={() => setSelectedCase(null)} onChanged={refreshDisposisiCount} />
+    </div>
+  )
+}
+
+function WassidikTrackingPage({ user }) {
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const load = async () => {
+    setLoading(true)
+    try { const r = await api('/wassidik-queue'); setRows(r.data || []) }
+    catch (e) { toast.error(e.message) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [])
+
+  const markDone = async (pid) => {
+    try {
+      await api(`/wassidik-queue/${encodeURIComponent(pid)}/done`, { method: 'POST' })
+      toast.success('Surat manual ditandai selesai')
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">Surat Manual Wassidik</h2>
+          <p className="text-xs text-slate-500 mt-0.5">Kasus yang sudah dilimpahkan ke Wassidik dan perlu dibuat surat manual oleh Yanduan.</p>
+        </div>
+        <Badge className="bg-amber-100 text-amber-800 text-sm font-bold px-3 py-1.5">{rows.length} pending</Badge>
+      </div>
+
+      {loading ? <div className="flex items-center justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-blue-800" /></div> :
+      rows.length === 0 ? <Card><CardContent className="py-16 text-center"><CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-green-500" /><p className="text-slate-500">Semua surat manual sudah dikirim.</p></CardContent></Card> :
+      <Card><CardContent className="p-0"><Table>
+        <TableHeader className="bg-slate-50"><TableRow>
+          <TableHead className="text-sm">PID</TableHead><TableHead className="text-sm">Terlapor</TableHead><TableHead className="text-sm">Tanggal Limpah</TableHead><TableHead className="text-sm">Oleh</TableHead><TableHead className="text-sm w-24">Aksi</TableHead>
+        </TableRow></TableHeader>
+        <TableBody>
+          {rows.map((r) => (
+            <TableRow key={r.prepetrator_id}>
+              <TableCell className="text-xs font-mono">{String(r.prepetrator_id).slice(0, 14)}...</TableCell>
+              <TableCell className="text-xs">{r.prepetrator_name || r.pengirim || '-'}</TableCell>
+              <TableCell className="text-xs">{fmtDateShort(r.wassidik_limpah_at)}</TableCell>
+              <TableCell className="text-xs">{r.wassidik_limpah_oleh || '-'}</TableCell>
+              <TableCell><Button size="sm" variant="outline" onClick={() => markDone(r.prepetrator_id)} className="text-xs"><CheckCircle2 className="h-3 w-3 mr-1" /> Selesai</Button></TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table></CardContent></Card>}
     </div>
   )
 }

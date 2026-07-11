@@ -1058,6 +1058,39 @@ async function handleRoute(request, ctx) {
       return ok({ count })
     }
 
+    // ---------- WASSIDIK TRACKING ----------
+    // Yanduan/Admin: daftar kasus wassidik yang surat manual belum dibuat
+    if (route === '/wassidik-queue' && method === 'GET') {
+      if (me.role !== 'kasubbag_yanduan' && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Yanduan/Admin', 403)
+      const db = await getDb()
+      const rows = await db.collection('local_cases').find({ wassidik_surat_manual: false }).sort({ wassidik_limpah_at: -1 }).toArray().catch(() => [])
+      const enriched = []
+      for (const r of rows) {
+        const gj = await gajamada.getCase(r.prepetrator_id).catch(() => null)
+        enriched.push({
+          prepetrator_id: r.prepetrator_id,
+          pengirim: r.pengirim || gj?.pengirim || '-',
+          perihal: r.perihal || gj?.perihal || '-',
+          prepetrator_name: r.prepator_name || gj?.prepetrator_name || '-',
+          wassidik_limpah_at: r.wassidik_limpah_at,
+          wassidik_limpah_oleh: r.wassidik_limpah_oleh,
+          status: r.status,
+        })
+      }
+      return ok({ data: enriched, total: enriched.length })
+    }
+    if (route.match(/^\/wassidik-queue\/([^/]+)\/done$/) && method === 'POST') {
+      if (me.role !== 'kasubbag_yanduan' && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Yanduan/Admin', 403)
+      const pid = decodeURIComponent(route.match(/^\/wassidik-queue\/([^/]+)\/done$/)[1])
+      const db = await getDb()
+      await db.collection('local_cases').updateOne(
+        { prepetrator_id: pid },
+        { $set: { wassidik_surat_manual: true, wassidik_surat_manual_at: new Date(), wassidik_surat_manual_oleh: me.name } }
+      ).catch(() => {})
+      await logAudit(me, 'wassidik_surat_manual', pid)
+      return ok({})
+    }
+
     // Bulk disposisi
     if (route === '/disposisi-bulk' && method === 'POST') {
       if (!isDisposisiRole(me.role)) return fail('Hanya Kasubbid/Admin/Kabid Propam/Kasubbag Yanduan', 403)
@@ -1095,12 +1128,14 @@ async function handleRoute(request, ctx) {
         if (resolvedCasePosition) {
           try {
             const original = await gajamada.getCase(pid)
-            const status = me.role === 'kabid_propam'
-              ? (unitType === 'PAMINAL' || unitType === 'POLRES' ? STATUS.PENYELIDIKAN_PAMINAL : STATUS.PENYELIDIKAN_PROVOS)
+            const gStatus = me.role === 'kabid_propam'
+              ? (unitType === 'PAMINAL' ? STATUS.PENYELIDIKAN_PAMINAL
+                : unitType === 'PROVOS' ? STATUS.PENYELIDIKAN_PROVOS
+                : STATUS.PENYELIDIKAN_PAMINAL)
               : STATUS.DISPOSISI_PIMPINAN
             const params = {
               report_id: pid,
-              status: toGajamadaStatus(status, resolvedCasePosition),
+              status: toGajamadaStatus(gStatus, resolvedCasePosition),
               case_position: resolvedCasePosition,
               note: (note || 'Disposisi oleh ' + me.name),
               createdBy: me.name || 'SIMONDU',
@@ -1149,13 +1184,28 @@ async function handleRoute(request, ctx) {
             )
           }
         } catch (_) {}
-        const newStatus = me.role === 'kabid_propam'
-          ? (unitType === 'PAMINAL' || unitType === 'POLRES' ? STATUS.PENYELIDIKAN_PAMINAL : STATUS.PENYELIDIKAN_PROVOS)
-          : STATUS.DISPOSISI_PIMPINAN
+        const isWassidik = to_unit.toUpperCase().includes('WASSIDIK')
+        let newStatus
+        if (me.role === 'kabid_propam') {
+          const u = to_unit.toUpperCase()
+          if (u.includes('PAMINAL')) newStatus = 'Dalam Proses Subbid Paminal'
+          else if (u.includes('PROVOS')) newStatus = 'Dalam Proses Subbid Provos'
+          else if (u.includes('WABPROF')) newStatus = 'Dalam Proses Subbid Wabprof'
+          else if (u.includes('REHABPERS')) newStatus = 'Dalam Proses Subbag Rehabpers'
+          else if (u.includes('WASSIDIK')) newStatus = `Dilimpahkan ${to_unit}`
+          else if (u.includes('POLRES') || u.includes('POLRESTA') || u.includes('POLRESTABES')) newStatus = `Dalam Proses ${to_unit}`
+          else newStatus = `Dalam Proses ${to_unit}`
+        } else {
+          newStatus = me.role === 'kasubbag_yanduan' ? STATUS.DISPOSISI_PIMPINAN : STATUS.PENYELIDIKAN_PAMINAL
+        }
         try {
           await db.collection('local_cases').updateOne(
             { prepetrator_id: pid },
-            { $set: { case_type: autoCaseType, status: newStatus, updated_at: new Date() }, $setOnInsert: { prepetrator_id: pid, source: itemSource, created_at: new Date() } },
+            { $set: {
+                case_type: autoCaseType, status: newStatus, updated_at: new Date(),
+                ...(isWassidik ? { wassidik_surat_manual: false, wassidik_limpah_at: new Date(), wassidik_limpah_oleh: me.name } : {}),
+              },
+              $setOnInsert: { prepetrator_id: pid, source: itemSource, created_at: new Date() } },
             { upsert: true }
           )
         } catch (_) {}
@@ -1271,25 +1321,54 @@ async function handleRoute(request, ctx) {
       return ok({ data: doc })
     }
 
-    // ---------- TOLAK (Unit kembalikan ke Kabid) ----------
-    if (route === '/tolak' && method === 'POST') {
-      if (!isKasubbidRole(me.role) && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Kasubbid/Admin', 403)
+    // ---------- KEMBALIKAN (Unit→Kasubbid, Kasubbid/Kabid/Polres→Yanduan) ----------
+    if (route === '/kembalikan' && method === 'POST') {
       const { pid, alasan } = await request.json()
       if (!pid) return fail('pid wajib')
       const db = await getDb()
-      const latestDisp = await db.collection('dispositions').findOne({ prepetrator_id: pid }, { sort: { created_at: -1 } })
-      const fromUnit = latestDisp?.to_unit || me.unit
-      await db.collection('local_cases').updateOne({ prepetrator_id: pid }, { $set: { status: STATUS.DISPOSISI_PIMPINAN, updated_at: new Date() } }, { upsert: true })
+
+      // Determine return_to: Unit role → kasubbid head unit, others → yanduan
+      const isUnitReturner = isUnitRole(me.role)
+      let returnTo = 'YANDUAN'
+      let kasubbidName = ''
+
+      if (isUnitReturner) {
+        // Unit→Kasubbid: resolve head unit from current position
+        const latestDisp = await db.collection('dispositions').findOne({ prepetrator_id: pid }, { sort: { created_at: -1 } })
+        const unitName = latestDisp?.to_unit || me.unit
+        const mappings = await db.collection('unit_mapping').find({ internal_unit: unitName }).toArray()
+        const up = (s) => (s || '').toUpperCase()
+        const head = mappings.find((m) => up(m.external_name).includes('KASUBBID'))
+        kasubbidName = head?.internal_unit || 'KASUBBID'
+        returnTo = kasubbidName
+      }
+
+      const originLabel = isUnitReturner ? (me.unit || `Unit ${me.username}`) : me.name
+      const statusLabel = returnTo === 'YANDUAN'
+        ? 'Dikembalikan ke Subbag Yanduan'
+        : `Dikembalikan ke ${returnTo}`
+
+      await db.collection('local_cases').updateOne(
+        { prepetrator_id: pid },
+        { $set: {
+            status: statusLabel,
+            returned_from: originLabel,
+            returned_at: new Date(),
+            returned_note: alasan || '',
+            updated_at: new Date()
+          }, $setOnInsert: { prepetrator_id: pid } },
+        { upsert: true }
+      )
       await db.collection('timelines').insertOne({
         id: uuidv4(), prepetrator_id: pid,
-        title: `Ditolak oleh ${fromUnit}, kembali ke Kabid`,
-        description: alasan || 'Dikembalikan ke Kabid Propam',
+        title: `Dikembalikan ke ${returnTo}`,
+        description: `Dikembalikan oleh ${originLabel}${alasan ? ': ' + alasan : ''}`,
         by: { username: me.username, name: me.name, role: me.role },
         created_at: new Date(),
       })
-      scheduleSync(pid, me, 'tolak')
-      await logAudit(me, 'tolak', pid, { alasan, from_unit: fromUnit })
-      return ok({ data: { pid, status: STATUS.DISPOSISI_PIMPINAN } })
+      scheduleSync(pid, me, 'kembalikan')
+      await logAudit(me, 'kembalikan', pid, { alasan, return_to: returnTo, origin: originLabel })
+      return ok({ data: { pid, return_to: returnTo, status: statusLabel } })
     }
 
     // ---------- LIMPAH ANTAR UNIT ----------
