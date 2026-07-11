@@ -29,7 +29,7 @@ import { FILTER_UNITS } from '../lib/units.js'
 import { getUnitType } from '../lib/checklist.js'
 import { simplifyStatus, simplifyUnit } from '../lib/mapping.js'
 
-const LIMPAS_PATHS = {
+const LIMPAH_PATHS = {
   PAMINAL: [
     { to: 'PROVOS', label: 'Subbid Provos', desc: 'Terbukti pelanggaran disiplin → Sidang Disiplin' },
     { to: 'WABPROF', label: 'Subbid Wabprof', desc: 'Terbukti pelanggaran kode etik → Sidang KKE' },
@@ -301,10 +301,10 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const [tolakOpen, setTolakOpen] = useState(false)
   const [tolakAlasan, setTolakAlasan] = useState('')
   const [tolakSaving, setTolakSaving] = useState(false)
-  const [limpasOpen, setLimpasOpen] = useState(false)
-  const [limpasUnit, setLimpasUnit] = useState('')
-  const [limpasAlasan, setLimpasAlasan] = useState('')
-  const [limpasSaving, setLimpasSaving] = useState(false)
+  const [limpahOpen, setLimpahOpen] = useState(false)
+  const [limpahUnit, setLimpahUnit] = useState('')
+  const [limpahAlasan, setLimpahAlasan] = useState('')
+  const [limpahSaving, setLimpahSaving] = useState(false)
   const [wassidikOpen, setWassidikOpen] = useState(false)
   const [wassidikCatatan, setWassidikCatatan] = useState('')
   const [wassidikSaving, setWassidikSaving] = useState(false)
@@ -417,27 +417,27 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
     } catch (e) { toast.error(e.message) }
     finally { setTolakSaving(false) }
   }
-  const doLimpas = async () => {
-    if (!limpasUnit || !limpasAlasan) return toast.error('Unit tujuan dan alasan wajib diisi')
-    setLimpasSaving(true)
+  const doLimpah = async () => {
+    if (!limpahUnit || !limpahAlasan) return toast.error('Unit tujuan dan alasan wajib diisi')
+    setLimpahSaving(true)
     try {
       const allUnits = reference.mapped_units || reference.units || []
-      const targetUnit = allUnits.find((u) => (typeof u === 'string' ? u : u.name || '').toUpperCase().includes(limpasUnit))
-      const toUnitName = typeof targetUnit === 'string' ? targetUnit : targetUnit?.name || limpasUnit
-      const path = LIMPAS_PATHS[currentUnitType]?.find((p) => p.to === limpasUnit)
-      const alasanLengkap = path ? `${path.desc}. ${limpasAlasan}` : limpasAlasan
-      await api('/limpas-unit', { method: 'POST', body: JSON.stringify({ pid, to_unit: toUnitName, alasan: alasanLengkap }) })
+      const targetUnit = allUnits.find((u) => (typeof u === 'string' ? u : u.name || '').toUpperCase().includes(limpahUnit))
+      const toUnitName = typeof targetUnit === 'string' ? targetUnit : targetUnit?.name || limpahUnit
+      const path = LIMPAH_PATHS[currentUnitType]?.find((p) => p.to === limpahUnit)
+      const alasanLengkap = path ? `${path.desc}. ${limpahAlasan}` : limpahAlasan
+      await api('/limpah-unit', { method: 'POST', body: JSON.stringify({ pid, to_unit: toUnitName, alasan: alasanLengkap }) })
       toast.success(`Dilimpahkan ke ${shortUnit(toUnitName)}`)
-      setLimpasOpen(false)
+      setLimpahOpen(false)
       await load(); onChanged?.()
     } catch (e) { toast.error(e.message) }
-    finally { setLimpasSaving(false) }
+    finally { setLimpahSaving(false) }
   }
   const doWassidik = async () => {
     if (!wassidikCatatan) return toast.error('Catatan pelimpahan wajib diisi')
     setWassidikSaving(true)
     try {
-      await api('/limpas-wassidik', { method: 'POST', body: JSON.stringify({ pid, catatan: wassidikCatatan }) })
+      await api('/limpah-wassidik', { method: 'POST', body: JSON.stringify({ pid, catatan: wassidikCatatan }) })
       toast.success('Dilimpahkan ke Wassidik, status Selesai')
       setWassidikOpen(false)
       await load(); onChanged?.()
@@ -454,9 +454,9 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const isKasubbidRole = user.role === 'kasubbid_paminal' || user.role === 'kasubbid_provos' || user.role === 'kasubbid_wabprof'
   const isKabidRole = user.role === 'kabid_propam'
   const currentUnitType = getUnitType(data?.disposisi_case_position)
-  const limpasTargets = LIMPAS_PATHS[currentUnitType] || []
+  const limpahTargets = LIMPAH_PATHS[currentUnitType] || []
   const canTolak = isKasubbidRole && data?.status !== STATUS.SELESAI && getBucket(data?.status) !== 'SURAT_MASUK'
-  const canLimpas = isKasubbidRole && data?.status !== STATUS.SELESAI && limpasTargets.length > 0
+  const canLimpah = isKasubbidRole && data?.status !== STATUS.SELESAI && limpahTargets.length > 0
   const canWassidik = isKabidRole && data?.status !== STATUS.SELESAI
 
   return (
@@ -504,14 +504,14 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                     <Ban className="h-4 w-4 mr-1" /> Tolak / Kembalikan
                   </Button>
                 )}
-                {canLimpas && (
-                  <Button size="sm" variant="secondary" onClick={() => { setLimpasUnit(''); setLimpasAlasan(''); setLimpasOpen(true) }}>
+                {canLimpah && (
+                  <Button size="sm" variant="secondary" onClick={() => { setLimpahUnit(''); setLimpahAlasan(''); setLimpahOpen(true) }}>
                     <ArrowRightLeft className="h-4 w-4 mr-1" /> Limpahkan
                   </Button>
                 )}
                 {canWassidik && (
                   <Button size="sm" variant="secondary" onClick={() => { setWassidikCatatan(''); setWassidikOpen(true) }}>
-                    <Send className="h-4 w-4 mr-1" /> Limpas Wassidik
+                    <Send className="h-4 w-4 mr-1" /> Limpah Wassidik
                   </Button>
                 )}
                 {canComplete && (
@@ -856,16 +856,16 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
               </DialogContent>
             </Dialog>
 
-            <Dialog open={limpasOpen} onOpenChange={setLimpasOpen}>
+            <Dialog open={limpahOpen} onOpenChange={setLimpahOpen}>
               <DialogContent><DialogHeader><DialogTitle>Limpahkan ke Unit Lain</DialogTitle><DialogDescription>Pilih unit tujuan dan alasan pelimpahan.</DialogDescription></DialogHeader>
                 <div className="space-y-3">
-                  {limpasTargets.length > 0 && (
+                  {limpahTargets.length > 0 && (
                     <div className="space-y-2">
                       <Label>Unit Tujuan</Label>
                       <div className="grid grid-cols-1 gap-2">
-                        {limpasTargets.map((p) => (
-                          <button key={p.to} type="button" onClick={() => setLimpasUnit(p.to)}
-                            className={`text-left p-3 rounded-md border text-xs ${limpasUnit === p.to ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                        {limpahTargets.map((p) => (
+                          <button key={p.to} type="button" onClick={() => setLimpahUnit(p.to)}
+                            className={`text-left p-3 rounded-md border text-xs ${limpahUnit === p.to ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}>
                             <p className="font-medium">{p.label}</p>
                             <p className="text-slate-500 text-[11px]">{p.desc}</p>
                           </button>
@@ -875,12 +875,12 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                   )}
                   <div>
                     <Label>Alasan pelimpahan</Label>
-                    <Textarea value={limpasAlasan} onChange={(e) => setLimpasAlasan(e.target.value)} placeholder="Alasan pelimpahan..." />
+                    <Textarea value={limpahAlasan} onChange={(e) => setLimpahAlasan(e.target.value)} placeholder="Alasan pelimpahan..." />
                   </div>
                 </div>
                 <DialogFooter>
-                  <Button variant="ghost" onClick={() => setLimpasOpen(false)}>Batal</Button>
-                  <Button onClick={doLimpas} disabled={limpasSaving || !limpasUnit || !limpasAlasan}>{limpasSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Limpahkan</Button>
+                  <Button variant="ghost" onClick={() => setLimpahOpen(false)}>Batal</Button>
+                  <Button onClick={doLimpah} disabled={limpahSaving || !limpahUnit || !limpahAlasan}>{limpahSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Limpahkan</Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>

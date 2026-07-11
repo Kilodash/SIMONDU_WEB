@@ -1263,13 +1263,13 @@ async function handleRoute(request, ctx) {
       return ok({ data: doc })
     }
 
-    // ---------- LIMPAS WASSIDIK ----------
-    if (route === '/limpas-wassidik' && method === 'POST') {
+    // ---------- LIMPAH WASSIDIK ----------
+    if (route === '/limpah-wassidik' && method === 'POST') {
       if (me.role !== 'kabid_propam' && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Kabid Propam', 403)
       const { pid, catatan } = await request.json()
       if (!pid) return fail('pid wajib')
       const db = await getDb()
-      await db.collection('local_cases').updateOne({ prepetrator_id: pid }, { $set: { status: STATUS.SELESAI, limpas_wassidik: true, limpas_wassidik_at: new Date(), updated_at: new Date() } }, { upsert: true })
+      await db.collection('local_cases').updateOne({ prepetrator_id: pid }, { $set: { status: STATUS.SELESAI, limpah_wassidik: true, limpah_wassidik_at: new Date(), updated_at: new Date() } }, { upsert: true })
       await db.collection('timelines').insertOne({
         id: uuidv4(), prepetrator_id: pid,
         title: 'Dilimpahkan ke Wassidik',
@@ -1277,8 +1277,8 @@ async function handleRoute(request, ctx) {
         by: { username: me.username, name: me.name, role: me.role },
         created_at: new Date(),
       })
-      scheduleSync(pid, me, 'limpas_wassidik')
-      await logAudit(me, 'limpas_wassidik', pid, { catatan })
+      scheduleSync(pid, me, 'limpah_wassidik')
+      await logAudit(me, 'limpah_wassidik', pid, { catatan })
       return ok({ data: { pid, status: STATUS.SELESAI } })
     }
 
@@ -1303,8 +1303,8 @@ async function handleRoute(request, ctx) {
       return ok({ data: { pid, status: STATUS.DISPOSISI_PIMPINAN } })
     }
 
-    // ---------- LIMPAS ANTAR UNIT ----------
-    if (route === '/limpas-unit' && method === 'POST') {
+    // ---------- LIMPAH ANTAR UNIT ----------
+    if (route === '/limpah-unit' && method === 'POST') {
       if (!isKasubbidRole(me.role) && me.role !== 'admin' && me.role !== 'super_admin') return fail('Hanya Kasubbid/Admin', 403)
       const { pid, to_unit, alasan } = await request.json()
       if (!pid || !to_unit) return fail('pid dan to_unit wajib')
@@ -1317,7 +1317,7 @@ async function handleRoute(request, ctx) {
         note: alasan || '', is_atensi: false,
         by: { username: me.username, name: me.name, role: me.role },
         created_at: new Date(), synced_to_gajamada: false,
-        is_limpas: true,
+        is_limpah: true,
       }
       await db.collection('dispositions').insertOne(newDisp)
       await db.collection('timelines').insertOne({
@@ -1327,8 +1327,8 @@ async function handleRoute(request, ctx) {
         by: { username: me.username, name: me.name, role: me.role },
         created_at: new Date(),
       })
-      scheduleSync(pid, me, 'limpas_unit')
-      await logAudit(me, 'limpas_unit', pid, { from: fromUnit, to: to_unit, alasan })
+      scheduleSync(pid, me, 'limpah_unit')
+      await logAudit(me, 'limpah_unit', pid, { from: fromUnit, to: to_unit, alasan })
       return ok({ data: { pid, to_unit } })
     }
 
