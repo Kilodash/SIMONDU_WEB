@@ -485,8 +485,8 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                     <SyncBadge status={data._sync_status} />
                   </div>
                   <p className="text-xs text-blue-200">Gajamada: {data.status_label || '-'}</p>
-                  {data.status && data.status_label && data.status !== data.status_label && (
-                    <p className="text-[10px] text-amber-300 flex items-center gap-1"><AlertCircle className="h-3 w-3" />Status SIMONDU & Gajamada berbeda</p>
+                  {data._sync_status === 'pending' && (
+                    <p className="text-[10px] text-amber-300 flex items-center gap-1"><AlertCircle className="h-3 w-3" />Belum Sync</p>
                   )}
                   <p className="text-xs text-blue-200">{fmtDate(data.created_date)}</p>
                 </div>
@@ -497,7 +497,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                     {terimaLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />} Terima
                   </Button>
                 )}
-                <Button size="sm" variant="secondary" onClick={() => setPerdamaianOpen(true)}><ClipboardList className="h-4 w-4 mr-1" /> Perdamaian</Button>
                 {canTolak && (
                   <Button size="sm" variant="secondary" onClick={() => { setTolakAlasan(''); setTolakOpen(true) }}>
                     <Ban className="h-4 w-4 mr-1" /> Tolak / Kembalikan
@@ -607,80 +606,15 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                 </TabsContent>
 
                 <TabsContent value="docs" className="mt-4 space-y-4">
-                  <Card className="border-blue-200 bg-blue-50/30">
-                    <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Scale className="h-4 w-4 text-blue-800" /> Hasil Lidik & Pelimpahan</CardTitle></CardHeader>
-                    <CardContent className="space-y-4">
-                      <div>
-                        <Label className="text-xs">Hasil Lidik</Label>
-                        <Select value={outcome?.hasil_lidik || '__none'} onValueChange={(v) => doSetOutcome({ hasil_lidik: v === '__none' ? null : v, settlement: outcome?.settlement })}>
-                          <SelectTrigger className="mt-1"><SelectValue placeholder="Belum ditentukan" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none">Belum ditentukan</SelectItem>
-                            {reference.hasil_lidik_options?.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {checklist && (
+                  {data?.status !== STATUS.SELESAI && (
                     <Card>
-                      <CardContent className="p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <p className="text-sm font-medium text-slate-700">Kelengkapan Dokumen Wajib</p>
-                          <p className="text-sm font-bold text-blue-800">{checklist.requiredProgress.completed} / {checklist.requiredProgress.total}</p>
-                        </div>
-                        <div className="w-full h-2.5 rounded-full bg-slate-100 overflow-hidden">
-                          <div className="h-full bg-blue-800 rounded-full transition-all" style={{ width: `${checklist.requiredProgress.total ? (checklist.requiredProgress.completed / checklist.requiredProgress.total) * 100 : 100}%` }} />
-                        </div>
-
+                      <CardHeader className="pb-2"><CardTitle className="text-sm">Tindak Lanjut</CardTitle></CardHeader>
+                      <CardContent className="text-center py-8">
+                        <p className="text-sm text-slate-500">Menu tindak lanjut sedang dikonfigurasi ulang.</p>
+                        <p className="text-xs text-slate-400 mt-1">Admin akan mengatur di versi berikutnya.</p>
                       </CardContent>
                     </Card>
                   )}
-
-                  {['perencanaan', 'pelaksanaan', 'tindak_lanjut', 'cabang_terbukti', 'cabang_tidak_terbukti'].map((stage) => {
-                    const items = (checklist?.items || []).filter((i) => i.stage === stage)
-                    if (items.length === 0) return null
-                    return (
-                      <Card key={stage}>
-                        <CardHeader className="pb-2"><CardTitle className="text-sm">{reference.stage_labels?.[stage] || stage}</CardTitle></CardHeader>
-                        <CardContent className="space-y-3">
-                          {items.map((item) => (
-                            <div key={item.key} className="border rounded-lg p-3">
-                              <div className="flex items-start justify-between gap-3 flex-wrap">
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <p className="text-sm font-medium">{item.label}</p>
-                                    {!item.required && <Badge variant="outline" className="text-[10px]">Opsional</Badge>}
-                                  </div>
-                                  {item.note && <p className="text-xs text-slate-500 mt-1 italic">Catatan: {item.note}</p>}
-                                </div>
-                                <Badge className={`text-[10px] ${item.status === 'completed' ? 'bg-green-100 text-green-800 border-green-300' : item.status === 'not_applicable' ? 'bg-slate-100 text-slate-500 border-slate-300' : 'bg-amber-100 text-amber-800 border-amber-300'}`}>
-                                  {item.status === 'completed' ? 'Lengkap' : item.status === 'not_applicable' ? 'Tidak Berlaku' : 'Belum Lengkap'}
-                                </Badge>
-                              </div>
-
-                              {notingItem === item.key ? (
-                                <div className="mt-2 flex items-center gap-2">
-                                  <Input value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} placeholder="Catatan (opsional)..." className="h-8 text-xs" />
-                                  <Button size="sm" className="h-8" onClick={() => doSetChecklistStatus(item.key, 'not_applicable', noteDraft)}>Simpan</Button>
-                                  <Button size="sm" variant="ghost" className="h-8" onClick={() => { setNotingItem(null); setNoteDraft('') }}>Batal</Button>
-                                </div>
-                              ) : (
-                                <div className="mt-2 flex items-center gap-2 flex-wrap">
-                                  {item.status !== 'not_applicable' ? (
-                                    <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500" onClick={() => setNotingItem(item.key)}><Ban className="h-3 w-3 mr-1" /> Tidak Berlaku</Button>
-                                  ) : (
-                                    <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500" onClick={() => doSetChecklistStatus(item.key, 'pending', '')}>Aktifkan Lagi</Button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </CardContent>
-                      </Card>
-                    )
-                  })}
                 </TabsContent>
 
                 <TabsContent value="timeline" className="mt-4">
