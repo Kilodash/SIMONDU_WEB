@@ -476,7 +476,6 @@ async function handleRoute(request, ctx) {
         getPolresUnits(),
         getAllActiveUnitNames(),
       ])
-      const satkerRows = await db.collection('satker_satwil').find({}).sort({ order: 1, name: 1 }).toArray()
       const allStatuses = SIMPLIFIED_STATUSES
       const groups = { YANDUAN: false, WASSIDIK: false, POLRES_TA_TABES: false, PROVOS: false, WABPROF: false, PAMINAL: false }
       for (const u of nonPaminal) {
@@ -579,8 +578,6 @@ async function handleRoute(request, ctx) {
         non_dumas_stage_labels: NON_DUMAS_STAGE_LABELS,
         hasil_lidik_options: HASIL_LIDIK_OPTIONS,
         settlement_options: SETTLEMENT_OPTIONS,
-        satker_satwil: satkerRows.map(({ _id, ...r }) => r),
-        gajamada_satker: gajamadaSatker,
         all_satker_units: nonPaminal,
         filter_units: FILTER_UNITS,
         polres_units: polresUnits,
@@ -1224,7 +1221,7 @@ async function handleRoute(request, ctx) {
         const [lc] = await Promise.all([
           db.collection('local_cases').findOne({ prepetrator_id: pid }).catch(() => null),
         ])
-        let caseInfo = { prepetrator_id: pid, pengirim: '-', perihal: '-', status: lc?.status || STATUS.SURAT_MASUK_POLDA_JABAR }
+        let caseInfo = { prepetrator_id: pid, pengirim: '-', perihal: '-', status: STATUS_DISPLAY[lc?.status] || lc?.status || STATUS_DISPLAY[STATUS.SURAT_MASUK_POLDA_JABAR] }
         try {
           const gj = await gajamada.getCase(pid).catch(() => null)
           if (gj) caseInfo = { ...caseInfo, pengirim: gj.pengirim || gj.prepetrator_name || '-', perihal: gj.perihal || gj.summary || '-', nomor_surat: gj.nomor_surat || '-', disposisi_case_position: gj.disposisi_case_position }

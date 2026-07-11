@@ -20,7 +20,10 @@ function getClient() {
 // Build PostgREST filter chain for a query
 function applyFilter(q, filter) {
   if (!filter || !Object.keys(filter).length) return q
-  for (const [key, value] of Object.entries(filter)) {
+  for (const [rawKey, value] of Object.entries(filter)) {
+    // Convert dot-notation JSONB path to PostgREST arrow syntax (e.g. "by.username" → "by->>username")
+    const parts = rawKey.split('.')
+    const key = parts.length > 1 ? parts[0] + '->>' + parts.slice(1).join('->') : rawKey
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       if ('$in' in value) { q = q.in(key, value.$in); continue }
       if ('$ne' in value) { q = q.neq(key, value.$ne); continue }

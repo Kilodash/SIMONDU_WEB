@@ -311,7 +311,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
   const [terimaLoading, setTerimaLoading] = useState(false)
   const [showFullChronology, setShowFullChronology] = useState(false)
   const [mergedTimeline, setMergedTimeline] = useState([])
-  const [reference, setReference] = useState({ hasil_lidik_options: [], settlement_options: [], satker_satwil: [], mapped_units: [], units: [] })
+  const [reference, setReference] = useState({ hasil_lidik_options: [], settlement_options: [], mapped_units: [], units: [] })
   const [notingItem, setNotingItem] = useState(null)
   const [noteDraft, setNoteDraft] = useState('')
   const [perdamaianOpen, setPerdamaianOpen] = useState(false)
@@ -609,7 +609,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                 <TabsContent value="docs" className="mt-4 space-y-4">
                   <Card className="border-blue-200 bg-blue-50/30">
                     <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Scale className="h-4 w-4 text-blue-800" /> Hasil Lidik & Pelimpahan</CardTitle></CardHeader>
-                    <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <CardContent className="space-y-4">
                       <div>
                         <Label className="text-xs">Hasil Lidik</Label>
                         <Select value={outcome?.hasil_lidik || '__none'} onValueChange={(v) => doSetOutcome({ hasil_lidik: v === '__none' ? null : v, settlement: outcome?.settlement })}>
@@ -617,16 +617,6 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                           <SelectContent>
                             <SelectItem value="__none">Belum ditentukan</SelectItem>
                             {reference.hasil_lidik_options?.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label className="text-xs">Pelimpahan ke Satker/Satwil</Label>
-                        <Select value={outcome?.pelimpahan || '__none'} onValueChange={(v) => doSetOutcome({ ...outcome, pelimpahan: v === '__none' ? null : v })}>
-                          <SelectTrigger className="mt-1"><SelectValue placeholder="Tidak ada" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none">Tidak ada</SelectItem>
-                            {reference.satker_satwil?.map((o) => <SelectItem key={o.id} value={o.name}>{o.name}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       </div>
@@ -1064,7 +1054,6 @@ function CasesList({ user, onOpenCase }) {
           </Tabs>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant="outline" className="bg-blue-50 text-blue-900 border-blue-200">Total: {total.toLocaleString('id-ID')}</Badge>
           {(sourceFilter === 'manual' || sourceFilter === 'laporan_informasi') && (
             <Button size="sm" onClick={openCreateLocal} className="bg-blue-800 hover:bg-blue-900">
               <FileText className="h-4 w-4 mr-2" /> Tambah
@@ -1076,8 +1065,9 @@ function CasesList({ user, onOpenCase }) {
 
       <Card>
         <CardContent className="p-4">
-          <form onSubmit={onSearch} className="flex flex-wrap items-end gap-2 justify-end">
-            <Select value={status || '__all'} onValueChange={handleStatusChange}>
+          <form onSubmit={onSearch} className="flex flex-wrap items-end gap-2 justify-between">
+            <Badge className="bg-blue-800 text-white text-base font-bold px-4 py-2 shrink-0 self-center">Total: {total.toLocaleString('id-ID')}</Badge>
+            <div className="flex flex-wrap items-end gap-2"><Select value={status || '__all'} onValueChange={handleStatusChange}>
               <SelectTrigger className="w-[150px]"><SelectValue placeholder="Semua Status" /></SelectTrigger>
               <SelectContent><SelectItem value="__all">Semua Status</SelectItem>
                 {reference.statuses.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
@@ -1102,6 +1092,7 @@ function CasesList({ user, onOpenCase }) {
             </div>
             <Button type="submit" size="sm"><Search className="h-4 w-4 mr-2" /> Cari</Button>
             <Button type="button" variant="ghost" size="sm" onClick={clearFilter}>Reset</Button>
+            </div>
           </form>
         </CardContent>
       </Card>
@@ -1220,7 +1211,7 @@ function CasesList({ user, onOpenCase }) {
       </Card>
 
       <div className="shrink-0 bg-white border-t py-3 px-4 flex items-center justify-between z-10">
-        <p className="text-sm text-slate-500">Halaman {page} dari {maxPage} · {size} per halaman · Total {total.toLocaleString('id-ID')}</p>
+        <p className="text-sm text-slate-600 font-medium">Halaman {page} dari {maxPage} · {size} per halaman · <span className="text-blue-800 font-bold">Total {total.toLocaleString('id-ID')}</span></p>
         <div className="flex items-center gap-1">
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(1)}>Awal</Button>
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Sebelumnya</Button>
@@ -1841,9 +1832,9 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
           {overrideOpen && (
           <div className="overflow-y-auto p-4 space-y-3">
             <div>
-              <Label className="text-xs">Unit Tujuan (Satker/Satwil)</Label>
+              <Label className="text-xs">Unit Tujuan</Label>
               <Select value={overrideUnit} onValueChange={setOverrideUnit}>
-                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih satker/satwil" /></SelectTrigger>
+                <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Pilih unit" /></SelectTrigger>
                 <SelectContent>
                   {(reference.mapped_units || []).map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}
                 </SelectContent>
@@ -1851,7 +1842,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
             </div>
             <div>
               <Label className="text-xs">Catatan Over-ride</Label>
-              <Textarea value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)} placeholder="Alasan distribusi langsung ke satker/satwil..." className="min-h-[60px] text-xs" />
+              <Textarea value={overrideNote} onChange={(e) => setOverrideNote(e.target.value)} placeholder="Alasan distribusi langsung ke unit..." className="min-h-[60px] text-xs" />
             </div>
             <Button onClick={submitOverride} disabled={overrideSubmitting || !overrideUnit || !overrideNote.trim()} className="w-full bg-amber-700 hover:bg-amber-800" size="sm">
               {overrideSubmitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
@@ -2635,7 +2626,7 @@ function RiwayatSayaPage({ user, onOpenCase }) {
               <TableCell className="text-xs font-mono">{String(c.prepetrator_id).slice(0, 12)}...</TableCell>
               <TableCell className="text-xs">{c.pengirim || '-'}</TableCell>
               <TableCell className="text-xs max-w-[300px] truncate">{c.perihal || '-'}</TableCell>
-              <TableCell><Badge className={`text-xs ${getBucket(c.status) === 'SELESAI' ? 'bg-green-100 text-green-800' : getBucket(c.status) === 'DALAM_PENANGANAN' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-700'}`}>{c.status || '-'}</Badge></TableCell>
+              <TableCell><Badge className={`text-xs ${c.status === 'Selesai' || c.status === 'Perdamaian' || c.status === 'Tidak Terbukti' ? 'bg-green-100 text-green-800' : c.status === 'Diterima' ? 'bg-slate-100 text-slate-700' : 'bg-blue-100 text-blue-800'}`}>{c.status || '-'}</Badge></TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -2703,7 +2694,6 @@ function AppShell({ user, onLogout }) {
     ...(canInputManual ? [{ id: 'input-manual', label: 'Input Manual', icon: FileText }] : []),
     ...(canRiwayat ? [{ id: 'riwayat-saya', label: 'Riwayat Saya', icon: History }] : []),
     ...(canManageUnits ? [{ id: 'units', label: 'Master Unit', icon: Building2 }] : []),
-    ...(canManageUnits ? [{ id: 'satker', label: 'Satker/Satwil', icon: MapPin }] : []),
     ...(isAdmin ? [{ id: 'sync', label: 'Log Sync', icon: Send }] : []),
     ...(isAdmin ? [{ id: 'audit', label: 'Audit Log', icon: History }] : []),
     ...(canFullSettings ? [{ id: 'settings', label: 'Pengaturan', icon: Settings }] : [{ id: 'password', label: 'Ubah Password', icon: Settings }]),
@@ -2764,7 +2754,6 @@ function AppShell({ user, onLogout }) {
           {tab === 'input-manual' && canInputManual && <AstinaInputPage />}
           {tab === 'riwayat-saya' && canRiwayat && <RiwayatSayaPage user={user} onOpenCase={setSelectedCase} />}
           {tab === 'units' && canManageUnits && <MasterUnitPage user={user} />}
-          {tab === 'satker' && canManageUnits && <SatkerSatwilPage user={user} />}
           {tab === 'sync' && isAdmin && <SyncLogsView />}
           {tab === 'audit' && isAdmin && <AuditView />}
           {tab === 'settings' && canFullSettings && <SettingsPage connStatus={connStatus} user={user} />}

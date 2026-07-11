@@ -1,0 +1,17 @@
+Diterima Bag Rehabpers|Diterima Bag Rehabpers
+Gelar Perkara|Gelar Perkara Paminal
+Hasil Sidang Disiplin|Hasil Sidang Disiplin
+Hasil Sidang KKEP|Hasil Sidang KKEP
+Laporan Dikirim ke Polda|Diterima
+Laporan Dikirim ke Polres|Dilimpahkan ke Polres
+Laporan Dikirim ke Satker|Dilimpahkan ke Satker
+Laporan Diterima|Diterima
+Laporan Diterima Kasubbid Paminal|Proses Subbid Paminal
+Laporan Diterima PAMINAL|Proses Subbid Paminal
+Laporan Diterima Polda|Diterima
+Laporan Masuk|Diterima
+Laporan Selesai|Selesai
+Laporan Selesai Restorative Justice|Perdamaian
+Lidik|Dalam Proses
+Perdamaian|Perdamaian
+Tidak Terbukti|Tidak Terbukti
