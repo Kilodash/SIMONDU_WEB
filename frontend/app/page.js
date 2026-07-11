@@ -591,9 +591,9 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                       {atts.length > 0 && (
                         <div className="flex items-center gap-2">
                           <Button size="sm" variant="outline" onClick={() => {
-                            atts.forEach((a) => {
+                            atts.forEach((a, i) => {
                               const ulUrl = `/api/download?url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.file_name + '.' + a.file_type)}&inline=0`
-                              window.open(ulUrl, '_blank')
+                              setTimeout(() => { const link = document.createElement('a'); link.href = ulUrl; link.download = ''; document.body.appendChild(link); link.click(); document.body.removeChild(link) }, i * 300)
                             })
                           }}>
                             <Download className="h-4 w-4 mr-1" /> Download Semua ({atts.length})
@@ -614,7 +614,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                             const isPdf = ext === 'pdf'
                             return (
                               <div key={i} className="border rounded-lg overflow-hidden hover:shadow-md transition-shadow group">
-                                <a href={dlUrl} target="_blank" rel="noreferrer" className="block">
+                                <button onClick={() => { setDlPreviewUrl(dlUrl); setDlPreviewOpen(true) }} className="block w-full text-left">
                                   {isImage ? (
                                     <div className="aspect-[4/3] bg-slate-100 flex items-center justify-center overflow-hidden">
                                       <img src={thumbUrl} alt={a.file_name} className="w-full h-full object-cover" loading="lazy" />
@@ -630,12 +630,12 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                                       <span className="text-[10px] text-slate-500 font-bold">{ext.toUpperCase() || 'FILE'}</span>
                                     </div>
                                   )}
-                                </a>
+                                </button>
                                 <div className="p-2 space-y-1">
                                   <p className="text-xs font-medium truncate" title={a.file_name}>{a.file_name}</p>
                                   <p className="text-[10px] text-slate-400">{ext.toUpperCase()} · {fmtDateShort(a.created_at)}</p>
                                   <div className="flex gap-1">
-                                    <a href={ulUrl} target="_blank" rel="noreferrer"
+                                    <a href={ulUrl} download
                                       className="flex-1 inline-flex items-center justify-center gap-1 text-[10px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1 transition-colors">
                                       <Download className="h-3 w-3" /> Unduh
                                     </a>
@@ -912,7 +912,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                 </div>
                 <DialogFooter>
                   <Button variant="ghost" onClick={() => setDlPreviewOpen(false)}>Tutup</Button>
-                  <a href={dlPreviewUrl + '&inline=0'} target="_blank" rel="noreferrer">
+                  <a href={dlPreviewUrl + '&inline=0'} download>
                     <Button variant="outline"><Download className="h-4 w-4 mr-1" /> Unduh</Button>
                   </a>
                 </DialogFooter>
