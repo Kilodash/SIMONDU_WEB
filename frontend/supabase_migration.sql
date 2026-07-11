@@ -400,3 +400,24 @@ INSERT INTO users (username, password, name, role, unit) VALUES
   ('urlitpers', 'unit123', 'Ur Litpers Paminal Polda Jabar', 'unit', 'UR LITPERS SUBBID PAMINAL POLDA JAWA BARAT'),
   ('urprodok', 'unit123', 'Ur Prodok Paminal Polda Jabar', 'unit', 'UR PRODOK SUBBID PAMINAL POLDA JAWA BARAT')
 ON CONFLICT (username) DO NOTHING;
+
+-- Saran/Masukan from Yanduan to Kabid
+CREATE TABLE IF NOT EXISTS saran_yanduan (
+  id UUID PRIMARY KEY,
+  prepetrator_id TEXT NOT NULL,
+  checklist JSONB DEFAULT '[]',
+  catatan TEXT DEFAULT '',
+  to_unit TEXT,
+  "by" JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_saran_pid ON saran_yanduan(prepetrator_id, created_at DESC);
+
+-- Status mapping: Gajamada label -> SIMONDU internal name
+CREATE TABLE IF NOT EXISTS status_mapping (
+  id UUID PRIMARY KEY,
+  gajamada_status TEXT NOT NULL UNIQUE,
+  simondu_status TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);

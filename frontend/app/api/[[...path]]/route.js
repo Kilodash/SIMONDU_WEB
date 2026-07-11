@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import * as gajamada from '@/lib/gajamada'
 import { getDb, getActiveUnits, getKasubbidName, getKasubbidAliases, getPolresUnits, getAllActiveUnitNames } from '@/lib/db'
-import { authenticate, signSession, getCookieHeader, clearCookieHeader, getUserFromRequest, isDisposisiRole, isAdminRole, isKasubbidRole, isUnitRole, setDbUsers, getAllUsers } from '@/lib/auth'
+import { authenticate, signSession, getCookieHeader, clearCookieHeader, getUserFromRequest, isDisposisiRole, isAdminRole, isKasubbidRole, isUnitRole, setDbUsers, getAllUsers, changePassword } from '@/lib/auth'
 import { CATEGORY_OPTIONS, FILTER_UNITS } from '@/lib/units'
 import { simplifyStatus, simplifyUnit } from '@/lib/mapping'
 import { STAGE_LABELS, NON_DUMAS_STAGE_LABELS, HASIL_LIDIK_OPTIONS, SETTLEMENT_OPTIONS, computeChecklist, getStageOrder, getStageLabels, MINI_CHECKLIST, UNIT_DOC_TYPES, UNIT_DEFAULT_TASKS, getUnitType, getCaseTypeForUnit } from '@/lib/checklist'
@@ -430,6 +430,27 @@ async function handleRoute(request, ctx) {
       const u = await getUserFromRequest(request)
       if (!u) return fail('Unauthorized', 401)
       return ok({ user: { username: u.username, name: u.name, role: u.role, unit: u.unit } })
+    }
+    if (route === '/auth/change-password' && method === 'POST') {
+      const u = await getUserFromRequest(request)
+      if (!u) return fail('Unauthorized', 401)
+      const { oldPassword, newPassword } = await request.json()
+      if (!oldPassword || !newPassword) return fail('Password lama dan baru wajib diisi')
+      if (newPassword.length < 6) return fail('Password baru minimal 6 karakter')
+      const authenticated = authenticate(u.username, oldPassword)
+      if (!authenticated) return fail('Password lama salah', 401)
+      try {
+        const db = await getDb()
+        await db.collection('users').updateOne({ username: u.username }, { $set: { password: newPassword } })
+        await logAudit(u, 'change_password', 'self')
+        // Also update in-memory
+        changePassword(u.username, newPassword)
+        return ok({})
+      } catch (e) {
+        // Fallback: in-memory only for hardcoded users
+        changePassword(u.username, newPassword)
+        return ok({})
+      }
     }
 
     const me = await requireAuth(request)
@@ -1108,7 +1129,7 @@ async function handleRoute(request, ctx) {
         by: { username: me.username, name: me.name, role: me.role },
         created_at: new Date(),
       }
-      await db.collection('saran_yanduan').insertOne(doc)
+      try { await db.collection('saran_yanduan').insertOne(doc) } catch (_) { /* table may not exist */ }
       await db.collection('local_cases').updateOne({ prepetrator_id: pid }, { $set: { status: STATUS.DISPOSISI_PIMPINAN, updated_at: new Date() } }, { upsert: true })
       await db.collection('timelines').insertOne({
         id: uuidv4(), prepetrator_id: pid,

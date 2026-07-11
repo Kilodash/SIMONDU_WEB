@@ -2761,13 +2761,12 @@ function AppShell({ user, onLogout }) {
   const isAdmin = role === 'admin' || role === 'super_admin'
   const isRehabpers = role === 'kasubbag_rehabpers'
   const isUnit = role === 'unit'
-  const canDisposisi = isKasubbid || isKabid || isYanduan || isAdmin
+  const canDisposisi = isKasubbid || isKabid
   const canSaranMasukan = isYanduan
-  const canAstina = isYanduan || isKabid
+  const canInputManual = isYanduan
   const canManageUnits = isAdmin
-  const canSettings = isAdmin
-  const canRiwayat = isKasubbid || isKabid || isYanduan || isUnit
-  const canDashboardCases = !(role === 'kasubbag_rehabpers')
+  const canFullSettings = isAdmin
+  const canRiwayat = true
   const [disposisiCount, setDisposisiCount] = useState(0)
   const notifiedRef = useRef(false)
   const [connStatus, setConnStatus] = useState({ gajamada: false })
@@ -2803,18 +2802,17 @@ function AppShell({ user, onLogout }) {
   }, [disposisiCount]) // eslint-disable-line
 
   const menu = [
-    ...(canDashboardCases ? [{ id: 'dashboard', label: 'Dashboard ANEV', icon: LayoutDashboard }] : []),
-    ...(canDashboardCases ? [{ id: 'cases', label: 'Daftar Surat', icon: FolderKanban }] : []),
+    { id: 'dashboard', label: 'Dashboard ANEV', icon: LayoutDashboard },
+    { id: 'cases', label: 'Daftar Surat', icon: FolderKanban },
     ...(canSaranMasukan ? [{ id: 'saran-masukan', label: 'Saran/Masukan', icon: FileText, badge: disposisiCount }] : []),
-    ...(canDisposisi && !isYanduan ? [{ id: 'disposisi', label: 'Disposisi', icon: ArrowRightLeft, badge: disposisiCount }] : []),
-    ...(canAstina ? [{ id: 'astina', label: 'ASTINA', icon: FileText }] : []),
-    ...(isRehabpers ? [{ id: 'rehabpers', label: 'Rekomendasi', icon: CheckCircle2 }] : []),
+    ...(canDisposisi ? [{ id: 'disposisi', label: 'Disposisi', icon: ArrowRightLeft, badge: disposisiCount }] : []),
+    ...(canInputManual ? [{ id: 'input-manual', label: 'Input Manual', icon: FileText }] : []),
     ...(canRiwayat ? [{ id: 'riwayat-saya', label: 'Riwayat Saya', icon: History }] : []),
     ...(canManageUnits ? [{ id: 'units', label: 'Master Unit', icon: Building2 }] : []),
     ...(canManageUnits ? [{ id: 'satker', label: 'Satker/Satwil', icon: MapPin }] : []),
-    { id: 'sync', label: 'Log Sync', icon: Send },
-    { id: 'audit', label: 'Audit Log', icon: History },
-    ...(canSettings ? [{ id: 'settings', label: 'Pengaturan', icon: Settings }] : []),
+    ...(isAdmin ? [{ id: 'sync', label: 'Log Sync', icon: Send }] : []),
+    ...(isAdmin ? [{ id: 'audit', label: 'Audit Log', icon: History }] : []),
+    ...(canFullSettings ? [{ id: 'settings', label: 'Pengaturan', icon: Settings }] : [{ id: 'password', label: 'Ubah Password', icon: Settings }]),
   ]
 
   return (
@@ -2865,22 +2863,76 @@ function AppShell({ user, onLogout }) {
 
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-[1600px] mx-auto p-6">
-          {tab === 'dashboard' && canDashboardCases && <Dashboard user={user} />}
-          {tab === 'cases' && canDashboardCases && <CasesList user={user} onOpenCase={setSelectedCase} />}
+          {tab === 'dashboard' && <Dashboard user={user} />}
+          {tab === 'cases' && <CasesList user={user} onOpenCase={setSelectedCase} />}
           {tab === 'saran-masukan' && canSaranMasukan && <DisposisiPage mode="saran" user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
-          {tab === 'disposisi' && canDisposisi && !isYanduan && <DisposisiPage mode="disposisi" user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
-          {tab === 'astina' && canAstina && <AstinaInputPage />}
-          {tab === 'rehabpers' && isRehabpers && <RehabpersPage user={user} />}
+          {tab === 'disposisi' && canDisposisi && <DisposisiPage mode="disposisi" user={user} onOpenCase={setSelectedCase} onGoMasterUnit={() => setTab('units')} onQueueChange={refreshDisposisiCount} />}
+          {tab === 'input-manual' && canInputManual && <AstinaInputPage />}
           {tab === 'riwayat-saya' && canRiwayat && <RiwayatSayaPage user={user} onOpenCase={setSelectedCase} />}
           {tab === 'units' && canManageUnits && <MasterUnitPage user={user} />}
           {tab === 'satker' && canManageUnits && <SatkerSatwilPage user={user} />}
-          {tab === 'sync' && <SyncLogsView />}
-          {tab === 'audit' && <AuditView />}
-          {tab === 'settings' && canSettings && <SettingsPage connStatus={connStatus} user={user} />}
+          {tab === 'sync' && isAdmin && <SyncLogsView />}
+          {tab === 'audit' && isAdmin && <AuditView />}
+          {tab === 'settings' && canFullSettings && <SettingsPage connStatus={connStatus} user={user} />}
+          {tab === 'password' && !canFullSettings && <PasswordPage user={user} />}
         </div>
       </main>
 
       <CaseDetail pid={selectedCase} user={user} onClose={() => setSelectedCase(null)} onChanged={refreshDisposisiCount} />
+    </div>
+  )
+}
+
+function PasswordPage({ user }) {
+  const [oldPw, setOldPw] = useState('')
+  const [newPw, setNewPw] = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [showOld, setShowOld] = useState(false)
+  const [showNew, setShowNew] = useState(false)
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!oldPw || !newPw) return toast.error('Semua field wajib diisi')
+    if (newPw.length < 6) return toast.error('Password baru minimal 6 karakter')
+    if (newPw !== confirmPw) return toast.error('Konfirmasi password tidak cocok')
+    setSaving(true)
+    try {
+      await api('/auth/change-password', { method: 'POST', body: JSON.stringify({ oldPassword: oldPw, newPassword: newPw }) })
+      toast.success('Password berhasil diubah')
+      setOldPw(''); setNewPw(''); setConfirmPw('')
+    } catch (e) { toast.error(e.message) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="max-w-md mx-auto">
+      <Card>
+        <CardHeader><CardTitle>Ubah Password</CardTitle><CardDescription>Ganti password akun {user?.username}</CardDescription></CardHeader>
+        <CardContent>
+          <form onSubmit={submit} className="space-y-4">
+            <div>
+              <Label htmlFor="opw">Password Lama</Label>
+              <div className="relative">
+                <Input id="opw" type={showOld ? 'text' : 'password'} value={oldPw} onChange={(e) => setOldPw(e.target.value)} required className="pr-10" />
+                <button type="button" onClick={() => setShowOld(!showOld)} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">{showOld ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="npw">Password Baru</Label>
+              <div className="relative">
+                <Input id="npw" type={showNew ? 'text' : 'password'} value={newPw} onChange={(e) => setNewPw(e.target.value)} required className="pr-10" />
+                <button type="button" onClick={() => setShowNew(!showNew)} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">{showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="cpw">Konfirmasi Password Baru</Label>
+              <Input id="cpw" type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} required />
+            </div>
+            <Button type="submit" disabled={saving} className="w-full">{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null} Simpan</Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   )
 }

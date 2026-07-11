@@ -87,3 +87,11 @@ export function getAllUsers() {
   }
   return merged
 }
+
+export function changePassword(username, newPassword) {
+  const user = USERS.find((u) => u.username === username)
+  if (user) { user.password = newPassword; return true }
+  const dbUser = _dbUsers.find((u) => u.username === username)
+  if (dbUser) { dbUser.password = newPassword; return true }
+  return false
+}
