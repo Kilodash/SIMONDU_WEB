@@ -922,17 +922,40 @@ async function handleRoute(request, ctx) {
 
       const isYanduan = me.role === 'kasubbag_yanduan'
       const isKabid = me.role === 'kabid_propam'
+
+      // Kabid: only see local cases waiting for disposition (not Gajamada)
+      if (isKabid) {
+        const localQueue = []
+        try {
+          const localCases = await db.collection('local_cases').find({ status: { $in: [STATUS.SURAT_MASUK_POLDA_JABAR, STATUS.DISPOSISI_PIMPINAN] } }).sort({ created_at: -1 }).limit(50).toArray()
+          const localPids = localCases.map((c) => c.prepator_id)
+          const localDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
+          const localDispSet = new Set(localDisp.map((d) => d.prepetrator_id))
+          for (const lc of localCases) {
+            if (!localDispSet.has(lc.prepator_id)) {
+              localQueue.push({
+                id: lc.prepator_id, prepetrator_id: lc.prepator_id,
+                prepetrator_name: lc.prepator_name || lc.pengirim || '-',
+                category: lc.category || 'NON-DUMAS', source_alias: lc.source_alias || lc.source,
+                summary: lc.perihal || lc.summary || '', content: lc.content || '',
+                pengirim: lc.pengirim || '', created_date: lc.created_at,
+                status_label: lc.status, perihal: lc.perihal, nomor_surat: lc.nomor_surat,
+                tgl_surat: lc.tgl_surat, case_type: lc.case_type, jenis_surat: lc.jenis_surat,
+                pdf_url: lc.pdf_url, _source: lc.source, _is_local: true,
+              })
+            }
+          }
+        } catch (_) {}
+        const queue = localQueue.filter((item) => item.prepetrator_id && (item.perihal || item.prepetrator_name !== '-'))
+        return ok({ data: queue, total: queue.length })
+      }
+
       const queueUnits = isYanduan
         ? (await getAllPositions()).filter((p) => {
             const up = p.toUpperCase()
             return up.includes('YANDUAN') && !up.includes('POLRES') && !up.includes('POLRESTA') && !up.includes('POLRESTABES')
           })
-        : isKabid
-          ? (await getAllPositions()).filter((p) => {
-              const up = p.toUpperCase()
-              return up.includes('KABID PROPAM')
-            })
-          : await getKasubbidAliases()
+        : await getKasubbidAliases()
 
       const r = await gajamada.listCases({ units: queueUnits, size: 100 }).catch(() => ({ data: [] }))
       const pids = r.data.map((c) => c.prepetrator_id)
@@ -980,17 +1003,27 @@ async function handleRoute(request, ctx) {
       const isKabid = me.role === 'kabid_propam'
       let count = 0
 
+      if (isKabid) {
+        // Kabid: only count local cases waiting for disposition
+        try {
+          const db = await getDb()
+          const localCases = await db.collection('local_cases').find({ status: { $in: [STATUS.SURAT_MASUK_POLDA_JABAR, STATUS.DISPOSISI_PIMPINAN] } }).toArray()
+          const localPids = localCases.map((c) => c.prepetrator_id)
+          if (localPids.length) {
+            const localDisp = await db.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
+            const localDispSet = new Set(localDisp.map((d) => d.prepetrator_id))
+            count = localCases.filter((c) => !localDispSet.has(c.prepetrator_id)).length
+          }
+        } catch (_) {}
+        return ok({ count })
+      }
+
       const queueUnits = isYanduan
         ? (await getAllPositions()).filter((p) => {
             const up = p.toUpperCase()
             return up.includes('YANDUAN') && !up.includes('POLRES') && !up.includes('POLRESTA') && !up.includes('POLRESTABES')
           })
-        : isKabid
-          ? (await getAllPositions()).filter((p) => {
-              const up = p.toUpperCase()
-              return up.includes('KABID PROPAM')
-            })
-          : await getKasubbidAliases()
+        : await getKasubbidAliases()
 
       // Gajamada undisposed
       try {
