@@ -23,7 +23,7 @@ export const USERS = [
 
 export function isDisposisiRole(role) {
   return role === 'kasubbid_paminal' || role === 'kasubbid_provos' || role === 'kasubbid_wabprof'
-    || role === 'admin' || role === 'kabid_propam' || role === 'kasubbag_yanduan'
+    || role === 'admin' || role === 'super_admin' || role === 'kabid_propam' || role === 'kasubbag_yanduan'
 }
 
 export function isAdminRole(role) {
@@ -63,5 +63,27 @@ export async function getUserFromRequest(request) {
   return await verifySession(token)
 }
 export function authenticate(username, password) {
-  return USERS.find((u) => u.username === username && u.password === password) || null
+  const user = [..._dbUsers, ...USERS].find((u) => u.username === username && u.password === password)
+  if (user) {
+    const { password: _, ...safe } = user
+    return safe
+  }
+  return null
+}
+
+// -------- DB-backed user cache --------
+let _dbUsers = []
+export function setDbUsers(users) { _dbUsers = users || [] }
+
+// Return merged users (DB first, deduped by username) without passwords
+export function getAllUsers() {
+  const seen = new Set()
+  const merged = []
+  for (const u of [..._dbUsers, ...USERS]) {
+    if (seen.has(u.username)) continue
+    seen.add(u.username)
+    const { password: _, ...safe } = u
+    merged.push(safe)
+  }
+  return merged
 }

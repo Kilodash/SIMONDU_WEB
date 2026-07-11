@@ -428,6 +428,36 @@ async function handleRoute(request, ctx) {
       const db2 = await getDb()
       const simonduUnits = await db2.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
       const unitMappings = await db2.collection('unit_mapping').find({}).toArray()
+
+      // Cleanup old BAG WASSIDIK sub-unit entries (from previous buggy seed) + seed essentials
+      const CLEANUP_NAMES = [
+        'BAG WASSIDIK DITRESKRIM UM', 'BAG WASSIDIK DITRESKRIM SUS',
+        'BAG WASSIDIK DITRESNARKOBA', 'BAG WASSIDIK DITRESSIBER', 'BAG WASSIDIK DITRES PPA/PPO',
+        'UNIT WABPROF',
+      ]
+      for (const cname of CLEANUP_NAMES) {
+        try { await db2.collection('units_master').deleteOne({ name: cname }) } catch (_) {}
+      }
+
+      // Seed essential Polda Jabar units
+      const ESSENTIAL_UNITS = [
+        { name: 'KASUBBID WABPROF POLDA JAWA BARAT', parent: 'BIDPROPAM POLDA JAWA BARAT' },
+        { name: 'SUBBAG REHABPERS', parent: 'BIDPROPAM POLDA JAWA BARAT' },
+        { name: 'SAT BRIMOB', parent: 'BIDPROPAM POLDA JAWA BARAT' },
+        { name: 'WASSIDIK', parent: 'BIDPROPAM POLDA JAWA BARAT' },
+      ]
+      for (const eu of ESSENTIAL_UNITS) {
+        try {
+          const exists = await db2.collection('units_master').findOne({ name: eu.name })
+          if (!exists) {
+            await db2.collection('units_master').insertOne({
+              id: uuidv4(), name: eu.name, parent: eu.parent || null,
+              is_kasubbid: false, active: true, order: 99, created_at: new Date(), source: 'seed',
+            })
+          }
+        } catch (_) {}
+      }
+
       return ok({
         units: dynamicUnits.length ? dynamicUnits : childUnits,
         kasubbid,
@@ -508,25 +538,6 @@ async function handleRoute(request, ctx) {
           is_kasubbid: false, active: true, order: 99, created_at: new Date(), source: 'gajamada',
         })
         added++
-      }
-
-      // 3. Seed essential Polda Jabar units that may not exist in Gajamada catalog
-      const ESSENTIAL_UNITS = [
-        { name: 'KASUBBID WABPROF POLDA JAWA BARAT', parent: 'BIDPROPAM POLDA JAWA BARAT' },
-        { name: 'SUBBAG REHABPERS', parent: 'BIDPROPAM POLDA JAWA BARAT' },
-        { name: 'SAT BRIMOB', parent: 'BIDPROPAM POLDA JAWA BARAT' },
-        { name: 'WASSIDIK', parent: 'BIDPROPAM POLDA JAWA BARAT' },
-      ]
-      for (const eu of ESSENTIAL_UNITS) {
-        const exists = await db.collection('units_master').findOne({ name: eu.name })
-        if (!exists) {
-          await db.collection('units_master').insertOne({
-            id: uuidv4(), name: eu.name, parent: eu.parent || null,
-            is_kasubbid: false, active: true, order: 99, created_at: new Date(), source: 'seed',
-          })
-          added++
-        }
-        total++
       }
 
       await logAudit(me, 'unit_sync_gajamada', 'catalog', { added, existing, total })

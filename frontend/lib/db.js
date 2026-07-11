@@ -2,7 +2,6 @@
 // Translates find/findOne/insertOne/updateOne/deleteOne/countDocuments to PostgREST
 // calls via @supabase/supabase-js. Uses service_role key for full table access.
 import { createClient } from '@supabase/supabase-js'
-import { v4 as uuidv4 } from 'uuid'
 
 const SUPABASE_URL = process.env.SUPABASE_URL
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -208,42 +207,8 @@ export async function getPolresUnits() {
 
 export async function getAllActiveUnitNames() {
   const db = await getDb()
-
-  // Seed essential Polda Jabar units if missing
-  const ESSENTIAL = [
-    { name: 'KASUBBID WABPROF POLDA JAWA BARAT', parent: 'BIDPROPAM POLDA JAWA BARAT' },
-    { name: 'SUBBAG REHABPERS', parent: 'BIDPROPAM POLDA JAWA BARAT' },
-    { name: 'SAT BRIMOB', parent: 'BIDPROPAM POLDA JAWA BARAT' },
-    { name: 'WASSIDIK', parent: 'BIDPROPAM POLDA JAWA BARAT' },
-  ]
-  for (const eu of ESSENTIAL) {
-    const exists = await db.collection('units_master').findOne({ name: eu.name })
-    if (!exists) {
-      await db.collection('units_master').insertOne({
-        id: uuidv4(), name: eu.name, parent: eu.parent,
-        is_kasubbid: false, active: true, order: 99, created_at: new Date(), source: 'seed',
-      }).catch(() => {})
-    }
-  }
-
   const rows = await db.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
-
-  const parentMap = {}
-  for (const r of rows) parentMap[r.name] = r.parent || null
-
-  const isJabar = (name, visited = new Set()) => {
-    if (!name || visited.has(name)) return false
-    visited.add(name)
-    const up = name.toUpperCase()
-    if (up.includes('JABAR') || up.includes('JAWA BARAT') || up.includes('BANDUNG')) return true
-    const parent = parentMap[name]
-    if (!parent) {
-      return /PAMINAL|PROVOS|WABPROF|YANDUAN|WASSIDIK|BRIMOB|REHABPERS|KABID PROPAM/i.test(up)
-    }
-    return isJabar(parent, visited)
-  }
-
-  return rows.filter((r) => isJabar(r.name)).map((r) => r.name)
+  return rows.map((r) => r.name)
 }
 
 // Look up Gajamada external_name aliases for the kasubbid unit from unit_mapping.

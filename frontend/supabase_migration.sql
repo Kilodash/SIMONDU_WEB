@@ -364,3 +364,39 @@ ALTER TABLE local_cases
 -- keeps this block safe to re-run.
 ALTER TABLE dispositions
   ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
+
+-- ============================================================
+-- Migration: Users table (Wave 6)
+-- Replaces hardcoded auth.js user list with DB-backed users.
+-- Backward-compatible: auth.js falls back to hardcoded list.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS users (
+  username TEXT PRIMARY KEY,
+  password TEXT NOT NULL, -- ponytail: plaintext, hash with scrypt later
+  name TEXT NOT NULL,
+  role TEXT NOT NULL,
+  unit TEXT,
+  active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ
+);
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+
+-- Seed default users from auth.js
+INSERT INTO users (username, password, name, role, unit) VALUES
+  ('kasubbid', 'kasubbid123', 'Kasubbid Paminal Polda Jabar', 'kasubbid_paminal', NULL),
+  ('kasubbid_paminal', 'paminal123', 'Kasubbid Paminal Polda Jabar', 'kasubbid_paminal', NULL),
+  ('kasubbid_provos', 'provos123', 'Kasubbid Provos Polda Jabar', 'kasubbid_provos', NULL),
+  ('kasubbid_wabprof', 'wabprof123', 'Kasubbid Wabprof Polda Jabar', 'kasubbid_wabprof', NULL),
+  ('kabid_propam', 'kabid123', 'Kabid Propam Polda Jabar', 'kabid_propam', NULL),
+  ('kasubbag_yanduan', 'yanduan123', 'Kasubbag Yanduan Polda Jabar', 'kasubbag_yanduan', NULL),
+  ('kasubbag_rehabpers', 'rehabpers123', 'Kasubbag Rehabpers Polda Jabar', 'kasubbag_rehabpers', NULL),
+  ('admin', 'admin123', 'Admin/Operator Propam', 'admin', NULL),
+  ('super_admin', 'superadmin123', 'Super Admin', 'super_admin', NULL),
+  ('unit1', 'unit123', 'Kanit 1 Paminal Polda Jabar', 'unit', 'UNIT 1 SUBBID PAMINAL POLDA JAWA BARAT'),
+  ('unit2', 'unit123', 'Kanit 2 Paminal Polda Jabar', 'unit', 'UNIT 2 SUBBID PAMINAL POLDA JAWA BARAT'),
+  ('unit3', 'unit123', 'Kanit 3 Paminal Polda Jabar', 'unit', 'UNIT 3 SUBBID PAMINAL POLDA JAWA BARAT'),
+  ('urbinpam', 'unit123', 'Ur Binpam Paminal Polda Jabar', 'unit', 'UR BINPAM SUBBID PAMINAL POLDA JAWA BARAT'),
+  ('urlitpers', 'unit123', 'Ur Litpers Paminal Polda Jabar', 'unit', 'UR LITPERS SUBBID PAMINAL POLDA JAWA BARAT'),
+  ('urprodok', 'unit123', 'Ur Prodok Paminal Polda Jabar', 'unit', 'UR PRODOK SUBBID PAMINAL POLDA JAWA BARAT')
+ON CONFLICT (username) DO NOTHING;
