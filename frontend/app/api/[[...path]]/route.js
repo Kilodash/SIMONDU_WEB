@@ -1730,11 +1730,18 @@ async function handleRoute(request, ctx) {
       if (!isAdminRole(me.role)) return fail('Hanya Admin/Super Admin', 403)
       const { username, password, base_url } = await request.json()
       const db = await getDb()
-      if (username) await db.collection('app_settings').updateOne({ key: 'gajamada_username' }, { $set: { value: username, updated_at: new Date() } }, { upsert: true })
-      if (password) await db.collection('app_settings').updateOne({ key: 'gajamada_password' }, { $set: { value: password, updated_at: new Date() } }, { upsert: true })
-      if (base_url) await db.collection('app_settings').updateOne({ key: 'gajamada_base_url' }, { $set: { value: base_url, updated_at: new Date() } }, { upsert: true })
-      // Update runtime credentials
+      // Update runtime credentials (always succeeds)
       gajamada.setGajamadaCredentials(username, password, base_url || null)
+      // Try to persist to DB (may fail if table doesn't exist)
+      try {
+        if (username) await db.collection('app_settings').updateOne({ key: 'gajamada_username' }, { $set: { value: username, updated_at: new Date() } }, { upsert: true })
+        if (password) await db.collection('app_settings').updateOne({ key: 'gajamada_password' }, { $set: { value: password, updated_at: new Date() } }, { upsert: true })
+        if (base_url) await db.collection('app_settings').updateOne({ key: 'gajamada_base_url' }, { $set: { value: base_url, updated_at: new Date() } }, { upsert: true })
+      } catch (_) {
+        // Table may not exist yet — runtime session only
+        console.log('[settings] app_settings table not found, using runtime session only')
+        return ok({ persisted: false })
+      }
       await logAudit(me, 'settings_gajamada', 'config')
       return ok({})
     }

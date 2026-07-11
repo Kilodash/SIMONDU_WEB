@@ -2363,6 +2363,7 @@ function GajamadaConnectionSettings() {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
+  const [showPw, setShowPw] = useState(false)
 
   const load = async () => {
     setLoading(true)
@@ -2376,8 +2377,8 @@ function GajamadaConnectionSettings() {
     if (!form.username) return toast.error('Username Gajamada wajib')
     setSaving(true)
     try {
-      await api('/settings-gajamada', { method: 'POST', body: JSON.stringify(form) })
-      toast.success('Pengaturan Gajamada disimpan')
+      const r = await api('/settings-gajamada', { method: 'POST', body: JSON.stringify(form) })
+      toast.success(r.persisted === false ? 'Koneksi aktif (sesi runtime) — buat tabel app_settings untuk permanen' : 'Pengaturan Gajamada disimpan')
       load()
     } catch (e) { toast.error(e.message) }
     finally { setSaving(false) }
@@ -2394,18 +2395,23 @@ function GajamadaConnectionSettings() {
   }
 
   return (
-    <Card>
+    <Card className="max-w-lg">
       <CardHeader className="pb-3">
         <CardTitle className="text-sm">Koneksi Gajamada (eBdesk Fusion)</CardTitle>
         <CardDescription>Konfigurasi akun Gajamada untuk sinkronisasi data. Disimpan di database.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {loading ? <Loader2 className="h-6 w-6 animate-spin text-blue-800" /> : (
+        {loading ? <Loader2 className="h-6 w-6 animate-spin text-blue-800 mx-auto" /> : (
           <>
             <div><Label>Username / Email Gajamada</Label>
               <Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="polda_jabar" /></div>
-            <div><Label>Password Gajamada</Label>
-              <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Kosongkan jika tidak diubah" /></div>
+            <div>
+              <Label>Password Gajamada</Label>
+              <div className="relative">
+                <Input type={showPw ? 'text' : 'password'} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Kosongkan jika tidak diubah" className="pr-10" />
+                <button type="button" onClick={() => setShowPw(!showPw)} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">{showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
+              </div>
+            </div>
             <div><Label>Base URL (opsional)</Label>
               <Input value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} placeholder="https://gajamada-propam.polri.go.id" /></div>
 
