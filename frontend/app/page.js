@@ -910,8 +910,6 @@ const InfoRow = memo(function InfoRow({ icon, label, value }) {
 function CasesList({ user, onOpenCase }) {
   const [cases, setCases] = useState([])
   const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(1)
-  const [size] = useState(7)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [category, setCategory] = useState('')
@@ -971,8 +969,6 @@ function CasesList({ user, onOpenCase }) {
         if (sourceFilter === 'non_dumas') qs.set('case_type', 'non_dumas')
         else qs.set('source', sourceFilter)
         if (search) qs.set('search', search)
-        qs.set('page', String(page))
-        qs.set('size', String(size))
         const r = await api(`/local-cases?${qs}`)
         const formatted = (r.data || []).map(c => ({
           ...c, id: c.id, prepetrator_id: c.prepator_id || c.prepetrator_id, created_date: c.created_at, updated_at: c.updated_at,
@@ -988,7 +984,7 @@ function CasesList({ user, onOpenCase }) {
 
     setLoading(true)
     try {
-      const qs = new URLSearchParams({ page: String(page), size: String(size) })
+      const qs = new URLSearchParams()
       if (search) qs.set('search', search)
       if (status) qs.set('status', status)
       if (category) qs.set('category', category)
@@ -999,17 +995,16 @@ function CasesList({ user, onOpenCase }) {
       setCases(r.data); setTotal(r.total)
     } catch (e) { toast.error(e.message) }
     finally { setLoading(false) }
-  }, [page, status, category, unit, polres, search, size, sourceFilter])
+  }, [status, category, unit, polres, search, sourceFilter])
   useEffect(() => { load() }, [load])
   useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
 
-  const onSearch = useCallback((e) => { e.preventDefault(); setPage(1); load() }, [load])
-  const clearFilter = useCallback(() => { setStatus(''); setCategory(''); setUnit(''); setPolres(''); setSearch(''); setPage(1) }, [])
-  const maxPage = useMemo(() => Math.ceil(total / size) || 1, [total, size])
-  const handleStatusChange = useCallback((v) => { setStatus(v === '__all' ? '' : v); setPage(1) }, [])
-  const handleCategoryChange = useCallback((v) => { setCategory(v === '__all' ? '' : v); setPage(1) }, [])
-  const handleUnitChange = useCallback((v) => { setUnit(v === '__all' ? '' : v); setPolres(''); setPage(1) }, [])
-  const handlePolresChange = useCallback((v) => { setPolres(v); setPage(1) }, [])
+  const onSearch = useCallback((e) => { e.preventDefault(); load() }, [load])
+  const clearFilter = useCallback(() => { setStatus(''); setCategory(''); setUnit(''); setPolres(''); setSearch('') }, [])
+  const handleStatusChange = useCallback((v) => { setStatus(v === '__all' ? '' : v) }, [])
+  const handleCategoryChange = useCallback((v) => { setCategory(v === '__all' ? '' : v) }, [])
+  const handleUnitChange = useCallback((v) => { setUnit(v === '__all' ? '' : v); setPolres('') }, [])
+  const handlePolresChange = useCallback((v) => { setPolres(v) }, [])
 
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 96px)' }}>
@@ -1017,7 +1012,7 @@ function CasesList({ user, onOpenCase }) {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <h2 className="text-2xl font-bold text-slate-900">Daftar Surat</h2>
-          <Tabs value={sourceFilter || 'gajamada'} onValueChange={(v) => { setSourceFilter(v === 'gajamada' ? '' : v); setPage(1) }}>
+          <Tabs value={sourceFilter || 'gajamada'} onValueChange={(v) => { setSourceFilter(v === 'gajamada' ? '' : v) }}>
             <TabsList>
               <TabsTrigger value="gajamada" className="text-xs">GAJAMADA</TabsTrigger>
               <TabsTrigger value="laporan_informasi" className="text-xs">LAPORAN INFORMASI</TabsTrigger>
@@ -1185,18 +1180,8 @@ function CasesList({ user, onOpenCase }) {
         </CardContent>
       </Card>
 
-      <div className="shrink-0 bg-white border-t py-3 px-4 flex items-center justify-between z-10">
-        <p className="text-sm text-slate-600 font-medium">Halaman {page} dari {maxPage} · {size} per halaman · <span className="text-blue-800 font-bold">Total {total.toLocaleString('id-ID')}</span></p>
-        <div className="flex items-center gap-1">
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(1)}>Awal</Button>
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Sebelumnya</Button>
-          <form onSubmit={(e) => { e.preventDefault(); const v = parseInt(e.target.elements.pageInput.value, 10); if (v >= 1 && v <= maxPage) setPage(v) }} className="flex items-center gap-1">
-            <input name="pageInput" type="number" min={1} max={maxPage} defaultValue={page} key={page} className="w-14 h-9 text-center text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
-          </form>
-          <Button variant="outline" size="sm" disabled={cases.length < size} onClick={() => setPage(page + 1)}>Selanjutnya</Button>
-          <Button variant="outline" size="sm" disabled={cases.length < size} onClick={() => setPage(maxPage)}>Akhir</Button>
-        </div>
       </div>
+
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Edit Data Surat</DialogTitle></DialogHeader>
