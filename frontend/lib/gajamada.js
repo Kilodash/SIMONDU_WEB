@@ -2,6 +2,20 @@
 // Single shared account via env vars GAJAMADA_USERNAME / GAJAMADA_PASSWORD
 
 const BASE_URL = process.env.GAJAMADA_BASE_URL || 'https://gajamada-propam.polri.go.id'
+
+let _session = null
+let _overrideUsername = null
+let _overridePassword = null
+let _overrideBaseUrl = null
+
+function getBaseUrl() { return _overrideBaseUrl || BASE_URL }
+
+export function setGajamadaCredentials(username, password, baseUrl) {
+  _overrideUsername = username || null
+  _overridePassword = password || null
+  _overrideBaseUrl = baseUrl || null
+  _session = null
+}
 const APP_ID = process.env.GAJAMADA_APP_ID || '1769155096865'
 const CONNECTION_ID = process.env.GAJAMADA_CONNECTION_ID || '245b8fd7c4a763019d5172fad5ec0086'
 const DATABASE = process.env.GAJAMADA_DATABASE || 'divpropam'
@@ -46,21 +60,10 @@ function commonHeaders(extra = {}) {
   return h
 }
 
-let _overrideUsername = null
-let _overridePassword = null
-let _overrideBaseUrl = null
-
-export function setGajamadaCredentials(username, password, baseUrl) {
-  _overrideUsername = username || null
-  _overridePassword = password || null
-  _overrideBaseUrl = baseUrl || null
-  _session = null
-}
-
 async function doLogin() {
   const email = _overrideUsername || process.env.GAJAMADA_USERNAME
   const password = _overridePassword || process.env.GAJAMADA_PASSWORD
-  const loginBaseUrl = _overrideBaseUrl || BASE_URL
+  const loginBaseUrl = getBaseUrl()
   if (!email || !password) {
     const err = new Error('Gajamada credentials not set in env (GAJAMADA_USERNAME / GAJAMADA_PASSWORD)')
     err.code = 'GAJAMADA_DISABLED'
@@ -101,7 +104,7 @@ async function ensureSession() {
     return
   }
   try {
-    const res = await fetch(`${BASE_URL}/api/v1/apps/auth/validate`, {
+    const res = await fetch(`${getBaseUrl()}/api/v1/apps/auth/validate`, {
       method: 'GET',
       headers: commonHeaders(),
     })
@@ -535,14 +538,19 @@ export async function downloadAttachment(url) {
   let finalUrl = url
   if (url.startsWith('s3://fusion/')) {
     const key = url.substring('s3://fusion/'.length)
-    finalUrl = `${BASE_URL}/cdn/media/fusion/${key}`
+    finalUrl = `${getBaseUrl()}/cdn/media/fusion/${key}`
+  } else if (url.includes('/fusion/')) {
+    // Convert direct S3/CDN URLs to Gajamada CDN proxy
+    const idx = url.indexOf('/fusion/')
+    const path = url.substring(idx + 1) // fusion/agent/...
+    finalUrl = `${getBaseUrl()}/cdn/media/${path}`
   }
   const res = await fetch(finalUrl, { headers: commonHeaders() })
   return res
 }
 
 export async function testLogin({ email, password, baseUrl }) {
-  const loginUrl = (baseUrl || _overrideBaseUrl || BASE_URL) + '/api/v1/apps/auth/login'
+  const loginUrl = (baseUrl || getBaseUrl()) + '/api/v1/apps/auth/login'
   const res = await fetch(loginUrl, {
     method: 'POST',
     headers: {
