@@ -1760,6 +1760,7 @@ async function handleRoute(request, ctx) {
     if (route === '/download' && method === 'GET') {
       const target = url.searchParams.get('url')
       if (!target) return fail('url param required')
+      const inline = url.searchParams.get('inline') !== '0'
       try {
         const res = await gajamada.downloadAttachment(target)
         const buffer = await res.arrayBuffer()
@@ -1769,7 +1770,7 @@ async function handleRoute(request, ctx) {
           status: 200,
           headers: {
             'Content-Type': contentType,
-            'Content-Disposition': `inline; filename="${name}"`,
+            'Content-Disposition': inline ? `inline; filename="${name}"` : `attachment; filename="${name}"`,
             'Cache-Control': 'private, max-age=60',
           },
         })

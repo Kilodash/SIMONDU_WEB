@@ -21,7 +21,6 @@ const CONNECTION_ID = process.env.GAJAMADA_CONNECTION_ID || '245b8fd7c4a763019d5
 const DATABASE = process.env.GAJAMADA_DATABASE || 'divpropam'
 const WIDGET_AKSI_GATEWAY_ID = process.env.GAJAMADA_UPDATE_GATEWAY_ID || 'aa6159ec4d7847e8282943f7dfe87c29'
 
-let _session = null
 
 // Simple in-memory cache
 const _cache = new Map()

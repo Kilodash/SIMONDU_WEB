@@ -592,8 +592,8 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                         <div className="flex items-center gap-2">
                           <Button size="sm" variant="outline" onClick={() => {
                             atts.forEach((a) => {
-                              const dlUrl = `/api/download?url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.file_name + '.' + a.file_type)}`
-                              window.open(dlUrl, '_blank')
+                              const ulUrl = `/api/download?url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.file_name + '.' + a.file_type)}&inline=0`
+                              window.open(ulUrl, '_blank')
                             })
                           }}>
                             <Download className="h-4 w-4 mr-1" /> Download Semua ({atts.length})
@@ -607,6 +607,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                           {atts.map((a, i) => {
                             const dlUrl = `/api/download?url=${encodeURIComponent(a.url)}&name=${encodeURIComponent(a.file_name + '.' + a.file_type)}`
+                            const ulUrl = dlUrl + '&inline=0'
                             const ext = (a.file_type || '').toLowerCase()
                             const isImage = /^(jpg|jpeg|png|gif|webp|bmp)$/i.test(ext)
                             const isPdf = ext === 'pdf'
@@ -633,7 +634,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                                   <p className="text-xs font-medium truncate" title={a.file_name}>{a.file_name}</p>
                                   <p className="text-[10px] text-slate-400">{ext.toUpperCase()} · {fmtDateShort(a.created_at)}</p>
                                   <div className="flex gap-1">
-                                    <a href={dlUrl} target="_blank" rel="noreferrer"
+                                    <a href={ulUrl} target="_blank" rel="noreferrer"
                                       className="flex-1 inline-flex items-center justify-center gap-1 text-[10px] text-blue-700 hover:bg-blue-50 rounded px-2 py-1 transition-colors">
                                       <Download className="h-3 w-3" /> Unduh
                                     </a>
@@ -910,7 +911,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                 </div>
                 <DialogFooter>
                   <Button variant="ghost" onClick={() => setDlPreviewOpen(false)}>Tutup</Button>
-                  <a href={dlPreviewUrl} target="_blank" rel="noreferrer">
+                  <a href={dlPreviewUrl + '&inline=0'} target="_blank" rel="noreferrer">
                     <Button variant="outline"><Download className="h-4 w-4 mr-1" /> Unduh</Button>
                   </a>
                 </DialogFooter>
