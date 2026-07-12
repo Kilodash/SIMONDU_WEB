@@ -910,6 +910,8 @@ const InfoRow = memo(function InfoRow({ icon, label, value }) {
 function CasesList({ user, onOpenCase }) {
   const [cases, setCases] = useState([])
   const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [pageSize] = useState(20)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [category, setCategory] = useState('')
@@ -969,6 +971,8 @@ function CasesList({ user, onOpenCase }) {
         if (sourceFilter === 'non_dumas') qs.set('case_type', 'non_dumas')
         else qs.set('source', sourceFilter)
         if (search) qs.set('search', search)
+        qs.set('page', String(page))
+        qs.set('size', String(pageSize))
         const r = await api(`/local-cases?${qs}`)
         const formatted = (r.data || []).map(c => ({
           ...c, id: c.id, prepetrator_id: c.prepator_id || c.prepetrator_id, created_date: c.created_at, updated_at: c.updated_at,
@@ -984,7 +988,7 @@ function CasesList({ user, onOpenCase }) {
 
     setLoading(true)
     try {
-      const qs = new URLSearchParams()
+      const qs = new URLSearchParams({ page: String(page), size: String(pageSize) })
       if (search) qs.set('search', search)
       if (status) qs.set('status', status)
       if (category) qs.set('category', category)
@@ -995,16 +999,17 @@ function CasesList({ user, onOpenCase }) {
       setCases(r.data); setTotal(r.total)
     } catch (e) { toast.error(e.message) }
     finally { setLoading(false) }
-  }, [status, category, unit, polres, search, sourceFilter])
+  }, [page, pageSize, status, category, unit, polres, search, sourceFilter])
   useEffect(() => { load() }, [load])
   useEffect(() => { api('/reference').then(setReference).catch(() => {}) }, [])
 
-  const onSearch = useCallback((e) => { e.preventDefault(); load() }, [load])
-  const clearFilter = useCallback(() => { setStatus(''); setCategory(''); setUnit(''); setPolres(''); setSearch('') }, [])
-  const handleStatusChange = useCallback((v) => { setStatus(v === '__all' ? '' : v) }, [])
-  const handleCategoryChange = useCallback((v) => { setCategory(v === '__all' ? '' : v) }, [])
-  const handleUnitChange = useCallback((v) => { setUnit(v === '__all' ? '' : v); setPolres('') }, [])
-  const handlePolresChange = useCallback((v) => { setPolres(v) }, [])
+  const onSearch = useCallback((e) => { e.preventDefault(); setPage(1); load() }, [load])
+  const clearFilter = useCallback(() => { setStatus(''); setCategory(''); setUnit(''); setPolres(''); setSearch(''); setPage(1) }, [])
+  const maxPage = Math.ceil(total / pageSize) || 1
+  const handleStatusChange = useCallback((v) => { setStatus(v === '__all' ? '' : v); setPage(1) }, [])
+  const handleCategoryChange = useCallback((v) => { setCategory(v === '__all' ? '' : v); setPage(1) }, [])
+  const handleUnitChange = useCallback((v) => { setUnit(v === '__all' ? '' : v); setPolres(''); setPage(1) }, [])
+  const handlePolresChange = useCallback((v) => { setPolres(v); setPage(1) }, [])
 
   return (
     <div className="flex flex-col" style={{ height: 'calc(100vh - 96px)' }}>
@@ -1012,7 +1017,7 @@ function CasesList({ user, onOpenCase }) {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-3">
           <h2 className="text-2xl font-bold text-slate-900">Daftar Surat</h2>
-          <Tabs value={sourceFilter || 'gajamada'} onValueChange={(v) => { setSourceFilter(v === 'gajamada' ? '' : v) }}>
+          <Tabs value={sourceFilter || 'gajamada'} onValueChange={(v) => { setSourceFilter(v === 'gajamada' ? '' : v); setPage(1) }}>
             <TabsList>
               <TabsTrigger value="gajamada" className="text-xs">GAJAMADA</TabsTrigger>
               <TabsTrigger value="laporan_informasi" className="text-xs">LAPORAN INFORMASI</TabsTrigger>
@@ -1109,7 +1114,7 @@ function CasesList({ user, onOpenCase }) {
                     ) : (
                       cases.map((c, idx) => (
                         <TableRow key={`${c._source || c.source || 'other'}-${c.prepator_id || c.prepetrator_id || idx}`} className="cursor-pointer hover:bg-blue-50/40 align-top" onClick={() => onOpenCase(c.prepator_id || c.prepetrator_id)}>
-                          <TableCell className="text-sm text-slate-500 pt-3">{idx + 1}</TableCell>
+                          <TableCell className="text-sm text-slate-500 pt-3">{(page - 1) * pageSize + idx + 1}</TableCell>
                           <TableCell className="pt-3">
                             <p className="text-sm font-medium">{c.perihal || c.summary || '-'}</p>
                             {c.source_alias && <Badge className={`mt-1 text-xs ${sourceColor(c.source_alias)}`}>{c.source_alias}</Badge>}
@@ -1130,7 +1135,7 @@ function CasesList({ user, onOpenCase }) {
                     <>
                       {cases.map((c, idx) => (
                         <TableRow key={`${c._source || 'gajamada'}-${c.prepetrator_id || idx}`} className="cursor-pointer hover:bg-blue-50/40 align-top" onClick={() => onOpenCase(c.prepetrator_id)}>
-                          <TableCell className="text-sm text-slate-500 pt-3">{idx + 1}</TableCell>
+                          <TableCell className="text-sm text-slate-500 pt-3">{(page - 1) * pageSize + idx + 1}</TableCell>
                           <TableCell className="pt-3">
                             <p className="text-sm font-mono font-semibold">{c.id}</p>
                             <p className="text-xs text-slate-500 mt-0.5">{fmtDate(c.created_date)}</p>
@@ -1178,6 +1183,17 @@ function CasesList({ user, onOpenCase }) {
             </div>
           )}
         </CardContent>
+        {total > pageSize && (
+        <div className="bg-slate-50 border-t px-4 py-2 flex items-center justify-between">
+          <p className="text-xs text-slate-500">Halaman {page} dari {maxPage} · Total {total.toLocaleString('id-ID')}</p>
+          <div className="flex gap-1">
+            <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage(1)}>Awal</Button>
+            <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>‹ Sebelumnya</Button>
+            <Button size="sm" variant="ghost" disabled={page >= maxPage} onClick={() => setPage(p => p + 1)}>Selanjutnya ›</Button>
+            <Button size="sm" variant="ghost" disabled={page >= maxPage} onClick={() => setPage(maxPage)}>Akhir</Button>
+          </div>
+        </div>
+        )}
       </Card>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
