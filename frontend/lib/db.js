@@ -203,17 +203,20 @@ export async function getKasubbidName() {
 
 export async function getPolresUnits() {
   const db = await getDb()
-  const rows = await db.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
-  return rows
-    .filter((r) => {
-      if (!r.name) return false
-      const up = r.name.toUpperCase()
-      if (!up.includes('POLRES')) return false
-      const parentUp = (r.parent || '').toUpperCase()
-      return up.includes('JABAR') || up.includes('JAWA BARAT') || up.includes('BANDUNG')
-        || parentUp.includes('JABAR') || parentUp.includes('JAWA BARAT') || parentUp.includes('BANDUNG')
-    })
-    .map((r) => r.name)
+  // Get Polres names from unit_mapping (internal_unit values that start with POLRES/POLRESTA/POLRESTABES)
+  const rows = await db.collection('unit_mapping').find({}).toArray()
+  const prio = (n) => {
+    const up = n.toUpperCase()
+    if (up.startsWith('POLRESTABES')) return 0
+    if (up.startsWith('POLRESTA')) return 1
+    return 2
+  }
+  return [...new Set(
+    rows
+      .map((r) => r.internal_unit)
+      .filter((n) => /^(POLRES|POLRESTA|POLRESTABES)\s/i.test(n))
+      .sort((a, b) => prio(a) - prio(b) || a.localeCompare(b))
+  )]
 }
 
 export async function getAllActiveUnitNames() {
@@ -227,7 +230,15 @@ export async function getAllActiveUnitNames() {
 export async function getKasubbidAliases() {
   const db = await getDb()
   const kasubbid = await getKasubbidName()
-  if (!kasubbid) return []
-  const rows = await db.collection('unit_mapping').find({ internal_unit: kasubbid }).toArray()
-  return rows.map((r) => r.external_name).filter(Boolean)
+  if (kasubbid) {
+    const rows = await db.collection('unit_mapping').find({ internal_unit: kasubbid }).toArray()
+    if (rows.length > 0) return rows.map((r) => r.external_name).filter(Boolean)
+  }
+  // Fallback: get aliases from any PAMINAL/PROVOS/WABPROF mapping entries
+  const [pamRows, provRows, wabRows] = await Promise.all([
+    db.collection('unit_mapping').find({ internal_unit: 'SUBBID PAMINAL' }).toArray(),
+    db.collection('unit_mapping').find({ internal_unit: 'SUBBID PROVOS' }).toArray(),
+    db.collection('unit_mapping').find({ internal_unit: 'SUBBID WABPROF' }).toArray(),
+  ])
+  return [...pamRows, ...provRows, ...wabRows].map((r) => r.external_name).filter(Boolean)
 }

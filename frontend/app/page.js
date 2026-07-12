@@ -45,8 +45,9 @@ const LIMPAH_PATHS = {
   ],
 }
 
-const APP_NAME = 'SIMONDU WEB'
-const APP_SUBTITLE = 'Sistem Monitoring Dumas Bidpropam Polda Jabar'
+const APP_NAME = 'SIMONDU'
+const APP_SUBTITLE = 'SISTEM MONITORING DUMAS'
+const APP_SUBTITLE2 = 'BIDPROPAM POLDA JABAR'
 
 async function api(path, options = {}) {
   const res = await fetch(`/api${path}`, {
@@ -133,8 +134,8 @@ function LoginPage({ onSuccess }) {
             <img src="/logo-gajamada.png" alt="Logo Gajamada" className="h-20 w-20 object-contain bg-white/10 backdrop-blur rounded-xl p-2 border border-white/20 shadow-2xl" />
           </div>
           <h1 className="text-3xl font-bold text-white tracking-tight">{APP_NAME}</h1>
-          <p className="text-blue-200 text-sm mt-1 text-center">Sistem Monitoring Dumas</p>
-          <p className="text-blue-300 text-xs mt-0.5">Bidpropam Polda Jabar</p>
+          <p className="text-blue-200 text-sm mt-1 text-center">{APP_SUBTITLE}</p>
+          <p className="text-blue-300 text-xs mt-0.5">{APP_SUBTITLE2}</p>
         </div>
         <Card className="border-white/10 shadow-2xl backdrop-blur-lg bg-white/95">
           <CardHeader>
@@ -648,7 +649,7 @@ function CaseDetail({ pid, user, onClose, onChanged }) {
                   )}
                 </TabsContent>
 
-                <TabsContent value="timeline" className="mt-4">
+                <TabsContent value="timeline" className="mt-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 450px)' }}>
                   <Card><CardHeader className="pb-2">
                     <CardTitle className="text-sm">Timeline Tindak Lanjut</CardTitle>
                   </CardHeader>
@@ -964,12 +965,11 @@ function CasesList({ user, onOpenCase }) {
   }
 
   const load = useCallback(async () => {
-    if (sourceFilter === 'manual' || sourceFilter === 'non_dumas' || sourceFilter === 'laporan_informasi') {
+    if (sourceFilter === 'manual' || sourceFilter === 'laporan_informasi') {
       setLoading(true)
       try {
         const qs = new URLSearchParams()
-        if (sourceFilter === 'non_dumas') qs.set('case_type', 'non_dumas')
-        else qs.set('source', sourceFilter)
+        qs.set('source', sourceFilter)
         if (search) qs.set('search', search)
         qs.set('page', String(page))
         qs.set('size', String(pageSize))
@@ -1020,9 +1020,8 @@ function CasesList({ user, onOpenCase }) {
           <Tabs value={sourceFilter || 'gajamada'} onValueChange={(v) => { setSourceFilter(v === 'gajamada' ? '' : v); setPage(1) }}>
             <TabsList>
               <TabsTrigger value="gajamada" className="text-xs">GAJAMADA</TabsTrigger>
-              <TabsTrigger value="laporan_informasi" className="text-xs">LAPORAN INFORMASI</TabsTrigger>
+              {(user.role === 'kasubbid_paminal' || user.role === 'admin' || user.role === 'super_admin') && <TabsTrigger value="laporan_informasi" className="text-xs">LAPORAN INFORMASI</TabsTrigger>}
               <TabsTrigger value="manual" className="text-xs">INPUT MANUAL</TabsTrigger>
-              <TabsTrigger value="non_dumas" className="text-xs">NON-DUMAS</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -1109,7 +1108,7 @@ function CasesList({ user, onOpenCase }) {
                       <TableRow><TableCell colSpan={7} className="text-center py-12 text-slate-500">
                         {sourceFilter === 'manual' ? 'Belum ada data. Klik "Tambah" untuk input surat manual.' :
                          sourceFilter === 'laporan_informasi' ? 'Belum ada laporan informasi. Klik "Tambah" untuk input.' :
-                         sourceFilter === 'non_dumas' ? 'Belum ada surat non-dumas.' : 'Tidak ada data.'}
+                         'Tidak ada data.'}
                       </TableCell></TableRow>
                     ) : (
                       cases.map((c, idx) => (
@@ -1621,7 +1620,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
       )}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* PANEL 1: Detail + Preview/Kronologi + Timeline (scrollable) */}
-         <Card className="lg:col-span-7 flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 60px)' }}>
+         <Card className="lg:col-span-7 flex flex-col overflow-hidden" style={{ height: 'calc(100vh - 100px)' }}>
           <div className={`${editMode ? 'bg-gradient-to-r from-amber-800 to-amber-900' : 'bg-gradient-to-r from-blue-900 to-indigo-900'} text-white p-3 shrink-0`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
@@ -1729,7 +1728,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
         </Card>
 
         {/* KOLOM KANAN: Lembar Disposisi + Over-ride */}
-        <div className="lg:col-span-5 flex flex-col gap-4 overflow-hidden" style={{ maxHeight: 'calc(100vh - 60px)' }}>
+        <div className="lg:col-span-5 flex flex-col gap-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 100px)' }}>
 
         {/* PANEL 2: Lembar Disposisi */}
          <Card className="flex flex-col overflow-hidden border-2 border-blue-300" style={{ maxHeight: '65vh' }}>
@@ -1881,7 +1880,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
 
       {/* Navigation bar — below content, above bottom */}
       {!editMode && (
-      <div className="bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] sticky bottom-0 z-30" data-testid="bottom-nav">
+      <div className="bg-white border-t border-slate-200 shadow-[0_-2px_10px_rgba(0,0,0,0.05)] fixed bottom-0 left-0 right-0 z-30" data-testid="bottom-nav">
         <div className="max-w-[1600px] mx-auto px-6 py-3 flex items-center justify-between">
           <Button variant="outline" size="sm" onClick={goPrev} disabled={idx === 0} className="text-xs min-w-[80px]" data-testid="btn-prev">
             <ChevronLeft className="h-4 w-4 mr-1" /> Prev
@@ -2759,6 +2758,7 @@ function RiwayatSayaPage({ user, onOpenCase }) {
 function AppShell({ user, onLogout }) {
   const [tab, setTab] = useState('dashboard')
   const [selectedCase, setSelectedCase] = useState(null)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const role = user?.role || 'unit'
   const isYanduan = role === 'kasubbag_yanduan'
   const isKabid = role === 'kabid_propam'
@@ -2822,12 +2822,14 @@ function AppShell({ user, onLogout }) {
 
   return (
     <div className="min-h-screen flex bg-slate-100">
-      <aside className="w-64 bg-gradient-to-b from-blue-950 via-blue-900 to-indigo-950 text-white flex flex-col overflow-hidden shadow-2xl">
+      <aside className={`${sidebarOpen ? 'w-64' : 'w-0 overflow-hidden'} bg-gradient-to-b from-blue-950 via-blue-900 to-indigo-950 text-white flex flex-col overflow-hidden shadow-2xl transition-all duration-200`}>
         <div className="p-5 border-b border-white/10">
             <div className="flex items-center gap-3">
               <img src="/logo-pengaduan.png" alt="Logo" className="h-10 w-10 rounded-lg object-contain bg-white/10 p-0.5" />
               <div>
-              <p className="font-bold text-lg leading-tight">{APP_NAME}</p>
+              <p className="font-bold text-xl leading-tight">{APP_NAME}</p>
+              <p className="text-[10px] text-blue-300 leading-tight">{APP_SUBTITLE}</p>
+              <p className="text-[10px] text-blue-300 leading-tight">{APP_SUBTITLE2}</p>
             </div>
           </div>
           <div className="flex items-center gap-4 mt-3 pt-3 border-t border-white/10">

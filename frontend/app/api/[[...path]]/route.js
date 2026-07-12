@@ -546,6 +546,26 @@ async function handleRoute(request, ctx) {
       const simonduUnits = await db2.collection('units_master').find({ active: true }).sort({ order: 1, name: 1 }).toArray()
       const unitMappings = await db2.collection('unit_mapping').find({}).toArray()
 
+      // Normalize internal_unit: strip "POLDA JAWA BARAT" suffix from duplicates
+      for (const m of unitMappings) {
+        const original = m.internal_unit || ''
+        const normalized = original.replace(/\s*POLDA JAWA BARAT\s*/i, '').trim()
+        if (normalized && normalized !== original) {
+          try {
+            // Check if a mapping with the normalized name already exists
+            const exists = unitMappings.find((x) => x.internal_unit === normalized && x.external_name === m.external_name)
+            if (!exists) {
+              await db2.collection('unit_mapping').updateOne({ id: m.id }, { $set: { internal_unit: normalized } })
+            } else {
+              // Duplicate — delete this one
+              await db2.collection('unit_mapping').deleteOne({ id: m.id }).catch(() => {})
+            }
+          } catch (_) {}
+        }
+      }
+      // Re-fetch after cleanup
+      const cleanMappings = await db2.collection('unit_mapping').find({}).toArray()
+
       // Cleanup old BAG WASSIDIK sub-unit entries (from previous buggy seed) + seed essentials
       const CLEANUP_NAMES = [
         'BAG WASSIDIK DITRESKRIM UM', 'BAG WASSIDIK DITRESKRIM SUS',
@@ -624,9 +644,9 @@ async function handleRoute(request, ctx) {
         filter_units: FILTER_UNITS,
         polres_units: polresUnits,
         all_active_units: allActiveUnits,
-        mapped_units: [...new Set(unitMappings.map((m) => m.internal_unit).filter(Boolean))].sort(byPriority),
+        mapped_units: [...new Set(unitMappings.map((m) => (m.internal_unit || '').replace(/\s*POLDA JAWA BARAT\s*/i, '').trim()).filter(Boolean))].sort(byPriority),
         simondu_units: simonduUnits.map(({ _id, ...r }) => r),
-        unit_mappings: unitMappings.map(({ _id, ...r }) => r),
+        unit_mappings: cleanMappings.map(({ _id, ...r }) => r),
       })
     }
 
@@ -979,6 +999,8 @@ async function handleRoute(request, ctx) {
           })
         : await getKasubbidAliases()
 
+      if (queueUnits.length === 0) return ok({ data: [], total: 0 })
+
       const r = await gajamada.listCases({ units: queueUnits, size: 100 }).catch(() => ({ data: [] }))
       const pids = r.data.map((c) => c.prepetrator_id)
       const disp = await db.collection('dispositions').find({ prepetrator_id: { $in: pids } }).toArray()
@@ -1086,7 +1108,11 @@ async function handleRoute(request, ctx) {
           })
         : await getKasubbidAliases()
 
+      // Guard: empty units → Gajamada returns ALL cases, not zero
+      if (queueUnits.length === 0) return ok({ count: 0 })
+
       // Gajamada count: exclude cases already dispositioned or with saran submitted
+      let countedPids = new Set()
       try {
         const r = await gajamada.listCases({ units: queueUnits, size: 100 }).catch(() => ({ data: [] }))
         const pids = r.data.map((c) => c.prepetrator_id)
@@ -1100,17 +1126,19 @@ async function handleRoute(request, ctx) {
             for (const lc of lcRows) { const lcPid = lc.prepator_id || lc.prepetrator_id; if (lcPid) localStatusMap.set(lcPid, lc.status) }
           } catch (_) {}
         }
-        count += r.data.filter((c) => {
+        const filtered = r.data.filter((c) => {
           if (dispSet.has(c.prepetrator_id)) return false
           if (isYanduan) {
             const lcStatus = localStatusMap.get(c.prepetrator_id)
             if (lcStatus && lcStatus !== STATUS.SURAT_MASUK_POLDA_JABAR && lcStatus !== 'Dikembalikan ke Subbag Yanduan') return false
           }
           return true
-        }).length
+        })
+        filtered.forEach((c) => countedPids.add(c.prepetrator_id))
+        count += filtered.length
       } catch (_) {}
 
-      // Local cases count
+      // Local cases count (dedup with Gajamada count)
       try {
         const db2 = await getDb()
         const [c1, c2] = await Promise.all([
@@ -1122,7 +1150,10 @@ async function handleRoute(request, ctx) {
         if (localPids.length) {
           const localDisp = await db2.collection('dispositions').find({ prepetrator_id: { $in: localPids } }).toArray()
           const localDispSet = new Set(localDisp.map((d) => d.prepetrator_id))
-          count += localCases.filter((c) => !localDispSet.has(c.prepator_id || c.prepetrator_id)).length
+          count += localCases.filter((c) => {
+            const pid = c.prepator_id || c.prepetrator_id
+            return pid && !localDispSet.has(pid) && !countedPids.has(pid)
+          }).length
         }
       } catch (_) {}
 
