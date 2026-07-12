@@ -2758,7 +2758,6 @@ function RiwayatSayaPage({ user, onOpenCase }) {
 function AppShell({ user, onLogout }) {
   const [tab, setTab] = useState('dashboard')
   const [selectedCase, setSelectedCase] = useState(null)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
   const role = user?.role || 'unit'
   const isYanduan = role === 'kasubbag_yanduan'
   const isKabid = role === 'kabid_propam'
@@ -2777,7 +2776,7 @@ function AppShell({ user, onLogout }) {
   const [connStatus, setConnStatus] = useState({ gajamada: false })
 
   const refreshDisposisiCount = async () => {
-    if (!canDisposisi) return
+    if (!canDisposisi && !isYanduan) return
     try { const r = await api('/disposisi-queue/count'); setDisposisiCount(r.count || 0) } catch (_) { /* ignore */ }
   }
   const refreshConnStatus = async () => {
@@ -2822,7 +2821,7 @@ function AppShell({ user, onLogout }) {
 
   return (
     <div className="min-h-screen flex bg-slate-100">
-      <aside className={`${sidebarOpen ? 'w-64' : 'w-0 overflow-hidden'} bg-gradient-to-b from-blue-950 via-blue-900 to-indigo-950 text-white flex flex-col overflow-hidden shadow-2xl transition-all duration-200`}>
+      <aside className="w-64 bg-gradient-to-b from-blue-950 via-blue-900 to-indigo-950 text-white flex flex-col overflow-hidden shadow-2xl">
         <div className="p-5 border-b border-white/10">
             <div className="flex items-center gap-3">
               <img src="/logo-pengaduan.png" alt="Logo" className="h-10 w-10 rounded-lg object-contain bg-white/10 p-0.5" />
