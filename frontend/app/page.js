@@ -1397,6 +1397,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
     // Immediately clear stale data so UI reflects the new case
     setDetail(null); setAtts([]); setTimeline([])
     let cancelled = false
+    if (!isSaranMode && current?.saran_unit) { setToUnit(current.saran_unit) }
     ;(async () => {
       try {
         const [d, a, t] = await Promise.all([
@@ -1406,7 +1407,7 @@ function DisposisiPage({ user, onOpenCase, onGoMasterUnit, onQueueChange, mode =
         ])
         if (!cancelled) {
           setDetail(d.data); setAtts(a.data); setTimeline(t.data || [])
-          const preUnit = d.data?._saran_yanduan?.to_unit
+          const preUnit = d.data?._saran_yanduan?.to_unit || d.data?.saran_unit
           if (preUnit && !isSaranMode) setToUnit(preUnit)
         }
       } catch (_) { /* ignore */ }
@@ -2791,11 +2792,11 @@ function AppShell({ user, onLogout }) {
     return () => clearInterval(interval)
   }, []) // eslint-disable-line
   useEffect(() => {
-    if (!canDisposisi) return
+    if (!canDisposisi && !isYanduan) return
     refreshDisposisiCount()
     const interval = setInterval(refreshDisposisiCount, 30000)
     return () => clearInterval(interval)
-  }, [canDisposisi]) // eslint-disable-line
+  }, [canDisposisi, isYanduan]) // eslint-disable-line
   useEffect(() => {
     if (canDisposisi && disposisiCount > 0 && !notifiedRef.current) {
       notifiedRef.current = true

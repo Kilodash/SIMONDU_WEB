@@ -353,6 +353,23 @@ ALTER TABLE user_credentials
   DROP COLUMN IF EXISTS zimbra_email,
   DROP COLUMN IF EXISTS zimbra_password;
 
+-- Columns for saran/masukan flow (Yanduan -> Kabid Propam)
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS saran_catatan TEXT;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS saran_checklist JSONB;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS saran_unit TEXT;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS saran_oleh TEXT;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS saran_at TIMESTAMPTZ;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS returned_to_divpropam BOOLEAN;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS returned_divpropam_at TIMESTAMPTZ;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS returned_divpropam_note TEXT;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS wassidik_surat_manual BOOLEAN;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS wassidik_surat_manual_at TIMESTAMPTZ;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS wassidik_surat_manual_oleh TEXT;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS wassidik_limpah_at TIMESTAMPTZ;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS wassidik_limpah_oleh TEXT;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS rekomendasi_rehabpers TEXT;
+ALTER TABLE local_cases ADD COLUMN IF NOT EXISTS disposisi_case_position TEXT;
+
 ALTER TABLE local_cases DROP COLUMN IF EXISTS synced_to_astina;
 
 ALTER TABLE local_cases
